@@ -22,6 +22,7 @@ models/
 
 # 运行时数据库
 memory/*.db
+memory/*.db-*
 
 # 运行时状态文件
 memory/last_active_side.json
