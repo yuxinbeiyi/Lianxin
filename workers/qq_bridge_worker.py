@@ -1679,31 +1679,68 @@ class QQBridgeWorker(QThread):
             "name": display_name,
         })
 
-    def _send_msg(self, params: dict):
-        """发送消息。带失败退避、全局限速、线程安全。"""
-        with self._send_lock:
-            # ── 全局限速：确保任意两条发出的消息间隔至少 8~15 秒 ──
-            now = time.monotonic()
-            elapsed = now - self._last_global_send
-            if self._last_global_send > 0:
-                required_gap = random.uniform(*self._global_send_interval)
-                if elapsed < required_gap:
-                    extra = required_gap - elapsed
-                    self._log(f"[全局限速] 距上条消息仅 {elapsed:.1f} 秒，额外等待 {extra:.1f} 秒...")
-                    self._sleep_with_check(extra)
+    def _send_msg(self, params: dict) -> bool:
+        """发送消息，等待 NapCat 确认送达。返回 True 表示成功，False 表示失败。"""
+        # ── 全局限速（在锁外完成，避免长时间持锁阻塞其他发送者） ──
+        now = time.monotonic()
+        elapsed = now - self._last_global_send
+        if self._last_global_send > 0:
+            required_gap = random.uniform(*self._global_send_interval)
+            if elapsed < required_gap:
+                extra = required_gap - elapsed
+                self._log(f"[全局限速] 距上条消息仅 {elapsed:.1f} 秒，额外等待 {extra:.1f} 秒...")
+                self._sleep_with_check(extra)
 
+        # 连续失败过多则直接拒绝，避免无效阻塞
+        if self._send_failures >= 3:
+            self._log(f"[!] 连续发送失败 {self._send_failures} 次，暂停发送")
+            return False
+
+        # 注册 echo 用于等待 NapCat 的 API 响应
+        with self._api_lock:
+            self._api_echo_counter += 1
+            echo = f"send_{self._api_echo_counter}_{int(time.monotonic() * 1000)}"
+            event = Event()
+            self._pending_api_calls[echo] = event
+
+        # WebSocket 写操作（持锁，但仅限网络 IO 本身）
+        with self._send_lock:
             payload = json.dumps({
                 "action": "send_msg",
                 "params": params,
+                "echo": echo,
             }, ensure_ascii=False)
             try:
-                if self._ws and self._ws.sock and self._ws.sock.connected:
+                if not (self._ws and self._ws.sock and self._ws.sock.connected):
+                    raise ConnectionError("WebSocket 未连接")
+                # 设置写超时，防止 TCP 缓冲区满导致无限阻塞
+                old_timeout = self._ws.sock.gettimeout()
+                self._ws.sock.settimeout(10)
+                try:
                     self._ws.send(payload)
-                    self._send_failures = 0
-                    self._last_global_send = time.monotonic()
+                finally:
+                    self._ws.sock.settimeout(old_timeout)
             except Exception as e:
                 self._send_failures += 1
+                with self._api_lock:
+                    self._pending_api_calls.pop(echo, None)
                 self._log(f"[!] 发送消息失败 (连续{self._send_failures}次): {e}")
+                return False
+
+        # 等待 NapCat 确认（锁外，不阻塞其他线程）
+        ok = event.wait(10.0)
+        with self._api_lock:
+            self._pending_api_calls.pop(echo, None)
+            result = self._pending_api_results.pop(echo, None)
+
+        if ok and result and result.get("status") == "ok":
+            self._send_failures = 0
+            self._last_global_send = time.monotonic()
+            return True
+        else:
+            self._send_failures += 1
+            self._log(f"[!] NapCat 未确认发送 (连续{self._send_failures}次){': ' + str(result)[:100] if result else ''}")
+            return False
 
     def _send_quick_reply(self, msg: dict, text: str):
         """发送一条简单回复（不经过 AgentCore，用于暗号响应）。"""
@@ -1794,12 +1831,21 @@ class QQBridgeWorker(QThread):
                     self._segment_has_sent = True
 
             reply_msg = _build_reply_msg(segment, msg_ctx, self._bot_qq, is_first=is_first)
-            self._send_msg({
+            ok = self._send_msg({
                 "message_type": msg_ctx.get("message_type"),
                 "user_id": msg_ctx.get("user_id"),
                 "group_id": msg_ctx.get("group_id"),
                 "message": reply_msg,
             })
+
+            if not ok:
+                # 发送失败，清空剩余分段并释放状态，恢复就绪
+                self._log(f"[分段] 发送失败，取消剩余 {len(self._segment_queue)} 段，恢复就绪")
+                with self._segment_lock:
+                    self._segment_queue.clear()
+                    self._segment_active = False
+                    self._segment_has_sent = False
+                break
 
             self._log(f"[分段] 已发 ({len(segment)}字){' 未完..' if not is_last else ' 完毕'}")
 
