@@ -1,0 +1,3450 @@
+"""
+工具层：定义莲心AI可调用的所有工具（OpenAI / DeepSeek Function Calling 格式）
+每个工具包含两部分：
+  1. TOOL_DEFINITIONS  — 发送给 DeepSeek API 的工具描述（OpenAI格式）
+  2. 对应的 Python 执行函数
+"""
+
+import json
+import asyncio
+import subprocess
+import threading
+from pathlib import Path
+from datetime import datetime
+from typing import Optional
+import sys
+
+# 记忆系统
+from brain.memory_store import (
+    search as _memory_search,
+    add as _memory_add,
+    update as _memory_update,
+    delete as _memory_delete,
+    format_search_result,
+    format_all_memories,
+    ALL_CATEGORIES,
+    CATEGORY_DESCRIPTIONS,
+)
+
+# 每块最大字符数（read_file 默认读第0块，read_file_chunk 可读任意块）
+_CHUNK_SIZE = 15000
+
+# QQ 桥接 worker 引用（由 main_window 启动时注册）
+_qq_bridge_worker = None
+
+def _register_qq_bridge(worker):
+    """注册 QQBridgeWorker 实例，供 send_file_to_qq 工具使用。"""
+    global _qq_bridge_worker
+    _qq_bridge_worker = worker
+
+# 肩载摄像头（ESP32-CAM WebSocket bridge，由 GUI 启动后注册）
+_shoulder_bridge = None
+
+def _register_shoulder_bridge(bridge):
+    """注册 HardwareBridge 实例，供摄像头/云台工具使用。"""
+    global _shoulder_bridge
+    _shoulder_bridge = bridge
+
+def _get_shoulder_bridge():
+    """获取肩载摄像头桥接实例。首次调用时自动创建。"""
+    global _shoulder_bridge
+    if _shoulder_bridge is None:
+        from brain.hardware_bridge import HardwareBridge
+        _shoulder_bridge = HardwareBridge()
+    return _shoulder_bridge
+
+# 文本类扩展名（用编码检测读取）
+_TEXT_EXTENSIONS = {
+    ".txt", ".md", ".py", ".js", ".ts", ".html", ".css",
+    ".json", ".yaml", ".yml", ".xml", ".csv", ".ini",
+    ".cfg", ".toml", ".log", ".bat", ".sh", ".c", ".cpp",
+    ".h", ".java", ".rs", ".go", ".rb", ".php",
+}
+
+# 待办管理器（稍后初始化）
+_todo_manager = None
+_music_info_callback = None
+_music_control_callback = None
+_note_refresh_callback = None
+_proactive_toggle_callback = None  # 主动聊天开关变更后通知调度器刷新
+_expression_callback = None  # Galgame 模式：切换立绘表情
+
+# 跨端搜索上下文（thread-local，由 AgentCore 在调用 execute_tool 前设置）
+_tool_context = threading.local()
+
+# 日记消息源（由 GUI/QQ 桥接在调用工具前设置，提供当日对话消息）
+_diary_message_source = None  # Callable[[], List[Dict]] 返回 [{"role": ..., "content": ...}, ...]
+
+def set_cross_session_context(session_id: int, history_mgr):
+    """设置当前线程的跨端搜索上下文（供 search_cross_session 工具使用）。"""
+    _tool_context.cross_session = {
+        "session_id": session_id,
+        "history_mgr": history_mgr,
+    }
+
+
+# ── DeepSeek/OpenAI 工具定义 ────────────────────────────────
+TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": (
+                "读取指定路径文件的内容（第0块，即开头部分）。"
+                "支持 .txt .md .py .csv .json 等文本文件（自动识别 UTF-8/GBK 等编码），"
+                "以及 .docx Word文档、.pdf PDF文件。"
+                "每次最多返回 15000 字符。若文件更长，返回结果中会注明总块数，"
+                "此时应告知用户文件较长并询问是否继续阅读，如需继续则调用 read_file_chunk。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "文件的绝对路径或相对路径，例如 C:/Users/user/Desktop/note.txt"
+                    }
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file_chunk",
+            "description": (
+                "读取长文件的指定分块。当 read_file 提示文件有多块时，"
+                "使用此工具读取后续内容。chunk_index 从 0 开始，"
+                "0 表示开头，1 表示第二块，以此类推。"
+                "适用于小说、长报告等篇幅较大的文档。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "文件路径，与 read_file 中的路径相同"
+                    },
+                    "chunk_index": {
+                        "type": "integer",
+                        "description": "要读取的块编号，从 0 开始"
+                    }
+                },
+                "required": ["path", "chunk_index"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "将指定内容写入文件。文件不存在则创建，已存在则覆盖。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "目标文件的路径"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "要写入文件的文本内容"
+                    }
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_directory",
+            "description": "列出指定目录下的所有文件和子目录。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "目录路径，不填则默认列出桌面"
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_files",
+            "description": "在指定目录中搜索包含关键词的文件名。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "directory": {
+                        "type": "string",
+                        "description": "搜索的目录路径"
+                    },
+                    "keyword": {
+                        "type": "string",
+                        "description": "要搜索的关键词（文件名模糊匹配）"
+                    }
+                },
+                "required": ["directory", "keyword"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_memory",
+            "description": (
+                "将重要信息永久保存到长期记忆，下次启动程序后仍然记得。"
+                "触发时机：① 用户明确说'记住这个'/'帮我记下来'等；"
+                "② 用户透露姓名、职业、重要项目、明显的个人偏好时可主动记录。"
+                "每条记忆用简洁的一句话描述，例如：'用户的名字叫小明'。"
+                "记忆会自动归入合适的分类：profile(个人档案)、preferences(偏好)、events(事件)、"
+                "knowledge(知识)、behaviors(行为模式)、skills(技能)——你可以指定或用默认。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {
+                        "type": "string",
+                        "description": "要记住的事实，一句话，简洁明了"
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["profile", "preferences", "events", "knowledge", "behaviors", "skills"],
+                        "description": "记忆分类，不填则自动归为 knowledge"
+                    }
+                },
+                "required": ["fact"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_app",
+            "description": (
+                "打开指定的应用程序、文件夹或文件。"
+                "支持常见应用别名（记事本、计算器、画图、资源管理器、命令行、任务管理器等），"
+                "也支持直接传入完整路径（如 C:/Program Files/xxx/xxx.exe 或文件夹路径）。"
+                "用户说'打开微信'、'帮我启动记事本'、'打开桌面'等时调用此工具。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "应用名称（如'记事本'、'微信'）或完整路径（如 C:/Windows/notepad.exe）"
+                    }
+                },
+                "required": ["name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_clipboard",
+            "description": (
+                "读取用户当前剪贴板中的文字内容并返回。"
+                "当用户说'帮我看看我复制的内容'、'分析一下剪贴板里的东西'、"
+                "'我刚复制了一段代码/文字，帮我…'等时调用此工具。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_command",
+            "description": "在系统中执行一个 shell 命令。仅支持白名单中的安全命令。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "要执行的命令，例如 'dir C:/Users/user/Desktop'"
+                    }
+                },
+                "required": ["command"]
+            }
+        }
+    },
+    # ==================== 时间工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_current_time",
+            "description": "获取当前的日期、时间、星期、农历、节假日等信息。当用户询问现在几点、今天几号、今天星期几、农历日期、今天是不是节假日等问题时调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "format": {
+                        "type": "string",
+                        "description": "返回格式，可选：full(完整信息)、date(仅日期)、time(仅时间)、weekday(仅星期)、lunar(仅农历)、holiday(仅节假日)",
+                        "enum": ["full", "date", "time", "weekday", "lunar", "holiday"]
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    # ==================== 余额查询工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_balance",
+            "description": (
+                "查询 DeepSeek API 账户的当前余额。"
+                "当用户询问余额、还剩多少钱、账户余额、还有多少余额、余额够不够等问题时调用此工具。"
+                "该工具会实时从 DeepSeek 官方接口获取最新余额信息。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    # ==================== 待办清单工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "add_todo",
+            "description": (
+                "【必须调用】当用户要求添加待办事项、设置提醒、记录任务时，必须使用此工具，绝对不要直接回复用户说'已添加'。"
+                "用户话语示例：'提醒我明天下午3点开会'、'添加待办 买牛奶'、'帮我记一下 明天上午10点打电话'、'设置一个提醒 晚上8点吃药'。"
+                "调用此工具后，系统会真实存储待办，然后你才能告知用户已添加。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "待办标题，应简洁明确，例如'开会'、'买牛奶'"
+                    },
+                    "due_time": {
+                        "type": "string",
+                        "description": "截止时间，ISO格式字符串（例如2026-04-21T15:00:00）。如果用户没有明确时间，则为null"
+                    },
+                    "priority": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                        "description": "优先级，根据用户描述判断：高优先级（紧急、重要）、低优先级（不着急），否则为medium"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "详细描述，可选"
+                    }
+                },
+                "required": ["title"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_todos",
+            "description": "列出当前所有未完成的待办事项。当用户问'有哪些待办'、'显示我的待办清单'、'我还有什么事要做'时调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "complete_todo",
+            "description": "将某个待办标记为完成。当用户说'完成...'、'标记...为完成'、'...做好了'时调用。如果用户提供的标题关键词匹配到多个待办，请询问用户选择哪一个。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title_keyword": {
+                        "type": "string",
+                        "description": "待办标题中的关键词，用于模糊匹配"
+                    }
+                },
+                "required": ["title_keyword"]
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "read_excel",
+            "description": "读取 Excel 文件（.xlsx）的内容，返回表格数据（文本格式）。支持指定工作表名称和最大行数。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Excel 文件的绝对路径"
+                    },
+                    "sheet_name": {
+                        "type": "string",
+                        "description": "工作表名称，默认第一个工作表"
+                    },
+                    "max_rows": {
+                        "type": "integer",
+                        "description": "最多读取的行数，默认 100"
+                    }
+                },
+                "required": ["file_path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_python_code",
+            "description": "在安全沙箱中执行 Python 代码，返回标准输出和错误。适用于计算、数据处理等任务。不支持文件操作或系统命令。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "要执行的 Python 代码"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "超时时间（秒），默认 10"
+                    }
+                },
+                "required": ["code"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_excel",
+            "description": "将数据写入 Excel 文件（.xlsx）。可创建新文件或覆盖已有文件。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "目标 Excel 文件的绝对路径"},
+                    "sheet_name": {"type": "string", "description": "工作表名称，默认 'Sheet1'"},
+                    "data": {"type": "array", "description": "二维数组，每行是一个列表，例如 [['姓名','年龄'],['张三',28]]"}
+                },
+                "required": ["file_path", "data"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "copy_excel_content",
+            "description": "将源 Excel 文件的内容复制到目标 Excel 文件（支持指定工作表）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_path": {"type": "string", "description": "源文件路径"},
+                    "target_path": {"type": "string", "description": "目标文件路径"},
+                    "source_sheet": {"type": "string", "description": "源工作表名称，默认第一个"},
+                    "target_sheet": {"type": "string", "description": "目标工作表名称，默认与源相同或新建"}
+                },
+                "required": ["source_path", "target_path"]
+            }
+        }
+    },
+
+    # ==================== Word 文档写入工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "write_docx",
+            "description": (
+                "将文本内容写入 Word 文档（.docx）。可创建新文件或覆盖已有文件。"
+                "当用户要求「生成 Word 文档」、「创建 .docx 文件」、「把内容整理到 Word」时使用此工具。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "目标 .docx 文件的绝对路径，例如 C:/Users/用户名/Desktop/结果.docx"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "要写入的文本内容，支持多段。若需要分段，请用两个换行符 \\n\\n 分隔。"
+                    }
+                },
+                "required": ["file_path", "content"]
+            }
+        }
+    },
+
+
+    {
+        "type": "function",
+        "function": {
+            "name": "format_document",
+            "description": (
+                "【推荐】将Markdown格式的文本内容转换为格式优美的Word文档（.docx）。"
+                "当用户要求'生成报告'、'写文档'、'整理内容'、'排版'时，应优先使用此工具。"
+                "你可以直接输出Markdown格式的内容，此工具会将其转换为专业排版的Word文档。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "要转换的Markdown格式文本内容。"
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": "要生成的Word文档的保存路径。"
+                    },
+                    "use_template": {
+                        "type": "boolean",
+                        "description": "是否使用预设的Word模板来应用统一格式（如字体、页边距）。默认True。"
+                    }
+                },
+                "required": ["content", "output_path"]
+            }
+        }
+    },
+
+    # ==================== 联网搜索工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": (
+                "使用 DuckDuckGo 搜索引擎进行联网搜索，获取实时信息。"
+                "当用户询问新闻、天气、实时事件、最新资讯、需要查找资料或无法用本地知识回答的问题时，调用此工具。"
+                "返回结果包含标题、链接和摘要。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "要搜索的关键词，例如 '今日新闻' 或 'Python 教程'"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "最多返回几条结果，默认 5，最大 10"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+
+    # ==================== 网页内容提取工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_webpage",
+            "description": (
+                "获取指定网页的文本内容（去除HTML标签，提取主要文字）。"
+                "当用户要求查看某个链接的内容、阅读某篇文章、提取网页信息时调用此工具。"
+                "注意：有些网站可能限制爬取，返回内容可能不完整。"
+                "如果返回 403 或内容为空，请依次尝试以下工具："
+                "fetch_webpage → fetch_webpage_via_api → fetch_webpage_browser → fetch_webpage_stealth。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "要提取内容的网页URL，必须以 http:// 或 https:// 开头"
+                    },
+                    "max_length": {
+                        "type": "integer",
+                        "description": "返回的最大字符数，默认3000，避免回复过长"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
+    },
+
+    # ==================== 浏览器内核网页提取工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_webpage_browser",
+            "description": (
+                "使用真实浏览器内核获取网页文本内容（绕过反爬）。"
+                "当普通 fetch_webpage 失败（返回 403 或内容为空）时，可以尝试调用此工具。"
+                "注意：速度较慢但更可靠，适用于百度百科等严格反爬的网站。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "要提取内容的网页URL"
+                    },
+                    "max_length": {
+                        "type": "integer",
+                        "description": "返回的最大字符数，默认3000"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
+    },
+
+    # ==================== 通过 Jina Reader API 解析网页（绕过反爬） ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_webpage_via_api",
+            "description": (
+                "使用 r.jina.ai 解析服务获取网页的文本内容（Markdown 格式）。"
+                "当普通工具获取失败（如返回 403 或空内容）时，应优先使用此工具。"
+                "适用于知乎、百度百科等反爬严格的网站。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "要解析的网页URL"
+                    },
+                    "max_length": {
+                        "type": "integer",
+                        "description": "返回的最大字符数，默认3000"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_webpage_stealth",
+            "description": (
+                "使用 curl_cffi TLS 指纹伪装技术获取网页文本内容（绕过反爬，速度较快）。"
+                "当 fetch_webpage 和 fetch_webpage_via_api 都返回 403 或空内容时，"
+                "应优先尝试此工具再尝试 fetch_webpage_browser。"
+                "它能模拟 Chrome 浏览器的 TLS 握手特征，"
+                "能绕过大部分基于 TLS 指纹检测的反爬机制（如 Cloudflare），"
+                "比启动完整浏览器内核快得多。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "要提取内容的网页URL，必须以 http:// 或 https:// 开头"
+                    },
+                    "max_length": {
+                        "type": "integer",
+                        "description": "返回的最大字符数，默认3000，避免回复过长"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
+    },
+
+    # ==================== 精确文件编辑工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": (
+                "在文件中精确替换指定的文字内容，不影响文件其他部分。"
+                "【重要】修改文件前必须先用 read_file 读取确认内容存在，再调用此工具。"
+                "适用于：修改代码中某一行、更新配置项、替换文档中某段话。"
+                "比 write_file 更安全，因为只改动指定部分，不会覆盖整个文件。"
+                "如果找不到 old_string，会返回错误，请检查内容是否完全一致（包括空格和换行）。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "要修改的文件的绝对路径"
+                    },
+                    "old_string": {
+                        "type": "string",
+                        "description": "要被替换掉的原始文字（必须与文件中的内容完全一致，包括空格、换行、缩进）"
+                    },
+                    "new_string": {
+                        "type": "string",
+                        "description": "用来替换的新内容"
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "是否替换文件中所有匹配项，默认 false（只替换第一处）"
+                    }
+                },
+                "required": ["path", "old_string", "new_string"]
+            }
+        }
+    },
+
+    # ==================== 文件内容搜索工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "grep_file",
+            "description": (
+                "在指定文件的内容中搜索关键词，返回所有匹配行及其行号，并显示上下文。"
+                "适用于：在代码中找某个函数/变量、在文档中找某段话、确认某内容是否存在。"
+                "比 read_file 更高效：大文件不必全部阅读，直接定位到关键位置。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "要搜索的文件的绝对路径"
+                    },
+                    "keyword": {
+                        "type": "string",
+                        "description": "要搜索的关键词（大小写不敏感）"
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "每个匹配行前后显示几行上下文，默认 2"
+                    }
+                },
+                "required": ["path", "keyword"]
+            }
+        }
+    },
+
+    # ==================== 按行范围读取文件工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file_lines",
+            "description": (
+                "读取文件中指定行范围的内容，返回带行号的文字。"
+                "适用于：已知某功能在第几行附近、只需查看文件某一段、配合 grep_file 定位后精确阅读。"
+                "比 read_file 更精准，不受 15000 字符分块限制。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "文件的绝对路径"
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "起始行号（从 1 开始）"
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "结束行号（含）。不传则读到文件末尾"
+                    }
+                },
+                "required": ["path", "start_line"]
+            }
+        }
+    },
+
+    # ==================== 文件模式匹配工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "glob_files",
+            "description": (
+                "在指定目录中按文件名模式批量查找文件，支持通配符。"
+                "适用于：找出所有 Python 文件、找所有 .docx 文档、找特定前缀的文件。"
+                "pattern 示例：'**/*.py'（所有Python文件）、'*.txt'（当前目录txt文件）、'报告*.docx'（报告开头的Word文档）。"
+                "比 search_files 更强大：支持精确的文件名模式而不只是关键词匹配。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "directory": {
+                        "type": "string",
+                        "description": "要搜索的根目录路径"
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "文件名匹配模式，支持 * ? ** 通配符，例如 '**/*.py' 或 '*.txt'"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "最多返回的结果数量，默认 50"
+                    }
+                },
+                "required": ["directory", "pattern"]
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "ocr_image",
+            "description": "仅用于提取图片中的文字（OCR）。当用户明确要求提取图片中的文字时使用。不能理解图像内容或描述画面。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image_path": {
+                        "type": "string",
+                        "description": "图片文件的绝对路径"
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "语言，可选值：chi_sim+eng（简体中文+英文）、eng（英文），默认 chi_sim+eng"
+                    }
+                },
+                "required": ["image_path"]
+            }
+        }
+    },
+
+
+    # ==================== 批量OCR工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "ocr_batch",
+            "description": (
+                "批量识别指定文件夹内所有图片文件（png/jpg/bmp等）中的文字，将每个文件的识别结果汇总返回。"
+                "当用户要求'批量提取'、'遍历文件夹'、'把里面所有图片的文字都提取出来'时，使用此工具，不要使用 run_command。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "folder_path": {
+                        "type": "string",
+                        "description": "存放图片的文件夹路径"
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "语言，默认 chi_sim+eng (中英文)"
+                    }
+                },
+                "required": ["folder_path"]
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "describe_image",
+            "description": (
+                "理解并描述图片的内容——画面里有什么人、什么物体、什么场景、发生了什么动作。"
+                "当用户发送了一张图片，或要求你看看某张图片的内容时，必须调用此工具来获取视觉描述。"
+                "注意：已经内置的 OCR（光学字符识别）工具是专门用来提取图片中的文字的，如果用户明确只要求提取文字，优先使用 ocr_image。"
+                "此工具可以看到更丰富的内容，比如：人物动作、表情、物体位置关系、场景氛围、颜色等。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image_path": {
+                        "type": "string",
+                        "description": "图片文件的路径。用户发送图片时系统会自动将路径传入。"
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "可选的提问文本，例如 '这只猫是什么颜色？'。不需要则留空。"
+                    }
+                },
+                "required": ["image_path"]
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "capture_from_camera",
+            "description": "从USB摄像头拍一张照片，返回保存的图片路径。",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "send_file_to_qq",
+            "description": (
+                "将本地文件发送到主人的QQ上。当主人明确要求'把文件发到QQ'、'发给我'、"
+                "'把这个发到我的QQ上'时使用。支持任何文件类型（docx/txt/图片等）。"
+                "注意：只能发给主人，不能发给其他QQ好友。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "要发送的文件的绝对路径"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "QQ上显示的文件名（可选，不传则用原文件名）"
+                    }
+                },
+                "required": ["path"]
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "read_diary",
+            "description": (
+                    "【强制】当用户要求读日记、回忆某天内容或搜索日记关键词时，必须调用此工具。"
+                    "不要直接输出任何日记内容。工具会返回真实日记文本。"
+                    "参数：date (YYYY-MM-DD) 或 keyword (搜索词) 或 limit (最近几篇)。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "要查询的日期，格式 YYYY-MM-DD，例如 '2026-04-17'。"
+                    },
+                    "keyword": {
+                        "type": "string",
+                        "description": "在日记中搜索的关键词，例如 '开心' 或 '读书'。"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "返回最近几篇日记的数量（仅在不提供 date 和 keyword 时有效），默认 1。"
+                    }
+                },
+                "additionalProperties": False
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "write_diary",
+            "description": (
+                "【强制】当用户要求写日记、生成日记、记日记时，必须调用此工具。"
+                "工具会基于今日对话记录自动生成一篇日记并保存到日记本。"
+                "不要直接回复'好的已写好'之类的话，必须调用此工具。"
+                "参数：message_count (可选, 使用最近N条消息, 默认取配置值), force (可选, 当日已有日记时是否覆盖, 默认false)。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message_count": {
+                        "type": "integer",
+                        "description": "使用最近N条今日消息生成日记，不传则使用全局配置的默认值（30条）"
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "如果今天已有日记是否覆盖重写，默认false（保留已有日记）"
+                    }
+                },
+                "additionalProperties": False
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "control_music",
+            "description": "控制莲心音乐盒的播放状态、切换歌曲、循环模式、音量等。当用户要求播放/暂停音乐、下一首/上一首、切换循环模式、增大/减小音量时，调用此工具。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["play", "pause", "next", "prev", "loop", "volume_up", "volume_down"],
+                        "description": "要执行的操作：play（播放音乐），pause（暂停），next（下一首），prev（上一首），loop（切换循环模式），volume_up（增加音量），volume_down（减小音量）"
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "get_music_playlist",
+            "description": "获取当前音乐播放列表中的所有歌曲名称（按顺序）。",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_music_status",
+            "description": "获取当前音乐播放状态：是否在播放，当前歌曲名，当前播放进度（秒）和总时长。",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_music_stats",
+            "description": "获取音乐陪伴统计：累计听歌总时长（小时），以及播放次数最多的歌曲名和累计秒数。",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "read_note",
+            "description": "读取备忘本的全部文字内容。当用户要求查看备忘本、看一下备忘本、备忘本里写了什么时调用。不要直接朗读，而是理解内容后与用户聊天。",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "organize_note",
+            "description": "调用 AI 智能整理备忘本内容，使它更整洁、有条理。当用户要求整理备忘本、清理备忘本时调用。",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+
+    # ==================== 主动聊天开关 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "toggle_proactive_chat",
+            "description": (
+                "开启或关闭QQ主动聊天功能。"
+                "当用户说'开启主动聊天'、'打开主动聊天'、'启用QQ主动聊天'时，设置 action='enable'。"
+                "当用户说'关闭主动聊天'、'停用主动聊天'、'禁用主动聊天'时，设置 action='disable'。"
+                "此操作会立即生效，无需重启。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["enable", "disable"],
+                        "description": "开启(enable)或关闭(disable)主动聊天"
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+
+    # ==================== 跨端搜索工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "search_cross_session",
+            "description": (
+                "搜索另一端（桌面端↔QQ端）的历史聊天记录。"
+                "当用户询问'之前在电脑上聊了什么'、'回忆一下QQ上说过的话'、"
+                "'帮我找找另一边之前提到的内容'等涉及另一端聊天回忆的问题时，调用此工具。"
+                "注意：搜索的是另一端的全部历史记录，不限最近几条。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "要搜索的关键词，例如'火锅'、'项目'、'Python'等"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "最多返回几条匹配结果，默认 5，最大 10"
+                    }
+                },
+                "required": ["keyword"]
+            }
+        }
+    },
+
+    # ==================== 技能系统工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "list_skills",
+            "description": (
+                "列出所有可用的技能包及其激活状态。"
+                "技能包是按需加载的知识或工具集，激活后可以获得额外能力。"
+                "当用户问'你有什么技能'、'有哪些技能'、'激活了什么技能'时调用。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "activate_skill",
+            "description": (
+                "激活指定的技能包。技能包激活后可获得额外能力或知识。"
+                "当用户要求激活某个技能时（如'启动XX技能'），先调用 list_skills 查看可用技能，再调用此工具激活。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "要激活的技能名称，例如 '文本工具'"
+                    }
+                },
+                "required": ["name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "deactivate_skill",
+            "description": "停用指定的技能包。当用户要求关闭某个技能时调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "要停用的技能名称"
+                    }
+                },
+                "required": ["name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_memory",
+            "description": (
+                "在长期记忆中搜索包含指定关键词的事实。"
+                "当用户问'你还记得关于XX的事吗'、'我之前是不是跟你说过XX'、"
+                "'翻一下我的记忆，关于XX的'等涉及回忆具体内容的问题时，调用此工具。"
+                "注意：长期记忆存储的是你（莲心）保存下来的事实，"
+                "不是聊天记录。如果要搜聊天记录，请使用 search_cross_session。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "要搜索的关键词，例如'毕业'、'游戏'、'生日'等"
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["profile", "preferences", "events", "knowledge", "behaviors", "skills"],
+                        "description": "可选：限定搜索的分类，不填则搜索所有分类"
+                    }
+                },
+                "required": ["keyword"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_memory",
+            "description": (
+                "更新或覆盖长期记忆中已存在的事实。"
+                "当用户说'之前说的那个不对，其实是这样的'、'改一下，不是XX，是XX'、"
+                "'我要纠正一下之前的说法'时，使用此工具更新对应的事实。"
+                "会搜索所有包含 old_keyword 的事实，将它们替换为 new_fact。"
+                "如果找不到匹配的旧事实，则直接作为新事实保存。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "old_keyword": {
+                        "type": "string",
+                        "description": "要更新的旧事实中的关键词，用于定位需要更新的事实。例如旧事实是'雨心的生日是4月25日'，想把它替换时，old_keyword 可以填'生日'"
+                    },
+                    "new_fact": {
+                        "type": "string",
+                        "description": "更新后的事实内容，例如'雨心的生日是4月26日'。要求信息完整、一句话说清楚"
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["profile", "preferences", "events", "knowledge", "behaviors", "skills"],
+                        "description": "可选：限定搜索的分类，不填则搜索所有分类"
+                    }
+                },
+                "required": ["old_keyword", "new_fact"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_memory",
+            "description": (
+                "从长期记忆中删除指定的事实。"
+                "当用户说'忘掉关于XX的事'、'删掉那条记忆'、'那个信息现在没用了删掉吧'时，"
+                "搜索包含 keyword 的事实并删除所有匹配项。"
+                "注意：删除是不可恢复的操作，删除前应在回复中告知用户将被删除的内容。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "要删除的事实中的关键词。所有包含此关键词的事实都会被删除"
+                    }
+                },
+                "required": ["keyword"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_expression",
+            "description": (
+                "切换莲心的立绘表情。当你想通过表情来表达情绪时使用，"
+                "比如开心、生气、伤心、惊讶等。"
+                "此工具仅负责切换显示图片，不会影响对话内容。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "emotion": {
+                        "type": "string",
+                        "description": "情绪/表情名称，如 开心、生气、伤心、惊讶、疑惑、害羞、撒娇、疲惫、默认"
+                    }
+                },
+                "required": ["emotion"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_memories",
+            "description": "查看长期记忆中保存的全部内容，按分类展示。当用户说\"你都记住了什么\"、\"翻一下我的记忆\"、\"让我看看你记了哪些东西\"时调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shoulder_photo",
+            "description": "用肩载摄像头（ESP32-CAM）拍一张照片并保存为 JPG 文件。返回保存路径。拍完后如需查看内容，可以调用 describe_image 或 ocr_image。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shoulder_pan",
+            "description": "控制肩载摄像头的水平旋转角度（Pan），范围 0~180 度。90 度为正前方，0 度为最左，180 度为最右。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "angle": {
+                        "type": "integer",
+                        "description": "水平角度 0~180，90 为正前方"
+                    }
+                },
+                "required": ["angle"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shoulder_tilt",
+            "description": "控制肩载摄像头的垂直俯仰角度（Tilt），范围 0~180 度。90 度为水平，0 度为最下，180 度为最上。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "angle": {
+                        "type": "integer",
+                        "description": "垂直角度 0~180，90 为水平"
+                    }
+                },
+                "required": ["angle"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shoulder_center",
+            "description": "将肩载摄像头云台复位到中心位置（Pan=90, Tilt=90）。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shoulder_status",
+            "description": "获取肩载摄像头（ESP32-CAM）的连接状态和基本信息（含温湿度）。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shoulder_temp",
+            "description": "读取 DHT11 温湿度传感器数据，返回当前温度和湿度。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    # ── 观察记忆工具 ─────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "save_observation",
+            "description": "记录一次观察发现。当你通过肩载摄像头看到值得关注的事物时调用。观察记录会持久保存，用户可以随时追问。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string",
+                        "description": "详细描述你看到了什么",
+                    },
+                    "attention": {
+                        "type": "string",
+                        "description": "什么特别引起了你的注意（可选）",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "关键词标签，如 ['马克杯', '红色', '桌面']",
+                    },
+                },
+                "required": ["description"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_observations",
+            "description": "搜索历史观察记录。按关键词、时间范围查找莲心之前通过肩载摄像头看到的内容。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "搜索关键词，匹配描述、关注点和标签",
+                    },
+                    "time_from": {
+                        "type": "string",
+                        "description": "起始时间，格式 YYYY-MM-DD HH:MM",
+                    },
+                    "time_to": {
+                        "type": "string",
+                        "description": "结束时间，格式 YYYY-MM-DD HH:MM",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "最多返回几条，默认 10",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_recent_observations",
+            "description": "获取最近 N 条观察记录。当用户问'你刚才看到了什么''有什么发现'时调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "返回几条，默认 10",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "start_shoulder_explore",
+            "description": (
+                "启动肩载摄像头（ESP32-CAM）自主探索四周环境。莲心会控制舵机转动、拍照、AI分析画面，"
+                "自动发现有趣目标并记录观察结果。当用户说'看看周围''观察一下四周''扫描环境'时调用此工具。"
+                "注意：需要 ESP32-CAM 已通电并连接 WiFi。返回完整的探索摘要。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+]
+
+
+# ── 工具执行函数 ─────────────────────────────────────────────
+
+def read_file(path: str) -> str:
+    """读取文件第 0 块内容（开头 _CHUNK_SIZE 字符）。"""
+    return read_file_chunk(path, chunk_index=0)
+
+
+def read_file_chunk(path: str, chunk_index: int = 0) -> str:
+    """读取文件的指定分块，每块最多 _CHUNK_SIZE 字符。"""
+    try:
+        p = Path(path)
+        if not p.exists():
+            return f"错误：文件不存在 → {path}"
+        if not p.is_file():
+            return f"错误：路径不是文件 → {path}"
+
+        content, err = _extract_full_text(p)
+        if err:
+            return f"读取文件出错: {err}"
+        if not content:
+            return "（文件内容为空）"
+
+        total_chars  = len(content)
+        total_chunks = max(1, (total_chars + _CHUNK_SIZE - 1) // _CHUNK_SIZE)
+
+        if chunk_index < 0 or chunk_index >= total_chunks:
+            return (
+                f"错误：chunk_index={chunk_index} 超出范围。"
+                f"该文件共 {total_chunks} 块（0 ~ {total_chunks-1}）。"
+            )
+
+        start = chunk_index * _CHUNK_SIZE
+        end   = start + _CHUNK_SIZE
+        chunk = content[start:end]
+
+        header = (
+            f"[文件：{p.name} | 第 {chunk_index+1}/{total_chunks} 块 "
+            f"| 字符 {start+1}~{min(end, total_chars)}/{total_chars}]\n"
+            + "─" * 50 + "\n"
+        )
+        footer = ""
+        if chunk_index < total_chunks - 1:
+            footer = (
+                f"\n\n… [本块结束。文件共 {total_chunks} 块，"
+                f"如需继续阅读请调用 read_file_chunk(path, chunk_index={chunk_index+1})]"
+            )
+
+        return header + chunk + footer
+
+    except Exception as e:
+        return f"读取文件出错: {e}"
+
+
+def _extract_full_text(p: Path) -> tuple[str, str]:
+    """
+    提取文件完整文本，不做长度截断。
+    返回 (content, error_message)，成功时 error_message 为空字符串。
+    """
+    ext = p.suffix.lower()
+    try:
+        if ext == ".docx":
+            return _extract_docx(p), ""
+        elif ext == ".doc":
+            return _extract_doc(p), ""
+        elif ext == ".pdf":
+            return _extract_pdf(p), ""
+        elif ext in (".xlsx", ".xls"):
+            return _extract_xlsx(p), ""
+        else:
+            return _extract_text(p), ""
+    except Exception as e:
+        return "", str(e)
+
+
+def _extract_text(p: Path) -> str:
+    """读取文本文件全文，自动检测编码（chardet 优先，回退多编码尝试）。"""
+    raw = p.read_bytes()
+    if not raw:
+        return ""
+
+    encoding = "utf-8"
+    try:
+        import chardet
+        detected  = chardet.detect(raw)
+        enc        = detected.get("encoding") or "utf-8"
+        confidence = detected.get("confidence") or 0
+        if confidence >= 0.6:
+            encoding = enc
+    except ImportError:
+        for enc in ("utf-8", "gbk", "gb2312", "gb18030", "latin-1"):
+            try:
+                raw.decode(enc)
+                encoding = enc
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+
+    return raw.decode(encoding, errors="replace")
+
+
+def _extract_docx(p: Path) -> str:
+    """提取 Word .docx 文件全文（正文段落 + 表格），无长度限制。"""
+    try:
+        from docx import Document
+    except ImportError:
+        raise RuntimeError("未安装 python-docx，请执行：pip install python-docx")
+
+    doc   = Document(str(p))
+    parts = []
+
+    # 按文档中实际顺序遍历：段落和表格交替出现在 doc.element.body 里
+    from docx.oxml.ns import qn
+    for child in doc.element.body:
+        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if tag == "p":
+            # 段落
+            from docx.text.paragraph import Paragraph
+            para = Paragraph(child, doc)
+            text = para.text.strip()
+            if text:
+                parts.append(text)
+        elif tag == "tbl":
+            # 表格
+            from docx.table import Table
+            table = Table(child, doc)
+            parts.append("")   # 空行分隔
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells]
+                if any(cells):
+                    parts.append(" | ".join(cells))
+            parts.append("")
+
+    return "\n".join(parts)
+
+
+def _extract_doc(p: Path) -> str:
+    """提取旧版 Word .doc 文件文本（Word 97-2003 格式）。
+
+    Windows 环境下优先用 Word COM 自动化（最准确），
+    次选 docx2txt / olefile，最后回退到原始文本读取。
+    """
+    # 1) Windows COM：调用本机 Word 打开并提取全文（准确率最高）
+    try:
+        import win32com.client
+        word = win32com.client.Dispatch("Word.Application")
+        word.Visible = False
+        word.DisplayAlerts = False
+        try:
+            doc = word.Documents.Open(str(p.absolute()))
+            text = doc.Content.Text
+            doc.Close()
+            if text and text.strip():
+                return text.strip()
+        except Exception:
+            pass
+        finally:
+            try:
+                word.Quit()
+            except Exception:
+                pass
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # 2) 尝试 docx2txt（部分支持 .doc）
+    try:
+        import docx2txt
+        text = docx2txt.process(str(p))
+        if text and text.strip():
+            return text.strip()
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # 3) 尝试 olefile 提取 Word 文本流
+    try:
+        import olefile
+        ole = olefile.OleFileIO(str(p))
+        if ole.exists("WordDocument"):
+            stream = ole.openstream("WordDocument")
+            raw = stream.read()
+            text = raw.decode("utf-16-le", errors="ignore")
+            readable = "".join(c for c in text if c.isprintable() or c in "\n\r\t")
+            if readable.strip():
+                return readable.strip()
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # 4) 最后回退：当作纯文本尝试读取
+    try:
+        return _extract_text(p)
+    except Exception:
+        pass
+
+    raise RuntimeError(
+        "无法提取 .doc 文件内容。请确保本机安装了 Microsoft Word，\n"
+        "或使用较新的 .docx 格式。"
+    )
+
+
+def _extract_xlsx(p: Path) -> str:
+    """提取 Excel .xlsx 文件内容（所有工作表），以表格形式返回。"""
+    try:
+        import openpyxl
+    except ImportError:
+        raise RuntimeError("未安装 openpyxl，请执行：pip install openpyxl")
+
+    wb = openpyxl.load_workbook(str(p), read_only=True, data_only=True)
+    parts = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        rows = []
+        for row in ws.iter_rows(values_only=True):
+            cells = [str(c) if c is not None else "" for c in row]
+            line = "\t".join(cells)
+            if line.strip():
+                rows.append(line)
+        if rows:
+            parts.append(f"[工作表: {sheet_name}]\n" + "\n".join(rows))
+    wb.close()
+
+    if not parts:
+        return "（工作簿为空）"
+    return "\n\n".join(parts)
+
+
+def _extract_pdf(p: Path) -> str:
+    """提取 PDF 全文，逐页拼接，无长度限制。"""
+    try:
+        import pdfplumber
+    except ImportError:
+        raise RuntimeError("未安装 pdfplumber，请执行：pip install pdfplumber")
+
+    parts = []
+    with pdfplumber.open(str(p)) as pdf:
+        total_pages = len(pdf.pages)
+        for i, page in enumerate(pdf.pages, 1):
+            text = page.extract_text()
+            if text and text.strip():
+                parts.append(f"[第 {i}/{total_pages} 页]\n{text.strip()}")
+
+    if not parts:
+        return ""
+    return "\n\n".join(parts)
+
+
+def save_memory(fact: str, category: str | None = None) -> str:
+    """将事实写入长期记忆（分类存储），使用新的记忆引擎。"""
+    from datetime import datetime
+    from config import get_memory_config
+
+    # 未指定分类时从配置读取默认分类
+    if not category:
+        try:
+            category = get_memory_config().get("default_save_category", "knowledge")
+        except Exception:
+            category = "knowledge"
+
+    fact = fact.strip()
+    if not fact:
+        return "记忆内容不能为空。"
+
+    # 自动追加记录日期
+    today = datetime.now().strftime("%Y-%m-%d")
+    date_tag = f"【记录于{today}】"
+    if date_tag not in fact:
+        fact = f"{fact} {date_tag}"
+
+    entry_id = _memory_add(fact, category, source="user_saved")
+    return f"好的，我记住了（分类：{category}）：{fact}"
+
+
+def write_file(path: str, content: str) -> str:
+    try:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        return f"文件写入成功: {path}（共 {len(content)} 字符）"
+    except Exception as e:
+        return f"写入文件出错: {e}"
+
+
+
+def write_docx(file_path: str, content: str) -> str:
+    """将文本内容写入 Word 文档（.docx）。"""
+    try:
+        from docx import Document
+    except ImportError:
+        return "错误：未安装 python-docx，请执行：pip install python-docx"
+
+    try:
+        doc = Document()
+        # 按两个换行符分段（常见段落分隔）
+        paragraphs = content.split('\n\n')
+        for para in paragraphs:
+            if para.strip():
+                doc.add_paragraph(para.strip())
+        doc.save(file_path)
+        return f"成功创建 Word 文档：{file_path}"
+    except Exception as e:
+        return f"写入 Word 文档失败：{e}"
+
+
+
+def list_directory(path: str = "") -> str:
+    try:
+        target = Path(path) if path else Path.home() / "Desktop"
+        if not target.exists():
+            return f"错误：目录不存在 → {target}"
+        if not target.is_dir():
+            return f"错误：路径不是目录 → {target}"
+        dirs, files = [], []
+        for item in sorted(target.iterdir()):
+            if item.is_dir():
+                dirs.append(f"[目录] {item.name}")
+            else:
+                size = item.stat().st_size
+                size_str = f"{size:,} B" if size < 1024 else f"{size//1024:,} KB"
+                files.append(f"[文件] {item.name}  ({size_str})")
+        result = f"目录: {target}\n" + "─" * 40 + "\n"
+        result += "\n".join(dirs + files) if (dirs or files) else "（空目录）"
+        return result
+    except Exception as e:
+        return f"列出目录出错: {e}"
+
+
+def search_files(directory: str, keyword: str) -> str:
+    try:
+        base = Path(directory)
+        if not base.exists():
+            return f"错误：目录不存在 → {directory}"
+        matches = [
+            str(p) for p in base.rglob("*")
+            if keyword.lower() in p.name.lower() and p.is_file()
+        ]
+        if not matches:
+            return f"在 {directory} 中未找到包含 '{keyword}' 的文件"
+        return f"找到 {len(matches)} 个匹配文件:\n" + "\n".join(matches[:50])
+    except Exception as e:
+        return f"搜索文件出错: {e}"
+
+
+def open_app(name: str) -> str:
+    """
+    【必须使用】启动应用程序、打开文件或文件夹。
+
+    当用户要求执行以下操作时，你必须调用此工具，不得直接回复"已打开"等结论：
+      - 打开任何应用程序（如"打开网易云音乐"、"启动计算器"）
+      - 打开文件（如"打开我的文档"、"打开报告.docx"）
+      - 打开文件夹（如"打开下载文件夹"、"打开桌面"）
+      - 执行系统命令或运行系统工具（如"打开命令行"、"启动任务管理器"）
+
+    参数:
+        name: 应用程序名称、文件路径或文件夹路径。支持常用中文别名（如"记事本"、"计算器"）。
+
+    返回:
+        启动成功或失败的消息。
+
+    注意:
+        - 如果应用已启动，此工具可能会再次尝试启动，但不会造成问题。
+        - 优先匹配用户预设的快捷启动列表（可在莲心界面中配置）。
+        - 不要试图通过自然语言输出"已打开"来替代调用此工具。
+    """
+    import os
+    import subprocess
+    import shutil
+    from pathlib import Path
+
+    # ── 系统工具别名表 ──────────────────────────────────────
+    _ALIASES: dict[str, str] = {
+        "记事本":    "notepad",
+        "计算器":    "calc",
+        "画图":      "mspaint",
+        "资源管理器": "explorer",
+        "文件管理器": "explorer",
+        "我的电脑":  "explorer",
+        "桌面":      str(Path.home() / "Desktop"),
+        "命令行":    "cmd",
+        "cmd":       "cmd",
+        "任务管理器": "taskmgr",
+        "控制面板":  "control",
+        "截图":      "snippingtool",
+        "截图工具":  "snippingtool",
+    }
+
+    raw_name = name.strip()
+    target = _ALIASES.get(raw_name, raw_name)
+
+    # ── 1) 路径存在 → os.startfile ─────────────────────────
+    p = Path(target)
+    if p.exists():
+        try:
+            os.startfile(str(p))
+            return f"已打开：{raw_name}"
+        except Exception as e:
+            return f"打开路径失败：{e}"
+
+    # ── 2) 用户预设的快捷启动列表（优先匹配） ──────────────
+    try:
+        from config import get_quick_launch_apps
+        for app in get_quick_launch_apps():
+            app_name = app.get("name", "")
+            if raw_name.lower() == app_name.lower() or raw_name.lower() in app_name.lower():  # "网易云" 匹配 "网易云音乐"
+                app_path = app.get("path", "").strip()
+                if app_path and Path(app_path).exists():
+                    try:
+                        os.startfile(app_path)
+                        return f"已启动：{raw_name}"
+                    except Exception:
+                        pass
+                # 没填路径或路径无效，试试 exe_name 在 PATH 中查找
+                exe_name = app.get("exe_name", "").strip()
+                if exe_name:
+                    exe_path = shutil.which(exe_name)
+                    if exe_path:
+                        subprocess.Popen(exe_path, shell=False)
+                        return f"已启动：{raw_name}"
+                # 路径和 exe_name 都无效，但名称匹配上了 — 继续往下走其他查找方式
+    except Exception:
+        pass
+
+    # ── 3) 在 PATH 中 → shutil.which / where ────────────────
+    exe_path = shutil.which(target)
+    if not exe_path:
+        try:
+            result = subprocess.run(
+                ["where", target], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                exe_path = result.stdout.strip().splitlines()[0].strip()
+        except Exception:
+            pass
+
+    if exe_path:
+        try:
+            subprocess.Popen(exe_path, shell=False)
+            return f"已启动：{raw_name}"
+        except Exception as e:
+            return f"无法启动 '{raw_name}'：{e}"
+
+    # ── 4) 已知应用 → 检查常见安装路径（非递归，快速） ─────
+    _KNOWN_PATHS: dict[str, list[str]] = {
+        "网易云": [
+            r"E:\CloudMusic\CloudMusic\cloudmusic.exe",
+            r"C:\Program Files\NetEase\CloudMusic\cloudmusic.exe",
+        ],
+        "网易云音乐": [
+            r"E:\CloudMusic\CloudMusic\cloudmusic.exe",
+            r"C:\Program Files\NetEase\CloudMusic\cloudmusic.exe",
+        ],
+        "steam": [
+            r"C:\Program Files (x86)\Steam\steam.exe",
+        ],
+        "微信": [
+            r"D:\weChatData\Weixin\Weixin.exe",
+            r"C:\Program Files\Tencent\WeChat\WeChat.exe",
+        ],
+        "qq": [
+            r"E:\Edge_install\QQ\QQ.exe",
+            r"C:\Program Files\Tencent\QQ\QQ.exe",
+        ],
+    }
+    for known_path in _KNOWN_PATHS.get(raw_name.lower(), []):
+        if Path(known_path).exists():
+            try:
+                os.startfile(known_path)
+                return f"已启动：{raw_name}"
+            except Exception:
+                pass
+
+    # ── 5) 兜底：shell 执行 ─────────────────────────────────
+    try:
+        result = subprocess.run(
+            target, shell=True, capture_output=True, timeout=5
+        )
+        if result.returncode == 0:
+            return f"已启动：{raw_name}"
+        err = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+        if not err:
+            err = f"进程退出码 {result.returncode}"
+        return f"无法启动 '{raw_name}'：{err}"
+    except subprocess.TimeoutExpired:
+        return f"已启动：{raw_name}"
+    except Exception as e:
+        return f"无法启动 '{raw_name}'：{e}"
+
+
+def get_clipboard() -> str:
+    """读取剪贴板中的文字内容（通过 PowerShell，无需额外依赖）。"""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+            capture_output=True, text=True, timeout=5,
+            encoding="utf-8", errors="replace"
+        )
+        content = result.stdout.strip()
+        if not content:
+            return "剪贴板当前为空，或内容不是文字（如图片）。"
+        if len(content) > 3000:
+            return content[:3000] + f"\n\n… [剪贴板内容较长，已截取前 3000 字符]"
+        return f"剪贴板内容如下：\n\n{content}"
+    except subprocess.TimeoutExpired:
+        return "读取剪贴板超时。"
+    except Exception as e:
+        return f"读取剪贴板出错：{e}"
+
+
+def run_command(command: str) -> str:
+    from config import ALLOWED_COMMANDS
+    cmd_lower = command.strip().lower()
+    if not any(cmd_lower.startswith(c) for c in ALLOWED_COMMANDS):
+        return f"拒绝执行：'{command}' 不在允许的命令白名单中"
+    try:
+        result = subprocess.run(
+            command, shell=True, capture_output=True,
+            text=True, timeout=15, encoding="utf-8", errors="replace"
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        output = output.strip() or "（命令执行完毕，无输出）"
+        if len(output) > 3000:
+            output = output[:3000] + "\n... [输出过长已截断]"
+        return output
+    except subprocess.TimeoutExpired:
+        return "命令执行超时（15秒）"
+    except Exception as e:
+        return f"命令执行出错: {e}"
+
+
+# ==================== 联网搜索工具函数 ====================
+
+def web_search(query: str, max_results: int = 5) -> str:
+    """使用 DuckDuckGo 搜索并返回格式化的结果"""
+    try:
+        from duckduckgo_search import DDGS
+    except ImportError:
+        return "错误：未安装 duckduckgo-search 库，请执行：pip install duckduckgo-search"
+
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=min(max_results, 10)))
+        if not results:
+            return f"未找到与「{query}」相关的结果。"
+        
+        output_lines = [f"🔍 搜索「{query}」的结果："]
+        for i, r in enumerate(results, 1):
+            title = r.get('title', '无标题')
+            href = r.get('href', '')
+            body = r.get('body', '')
+            output_lines.append(f"\n{i}. {title}\n   链接：{href}\n   摘要：{body}")
+        return "\n".join(output_lines)
+    except Exception as e:
+        return f"搜索失败：{e}"
+
+# ==================== 网页内容提取工具函数 ====================
+
+def fetch_webpage(url: str, max_length: int = 3000) -> str:
+    """获取网页文本内容，返回纯文本（最多 max_length 字符）"""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return "错误：未安装 requests 或 beautifulsoup4，请执行：pip install requests beautifulsoup4"
+
+    if not url.startswith(('http://', 'https://')):
+        return "错误：URL 必须以 http:// 或 https:// 开头"
+
+    # ========== 1. 更真实的请求头（模拟 Chrome 最新版） ==========
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate',                 # 去掉 br，避免解压问题
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Referer': 'https://www.baidu.com/',                # 伪装从百度跳转
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Cache-Control': 'max-age=0',
+    }
+
+    # ---------- 可选：添加 Cookie（强烈推荐用于百度百科） ----------
+    # 打开浏览器访问百度百科，按 F12 → 网络 → 刷新 → 找到任意请求的 Cookie 字段，
+    # 复制类似 "BAIDUID=xxx; BIDUPSID=xxx; PSTM=xxx" 的内容粘贴到下面。
+    # 如果你不添加，也能工作，但可能偶尔遇到 403。
+    BAIDU_COOKIE = ""  # 例如 "BAIDUID=abc123; BIDUPSID=abc123; PSTM=12345678"
+    if BAIDU_COOKIE:
+        headers['Cookie'] = BAIDU_COOKIE
+
+    session = requests.Session()
+    session.headers.update(headers)
+    session.max_redirects = 5
+
+    # ========== 2. 发起请求 ==========
+    try:
+        resp = session.get(url, timeout=15)
+        resp.raise_for_status()
+        resp.encoding = resp.apparent_encoding or 'utf-8'
+        soup = BeautifulSoup(resp.text, 'lxml')
+
+        # ========== 3. 针对不同网站的正文提取策略 ==========
+        text = ""
+
+        # ----- 百度百科专用（优先） -----
+        if 'baike.baidu.com' in url:
+            # 百度百科正文容器常见 class
+            containers = ['.main-content', '.para', '.lemma-summary', '.basic-info', '.lemmaWgt-promotion']
+            for selector in containers:
+                elems = soup.select(selector)
+                if elems:
+                    # 用换行分隔各个段落
+                    parts = []
+                    for e in elems:
+                        p_text = e.get_text(separator='\n', strip=True)
+                        if p_text:
+                            parts.append(p_text)
+                    if parts:
+                        text = '\n\n'.join(parts)
+                        break
+            # 如果上述都没提取到，回退到移除脚本样式后全页提取
+            if not text:
+                for script in soup(["script", "style", "meta", "link", "noscript"]):
+                    script.decompose()
+                text = soup.get_text()
+
+        else:
+            # ----- 通用网页：先移除干扰标签 -----
+            for script in soup(["script", "style", "meta", "link", "noscript"]):
+                script.decompose()
+            text = soup.get_text()
+
+        # 清理空白行
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = '\n'.join(chunk for chunk in chunks if chunk)
+
+        if not text:
+            return "未能提取到任何文本内容，可能是网页结构特殊（如需要 JS 渲染）。"
+
+        # 长度限制
+        if len(text) > max_length:
+            text = text[:max_length] + "\n\n... [内容过长，已截断]"
+        return f"网页内容如下：\n\n{text}"
+
+    except requests.exceptions.Timeout:
+        return "请求超时，请稍后再试。"
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 403:
+            return "访问被拒绝（403）。建议：① 在代码中填写 BAIDU_COOKIE（见函数内注释）；② 改用 fetch_webpage_browser 工具。"
+        return f"获取网页失败：HTTP {e.response.status_code}"
+    except requests.exceptions.RequestException as e:
+        return f"获取网页失败：{e}"
+    except Exception as e:
+        return f"处理网页时出错：{e}"
+
+
+def fetch_webpage_via_api(url: str, max_length: int = 3000) -> str:
+    try:
+        import requests
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+    except ImportError:
+        return "错误：未安装 requests，请执行：pip install requests"
+
+    if not url.startswith(('http://', 'https://')):
+        return "错误：URL 必须以 http:// 或 https:// 开头"
+
+    api_url = f"https://r.jina.ai/{url}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    }
+    
+    # 创建带重试机制的 session
+    session = requests.Session()
+    retries = Retry(total=2, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+    
+    try:
+        resp = session.get(api_url, headers=headers, timeout=60)  # 增加到60秒
+        if resp.status_code == 200:
+            text = resp.text
+            if len(text) > max_length:
+                text = text[:max_length] + "\n\n... [内容过长，已截断]"
+            return f"网页解析结果（通过 Jina Reader）如下：\n\n{text}"
+        else:
+            snippet = resp.text[:500] if resp.text else "无响应体"
+            return f"解析服务返回错误码 {resp.status_code}，响应片段：{snippet}。"
+    except requests.exceptions.Timeout:
+        return "请求超时，Jina Reader 服务响应过慢。建议使用浏览器模式（fetch_webpage_browser）重试，或稍后再试。"
+    except Exception as e:
+        return f"调用解析服务失败：{e}"
+
+# ==================== 时间工具函数 ====================
+
+def get_current_time(format: str = "full") -> str:
+    """
+    获取当前日期时间信息，支持农历和节假日判断。
+    :param format: full/date/time/weekday/lunar/holiday
+    :return: 格式化的时间信息
+    """
+    now = datetime.now()
+    weekday_names = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+    weekday = weekday_names[now.weekday()]
+    
+    # 基础日期时间字符串
+    date_str = now.strftime("%Y年%m月%d日")
+    time_str = now.strftime("%H:%M:%S")
+    
+    # 获取农历信息（需要 zhdate 库）
+    lunar_info = _get_lunar_info(now)
+    
+    # 获取节假日信息（需要 chinese_calendar 库）
+    holiday_info = _get_holiday_info(now)
+    
+    if format == "date":
+        return date_str
+    elif format == "time":
+        return time_str
+    elif format == "weekday":
+        return weekday
+    elif format == "lunar":
+        return lunar_info if lunar_info else "无法获取农历信息"
+    elif format == "holiday":
+        return holiday_info if holiday_info else "今天不是法定节假日"
+    else:  # full
+        result = f"公历：{date_str} {time_str} {weekday}"
+        if lunar_info:
+            result += f"\n农历：{lunar_info}"
+        if holiday_info:
+            result += f"\n{holiday_info}"
+        return result
+
+
+def _get_lunar_info(dt: datetime) -> Optional[str]:
+    """获取农历日期信息，返回格式如 '甲辰年腊月初三'。"""
+    try:
+        from zhdate import ZhDate
+        lunar = ZhDate.from_datetime(dt)
+        lunar_month = lunar.lunar_month
+        lunar_day = lunar.lunar_day
+        lunar_year = lunar.lunar_year
+        
+        month_str = f"闰{lunar_month}月" if lunar.is_leap else f"{lunar_month}月"
+        
+        return f"{lunar_year}年{month_str}{lunar_day}日"
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+
+def _get_holiday_info(dt: datetime) -> Optional[str]:
+    """获取节假日信息。"""
+    try:
+        import chinese_calendar as cc
+        date = dt.date()
+        
+        if cc.is_holiday(date):
+            holiday_name = cc.get_holiday_detail(date)[0]
+            if holiday_name:
+                return f"今天是法定节假日：{holiday_name}"
+            else:
+                return "今天是法定节假日"
+        else:
+            if cc.is_workday(date):
+                return None
+            else:
+                weekday_names = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+                weekday = weekday_names[dt.weekday()]
+                if weekday in ["星期六", "星期日"]:
+                    return f"今天是{weekday}（周末）"
+                return None
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+
+# ==================== 余额查询工具函数 ====================
+
+def get_balance() -> str:
+    """查询 DeepSeek API 账户余额并返回格式化文本"""
+    from utils.balance import get_balance_info, format_balance_message
+    
+    balance_info, error = get_balance_info()
+    if error:
+        return f"查询余额失败：{error}"
+    return format_balance_message(balance_info)
+
+
+# ==================== 待办清单工具函数 ====================
+
+def _get_todo_manager():
+    """延迟加载 TodoManager，避免循环导入"""
+    global _todo_manager
+    if _todo_manager is None:
+        from utils.todo_manager import TodoManager
+        _todo_manager = TodoManager()
+    return _todo_manager
+
+
+def _add_todo(title: str, due_time: str = None, priority: str = "medium", description: str = "") -> str:
+    """添加待办事项"""
+    if not title:
+        return "待办标题不能为空。"
+    manager = _get_todo_manager()
+    todo = manager.add_todo(title, due_time, priority, description)
+    due_str = ""
+    if due_time:
+        try:
+            dt = datetime.fromisoformat(due_time)
+            due_str = f"，截止时间 {dt.strftime('%Y-%m-%d %H:%M')}"
+        except:
+            pass
+    priority_cn = {"high": "高", "medium": "中", "low": "低"}.get(priority, "中")
+    return f"已添加待办：{title}（优先级：{priority_cn}{due_str}）"
+
+
+def _list_todos() -> str:
+    """列出未完成的待办事项"""
+    manager = _get_todo_manager()
+    todos = manager.get_todos(completed=False)
+    if not todos:
+        return "当前没有未完成的待办事项。"
+    # 按优先级和截止时间排序
+    def sort_key(t):
+        priority_order = {"high": 0, "medium": 1, "low": 2}
+        due_order = 0 if t.due_time else 1
+        due_time = t.due_time if t.due_time else "9999-12-31"
+        return (priority_order[t.priority], due_order, due_time)
+    todos.sort(key=sort_key)
+    
+    lines = ["你的待办清单："]
+    for idx, t in enumerate(todos, 1):
+        priority_cn = {"high": "高", "medium": "中", "low": "低"}.get(t.priority, "中")
+        due_str = ""
+        if t.due_time:
+            try:
+                dt = datetime.fromisoformat(t.due_time)
+                due_str = f"，截止 {dt.strftime('%m-%d %H:%M')}"
+            except:
+                pass
+        lines.append(f"{idx}. [{priority_cn}]{t.title}{due_str}")
+    return "\n".join(lines)
+
+
+def _complete_todo(title_keyword: str) -> str:
+    """根据标题关键词标记待办为完成"""
+    if not title_keyword:
+        return "请提供待办标题的关键词。"
+    manager = _get_todo_manager()
+    todos = manager.get_todos(completed=False)
+    matches = [t for t in todos if title_keyword.lower() in t.title.lower()]
+    if not matches:
+        return f"没有找到标题包含「{title_keyword}」的待办事项。"
+    if len(matches) > 1:
+        # 返回多个匹配项，让 DeepSeek 在下一轮询问用户选择
+        names = "、".join([f"「{t.title}」" for t in matches])
+        return f"找到多个匹配的待办：{names}。请指定更精确的关键词。"
+    todo = matches[0]
+    manager.complete_todo(todo.id)
+    return f"已标记「{todo.title}」为完成。"
+
+
+
+def read_excel(file_path: str, sheet_name: str = None, max_rows: int = 100) -> str:
+    """读取 Excel 文件，返回文本表格。"""
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return "错误：未安装 openpyxl，请执行：pip install openpyxl"
+    try:
+        wb = load_workbook(file_path, data_only=True)
+        if sheet_name is None:
+            ws = wb.active
+        else:
+            ws = wb[sheet_name]
+        rows = []
+        for i, row in enumerate(ws.iter_rows(values_only=True)):
+            if i >= max_rows:
+                break
+            rows.append([str(cell) if cell is not None else "" for cell in row])
+        if not rows:
+            return "文件为空或没有数据"
+        # 转换为 Markdown 表格样式
+        col_widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+        header_sep = "|".join("-" * (w + 2) for w in col_widths)
+        lines = []
+        for row in rows:
+            line = "| " + " | ".join(cell.ljust(col_widths[i]) for i, cell in enumerate(row)) + " |"
+            lines.append(line)
+        return "表格内容如下：\n" + "\n".join(lines[:2] + [header_sep] + lines[2:]) if len(rows) > 1 else "表格内容如下：\n" + lines[0]
+    except Exception as e:
+        return f"读取 Excel 出错：{e}"
+
+
+def run_python_code(code: str, timeout: int = 10) -> str:
+    """在安全沙箱中执行 Python 代码（子进程）。"""
+    import subprocess
+
+    # 将用户代码的每一行前面加上4个空格（缩进）
+    indented_code = "\n".join("    " + line for line in code.splitlines())
+
+    sandbox_script = f"""
+import sys
+from io import StringIO
+
+# 限制 builtins
+import builtins
+_SAFE_BUILTINS = {{
+    'abs': abs, 'all': all, 'any': any, 'bool': bool, 'chr': chr,
+    'complex': complex, 'dict': dict, 'divmod': divmod, 'enumerate': enumerate,
+    'filter': filter, 'float': float, 'format': format, 'frozenset': frozenset,
+    'int': int, 'isinstance': isinstance, 'issubclass': issubclass, 'iter': iter,
+    'len': len, 'list': list, 'map': map, 'max': max, 'min': min, 'next': next,
+    'pow': pow, 'print': print, 'range': range, 'repr': repr, 'reversed': reversed,
+    'round': round, 'set': set, 'slice': slice, 'sorted': sorted, 'str': str,
+    'sum': sum, 'tuple': tuple, 'type': type, 'zip': zip
+}}
+# 禁用文件操作、系统调用等
+def __disabled(*args, **kwargs): raise RuntimeError("此操作被禁止")
+for dangerous in ['open', 'exec', 'eval', 'compile', '__import__', 'globals', 'locals', 'vars', 'dir', 'help', 'input', 'breakpoint']:
+    builtins.__dict__[dangerous] = __disabled
+
+# 执行用户代码
+old_stdout = sys.stdout
+sys.stdout = StringIO()
+try:
+{indented_code}
+except Exception as e:
+    print(f"ERROR: {{e}}", file=sys.stderr)
+finally:
+    output = sys.stdout.getvalue()
+    sys.stdout = old_stdout
+    print(output, end='')
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", sandbox_script],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            encoding="utf-8",
+            errors="replace"
+        )
+        out = result.stdout.strip()
+        err = result.stderr.strip()
+        if err:
+            return f"代码执行错误：{err}\n输出：{out if out else '(无输出)'}"
+        return out if out else "代码执行成功（无输出）"
+    except subprocess.TimeoutExpired:
+        return f"代码执行超时（{timeout}秒）"
+    except Exception as e:
+        return f"执行失败：{e}"
+    
+def write_excel(file_path: str, data: list, sheet_name: str = "Sheet1") -> str:
+    """将二维数据写入 Excel 文件。"""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        return "错误：未安装 openpyxl，请执行：pip install openpyxl"
+    
+    try:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = sheet_name
+        
+        for row_idx, row in enumerate(data, 1):
+            for col_idx, value in enumerate(row, 1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
+        
+        wb.save(file_path)
+        return f"成功写入 Excel 文件：{file_path}，共 {len(data)} 行数据。"
+    except Exception as e:
+        return f"写入 Excel 失败：{e}"
+
+def copy_excel_content(source_path: str, target_path: str, source_sheet: str = None, target_sheet: str = None) -> str:
+    """将源 Excel 的工作表内容复制到目标文件（若目标文件不存在则创建）。"""
+    try:
+        from openpyxl import load_workbook, Workbook
+    except ImportError:
+        return "错误：未安装 openpyxl，请执行：pip install openpyxl"
+    
+    try:
+        # 加载源文件
+        src_wb = load_workbook(source_path, data_only=True)
+        if source_sheet is None:
+            src_ws = src_wb.active
+            source_sheet = src_ws.title
+        else:
+            src_ws = src_wb[source_sheet]
+        
+        # 加载或创建目标文件
+        try:
+            dst_wb = load_workbook(target_path)
+        except FileNotFoundError:
+            dst_wb = Workbook()
+            # 删除默认的 Sheet
+            default_sheet = dst_wb.active
+            dst_wb.remove(default_sheet)
+        
+        # 确定目标工作表名称
+        if target_sheet is None:
+            target_sheet = source_sheet
+        # 如果目标工作簿中已有同名工作表，先删除或重命名（这里选择删除）
+        if target_sheet in dst_wb.sheetnames:
+            dst_wb.remove(dst_wb[target_sheet])
+        
+        # 复制数据
+        dst_ws = dst_wb.create_sheet(title=target_sheet)
+        for row in src_ws.iter_rows(values_only=True):
+            dst_ws.append(row)
+        
+        # 保存目标文件
+        dst_wb.save(target_path)
+        return f"成功将 {source_path} 的工作表「{source_sheet}」复制到 {target_path} 的工作表「{target_sheet}」。"
+    except Exception as e:
+        return f"复制 Excel 失败：{e}"
+    
+
+
+def format_document(content: str, output_path: str, use_template: bool = True) -> str:
+    """将Markdown内容转换为格式化的Word文档。"""
+    try:
+        from md2docx_python.src.md2docx_python import markdown_to_word
+    except ImportError:
+        return "❌ 排版失败：未安装 md2docx-python 库，请执行 `pip install md2docx-python`。"
+
+    try:
+        import tempfile
+        import os
+
+        # 将Markdown内容写入一个临时文件
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as tmp_md_file:
+            tmp_md_file.write(content)
+            tmp_md_path = tmp_md_file.name
+
+        # 调用库进行转换
+        # 注意：md2docx-python 的导入路径可能需要根据实际安装情况调整
+        markdown_to_word(tmp_md_path, output_path)
+
+        # 清理临时文件
+        os.unlink(tmp_md_path)
+
+        return f"✅ 文档排版成功！已将格式化后的内容保存至：{output_path}"
+    except Exception as e:
+        return f"❌ 文档排版过程中发生错误：{e}"
+    
+
+# ==================== TLS 指纹伪装网页提取工具函数 ====================
+
+def fetch_webpage_stealth(url: str, max_length: int = 3000) -> str:
+    """
+    使用 curl_cffi 的 Chrome 指纹伪装获取网页内容。
+    比 requests 更能绕过反爬，比 Playwright 快得多。
+    """
+    if not url.startswith(('http://', 'https://')):
+        return "错误：URL 必须以 http:// 或 https:// 开头"
+    try:
+        from curl_cffi import requests as curl_requests
+        headers = {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate',
+        }
+        resp = curl_requests.get(
+            url,
+            impersonate="chrome120",
+            headers=headers,
+            timeout=30,
+        )
+        resp.encoding = resp.encoding or 'utf-8'
+        text = resp.text
+
+        # 简单提取文本（去除 HTML 标签）
+        import re
+        text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        if not text:
+            return "未能提取到任何文本内容（网页可能依赖 JavaScript 渲染）。"
+
+        if len(text) > max_length:
+            text = text[:max_length] + "\n\n... [内容过长，已截断]"
+        return f"网页内容（TLS 指纹伪装模式）如下：\n\n{text}"
+
+    except ImportError:
+        return "错误：未安装 curl_cffi 库，请执行：pip install curl_cffi"
+    except Exception as e:
+        return f"获取网页失败（stealth 模式）：{e}"
+
+
+def fetch_webpage_browser(url: str, max_length: int = 3000) -> str:
+    try:
+        from playwright.sync_api import sync_playwright
+        from playwright_stealth import stealth_sync
+    except ImportError:
+        return "错误：未安装 playwright 或 playwright-stealth，请执行：pip install playwright playwright-stealth"
+
+    if not url.startswith(('http://', 'https://')):
+        return "错误：URL 必须以 http:// 或 https:// 开头"
+
+    try:
+        with sync_playwright() as p:
+            # 使用有头模式（可以设置为 False，但增加 stealth 后无头也可能通过）
+            browser = p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
+            context = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                viewport={'width': 1920, 'height': 1080}
+            )
+            page = context.new_page()
+            # 应用 stealth 隐藏自动化特征
+            stealth_sync(page)
+            page.goto(url, timeout=30000)
+            page.wait_for_load_state("networkidle")
+            # 模拟滚动到底部，触发懒加载
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            page.wait_for_timeout(1000)
+            text = page.inner_text('body')
+            browser.close()
+            if not text or len(text.strip()) < 50:
+                return "未能提取到有效文本内容。"
+            lines = (line.strip() for line in text.splitlines())
+            text = '\n'.join(line for line in lines if line)
+            if len(text) > max_length:
+                text = text[:max_length] + "\n\n... [内容过长，已截断]"
+            return f"网页内容（增强浏览器模式）如下：\n\n{text}"
+    except Exception as e:
+        return f"浏览器获取网页失败：{e}"
+
+
+
+# ==================== 精确文件编辑工具函数 ====================
+
+def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
+    """在文件中精确替换指定字符串，只改动目标内容，不影响文件其他部分。"""
+    try:
+        p = Path(path)
+        if not p.exists():
+            return f"错误：文件不存在 → {path}"
+        if not p.is_file():
+            return f"错误：路径不是文件 → {path}"
+
+        # 读取原始内容（保留原始编码）
+        raw = p.read_bytes()
+        # 检测编码
+        encoding = "utf-8"
+        try:
+            import chardet
+            detected = chardet.detect(raw)
+            enc = detected.get("encoding") or "utf-8"
+            if (detected.get("confidence") or 0) >= 0.6:
+                encoding = enc
+        except ImportError:
+            for enc in ("utf-8", "gbk", "gb2312", "gb18030"):
+                try:
+                    raw.decode(enc)
+                    encoding = enc
+                    break
+                except (UnicodeDecodeError, LookupError):
+                    continue
+
+        content = raw.decode(encoding, errors="replace")
+
+        if old_string not in content:
+            # 给出有用的诊断信息
+            preview = old_string[:60].replace("\n", "\\n")
+            return (
+                f"错误：在文件中找不到指定内容，替换失败。\n"
+                f"查找内容预览：{preview}...\n"
+                f"提示：请用 read_file 重新确认文件内容后再尝试，注意空格、换行、缩进必须完全一致。"
+            )
+
+        count = content.count(old_string)
+        if replace_all:
+            new_content = content.replace(old_string, new_string)
+            replaced = count
+        else:
+            new_content = content.replace(old_string, new_string, 1)
+            replaced = 1
+
+        p.write_text(new_content, encoding=encoding)
+
+        if count > 1 and not replace_all:
+            return (
+                f"已替换第 1 处（文件中共有 {count} 处匹配）。\n"
+                f"文件已保存：{path}\n"
+                f"提示：若需替换全部，请用 replace_all=true 再次调用。"
+            )
+        return f"替换成功，共替换 {replaced} 处。文件已保存：{path}"
+
+    except Exception as e:
+        return f"编辑文件出错：{e}"
+
+
+# ==================== 文件内容搜索工具函数 ====================
+
+def grep_file(path: str, keyword: str, context_lines: int = 2) -> str:
+    """在文件内容中搜索关键词，返回带行号的匹配结果及上下文。"""
+    try:
+        p = Path(path)
+        if not p.exists():
+            return f"错误：文件不存在 → {path}"
+        if not p.is_file():
+            return f"错误：路径不是文件 → {path}"
+
+        content, err = _extract_full_text(p)
+        if err:
+            return f"读取文件出错：{err}"
+        if not content:
+            return "（文件内容为空）"
+
+        lines = content.splitlines()
+        keyword_lower = keyword.lower()
+        matches: list[int] = [
+            i for i, line in enumerate(lines)
+            if keyword_lower in line.lower()
+        ]
+
+        if not matches:
+            return f"在文件「{p.name}」中未找到包含「{keyword}」的内容。"
+
+        # 合并重叠的上下文窗口，避免重复输出
+        ctx = context_lines
+        segments: list[tuple[int, int]] = []
+        for idx in matches:
+            start = max(0, idx - ctx)
+            end   = min(len(lines) - 1, idx + ctx)
+            if segments and start <= segments[-1][1] + 1:
+                segments[-1] = (segments[-1][0], end)
+            else:
+                segments.append((start, end))
+
+        result_parts = [f"在「{p.name}」中找到 {len(matches)} 处匹配「{keyword}」：\n"]
+        match_set = set(matches)
+        for seg_start, seg_end in segments:
+            result_parts.append(f"{'─' * 40}")
+            for i in range(seg_start, seg_end + 1):
+                prefix = ">>>" if i in match_set else "   "
+                result_parts.append(f"{prefix} {i + 1:4d} | {lines[i]}")
+        result_parts.append(f"{'─' * 40}")
+
+        result = "\n".join(result_parts)
+        if len(result) > 8000:
+            result = result[:8000] + f"\n\n... [结果过长已截断，共 {len(matches)} 处匹配]"
+        return result
+
+    except Exception as e:
+        return f"搜索文件出错：{e}"
+
+
+# ==================== 按行范围读取工具函数 ====================
+
+def read_file_lines(path: str, start_line: int, end_line: int = None) -> str:
+    """读取文件指定行范围的内容，返回带行号的文字。"""
+    try:
+        p = Path(path)
+        if not p.exists():
+            return f"错误：文件不存在 → {path}"
+        if not p.is_file():
+            return f"错误：路径不是文件 → {path}"
+
+        content, err = _extract_full_text(p)
+        if err:
+            return f"读取文件出错：{err}"
+        if not content:
+            return "（文件内容为空）"
+
+        lines = content.splitlines()
+        total = len(lines)
+
+        # 行号从 1 开始，转为 0-based
+        s = max(1, start_line) - 1
+        e = (min(end_line, total) if end_line is not None else total)
+
+        if s >= total:
+            return f"错误：起始行 {start_line} 超出文件总行数 {total}。"
+
+        selected = lines[s:e]
+        header = f"[{p.name} | 第 {s+1}~{s+len(selected)} 行 / 共 {total} 行]\n{'─'*40}\n"
+        body = "\n".join(f"{s+1+i:4d} | {line}" for i, line in enumerate(selected))
+
+        result = header + body
+        if len(result) > 10000:
+            result = result[:10000] + "\n\n... [内容过长已截断]"
+        return result
+
+    except Exception as e:
+        return f"读取行范围出错：{e}"
+
+
+# ==================== 文件模式匹配工具函数 ====================
+
+def glob_files(directory: str, pattern: str, max_results: int = 50) -> str:
+    """在目录中按模式批量查找文件，支持 * ? ** 通配符。"""
+    try:
+        base = Path(directory)
+        if not base.exists():
+            return f"错误：目录不存在 → {directory}"
+        if not base.is_dir():
+            return f"错误：路径不是目录 → {directory}"
+
+        matches = sorted(base.glob(pattern))
+        # 只保留文件（过滤目录）
+        file_matches = [p for p in matches if p.is_file()]
+
+        if not file_matches:
+            return f"在「{directory}」中按模式「{pattern}」未找到任何文件。"
+
+        total = len(file_matches)
+        shown = file_matches[:max_results]
+        lines = [f"找到 {total} 个文件（模式：{pattern}）："]
+        for p in shown:
+            size = p.stat().st_size
+            size_str = f"{size:,} B" if size < 1024 else f"{size // 1024:,} KB"
+            lines.append(f"  {p}  ({size_str})")
+        if total > max_results:
+            lines.append(f"  ... 还有 {total - max_results} 个文件未显示（可增大 max_results）")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"文件模式匹配出错：{e}"
+
+
+
+def ocr_image(image_path: str, language: str = "chi_sim+eng") -> str:
+    """
+    使用便携版 Tesseract 识别图片文字。
+    支持开发环境和打包后的 exe 环境。
+    """
+    import sys
+    import subprocess
+    from PIL import Image
+    from pathlib import Path
+
+    if language == "ch":
+        language = "chi_sim+eng"
+
+    # 1. 定位 Tesseract 根目录（支持打包后）
+    if getattr(sys, 'frozen', False):
+        # 打包后：程序所在目录为 base_dir
+        base_dir = Path(sys.executable).parent
+    else:
+        # 开发环境：项目根目录
+        base_dir = Path(__file__).parent.parent
+
+    ocr_dir = base_dir / "ocr"
+    tesseract_exe = ocr_dir / "tesseract.exe"
+    tessdata_dir = ocr_dir / "tessdata"
+
+    if not tesseract_exe.exists():
+        return f"错误：找不到 tesseract.exe，期望路径：{tesseract_exe}"
+    if not tessdata_dir.exists():
+        return f"错误：找不到语言包目录，期望路径：{tessdata_dir}"
+
+    # 2. 调用 Tesseract 命令行（避免 pytesseract 编码问题）
+    cmd = [
+        str(tesseract_exe),
+        str(Path(image_path).resolve()),
+        "stdout",
+        "-l", language,
+        "--tessdata-dir", str(tessdata_dir)
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+        if result.returncode != 0:
+            return f"OCR 识别失败（返回码 {result.returncode}）：{result.stderr.decode('utf-8', errors='replace')}"
+        text = result.stdout.decode('utf-8', errors='replace').strip()
+        if not text:
+            return "未能从图片中提取到文字。"
+        if len(text) > 3000:
+            text = text[:3000] + "\n\n... [内容过长，已截断]"
+        return f"图片中的文字识别结果：\n\n{text}"
+    except subprocess.TimeoutExpired:
+        return "OCR 识别超时（30秒）"
+    except Exception as e:
+        return f"OCR 识别失败：{e}"
+    
+
+# ==================== 批量OCR工具函数 ====================
+
+def ocr_batch(folder_path: str, language: str = "chi_sim+eng") -> str:
+    """遍历文件夹，对每个文件调用 ocr_image 函数进行识别，并汇总结果"""
+    folder = Path(folder_path)
+    if not folder.exists():
+        return f"错误：文件夹不存在 → {folder_path}"
+    if not folder.is_dir():
+        return f"错误：路径不是文件夹 → {folder_path}"
+
+    # 定义支持的图片格式
+    image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.tiff'}
+    image_files = [f for f in folder.iterdir() if f.suffix.lower() in image_extensions]
+
+    if not image_files:
+        return f"在「{folder_path}」中没有找到任何png/jpg/bmp格式的图片。"
+
+    result_lines = []
+    for img_file in image_files:
+        # 调用 ocr_image 获取识别结果（它会返回带前缀的字符串）
+        ocr_result = ocr_image(str(img_file), language)
+        result_lines.append(f"### 文件：{img_file.name} ###")
+        result_lines.append(ocr_result)
+        result_lines.append("")  # 空行分隔
+
+    final_result = "\n".join(result_lines)
+    # 限制总长度，防止超出模型上下文
+    if len(final_result) > 8000:
+        final_result = final_result[:8000] + "\n\n... [结果过长，已截断]"
+    return final_result
+
+
+def describe_image(image_path: str, prompt: str = "") -> str:
+    """调用视觉模型理解图片内容并返回自然语言描述。"""
+    from brain.vision import describe_image as _vision_describe
+    if prompt and prompt.strip():
+        vision_prompt = f"请根据用户的提问来描述这张图片：{prompt}"
+    else:
+        vision_prompt = "请详细描述这张图片里的内容，包括人物、物体、场景、动作、颜色等。"
+    return _vision_describe(image_path, prompt=vision_prompt)
+
+def send_file_to_qq(path: str, name: str = "") -> str:
+    """将本地文件发送到主人的 QQ 上。"""
+    global _qq_bridge_worker
+    if _qq_bridge_worker is None:
+        return "发送失败：QQ 桥接未启动。请先在 GUI 中开启 QQ 聊天功能。"
+    return _qq_bridge_worker.send_file_to_qq(path, name)
+
+def capture_from_camera():
+    from utils.camera import Camera
+    path = Camera.capture_image()
+    return path if path else "拍照失败"
+
+
+# ════════ 肩载摄像头（ESP32-CAM）工具 ════════
+
+def _shoulder_exec(coro_factory):
+    """统一执行模式：创建 loop → 连接 → 执行 → 断开 → 关闭 loop。
+    coro_factory 接受 bridge 参数，返回要执行的协程。
+    """
+    bridge = _get_shoulder_bridge()
+    if bridge is None:
+        return "肩载设备未连接"
+    loop = asyncio.new_event_loop()
+    try:
+        ok = loop.run_until_complete(bridge.connect())
+        if not ok:
+            return "连接肩载设备失败：ESP32 不在线"
+        result = loop.run_until_complete(coro_factory(bridge))
+        loop.run_until_complete(bridge.disconnect())
+        return result
+    except Exception as e:
+        return f"肩载设备通信错误：{e}"
+    finally:
+        loop.close()
+
+def shoulder_photo() -> str:
+    """拍摄一张照片并保存，返回保存路径。"""
+    save_dir = Path("E:/Desktop/莲心AI/user_data/camera_shots")
+    save_dir.mkdir(parents=True, exist_ok=True)
+    path = str(save_dir / f"shoulder_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg")
+
+    def _do(bridge):
+        return bridge.photo(save_path=path)
+
+    data = _shoulder_exec(_do)
+    if isinstance(data, str):
+        return data  # 错误信息
+    if data and isinstance(data, bytes) and len(data) > 100:
+        return f"拍照成功，已保存到 {path}"
+    return "拍照失败：未收到图片数据"
+
+def shoulder_pan(angle: int) -> str:
+    """控制云台水平旋转。"""
+    def _do(bridge):
+        return bridge.pan(angle)
+    result = _shoulder_exec(_do)
+    if isinstance(result, dict) and "pan" in result:
+        return f"水平旋转到 {angle} 度完成"
+    if isinstance(result, str):
+        return result
+    return "水平旋转失败"
+
+def shoulder_tilt(angle: int) -> str:
+    """控制云台垂直俯仰。"""
+    def _do(bridge):
+        return bridge.tilt(angle)
+    result = _shoulder_exec(_do)
+    if isinstance(result, dict) and "tilt" in result:
+        return f"垂直旋转到 {angle} 度完成"
+    if isinstance(result, str):
+        return result
+    return "垂直旋转失败"
+
+def shoulder_center() -> str:
+    """云台复位到中心。"""
+    def _do(bridge):
+        return bridge.center()
+    result = _shoulder_exec(_do)
+    if isinstance(result, dict) and result.get("pan") == 90:
+        return "云台已复位到中心"
+    if isinstance(result, str):
+        return result
+    return "云台复位失败"
+
+def shoulder_status() -> str:
+    """查询设备状态。"""
+    def _do(bridge):
+        return bridge.status()
+    result = _shoulder_exec(_do)
+    if isinstance(result, dict):
+        result.pop("type", None)
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    if isinstance(result, str):
+        return result
+    return "获取状态失败"
+
+def shoulder_temp() -> str:
+    """读取 DHT11 温湿度。"""
+    def _do(bridge):
+        return bridge.temp()
+    result = _shoulder_exec(_do)
+    if isinstance(result, dict) and result.get("type") == "temp":
+        return f"当前温度：{result['temp']}°C，湿度：{result['humidity']}%"
+    if isinstance(result, str):
+        return result
+    return "读取温湿度失败：传感器无响应"
+
+
+# ── 观察记忆工具 ─────────────────────────────────────────────
+
+def _save_observation(description: str, attention: str = "", tags: list = None):
+    """记录一次观察发现。"""
+    from brain.observation_store import add
+    record = add(
+        description=description,
+        attention=attention,
+        tags=tags or [],
+    )
+    return (
+        f"已记录观察 #{record['id']}: {description[:100]}"
+        + (f"（关注：{attention}）" if attention else "")
+    )
+
+
+def _search_observations(keyword: str = "", time_from: str = "", time_to: str = "",
+                         limit: int = 10):
+    """搜索历史观察记录。"""
+    from brain.observation_store import search
+    results = search(keyword=keyword, time_from=time_from, time_to=time_to, limit=limit)
+    if not results:
+        return "没有找到匹配的观察记录。"
+    lines = [f"找到 {len(results)} 条观察记录:"]
+    for r in results:
+        lines.append(
+            f"- [{r['timestamp']}] {r['description'][:120]}"
+            + (f" (关注: {r['attention']})" if r.get('attention') else "")
+        )
+    return "\n".join(lines)
+
+
+def _get_recent_observations(limit: int = 10):
+    """获取最近 N 条观察记录。"""
+    from brain.observation_store import recent
+    results = recent(limit=limit)
+    if not results:
+        return "目前还没有观察记录。"
+    lines = [f"最近 {len(results)} 条观察记录:"]
+    for r in results:
+        lines.append(
+            f"- [{r['timestamp']}] {r['description'][:120]}"
+            + (f" (关注: {r['attention']})" if r.get('attention') else "")
+        )
+    return "\n".join(lines)
+
+
+def _start_shoulder_explore():
+    """启动肩载摄像头自主探索，返回探索摘要。"""
+    from brain.observation_engine import ObservationEngine
+    engine = ObservationEngine()
+    result = engine.run_explore()
+
+    summary = result.get("summary", "")
+    observations = result.get("observations", [])
+    chain_id = result.get("chain_id", "")
+
+    if observations:
+        lines = [f"探索完成！{summary}"]
+        lines.append(f"（探索链 {chain_id}，共记录 {len(observations)} 条发现）")
+        for obs in observations:
+            desc = obs["description"][:100]
+            if obs.get("attention"):
+                desc += f"（关注：{obs['attention']}）"
+            lines.append(f"  - {desc}")
+        return "\n".join(lines)
+    else:
+        return f"探索完成。{summary}（无新增记录）"
+
+
+def read_diary(date: str = None, keyword: str = None, limit: int = 1):
+    from utils.diary import get_diary_by_date, search_diaries_by_keyword, get_recent_diaries
+    if date:
+        diary = get_diary_by_date(date)
+        if not diary:
+            return f"没有找到 {date} 的日记。"
+        # 返回简短内容（也可返回全文，由 AI 自行缩减）
+        return f"【{date}】 {diary['content']}"
+    elif keyword:
+        results = search_diaries_by_keyword(keyword, limit=limit)
+        if not results:
+            return f"没有找到包含「{keyword}」的日记。"
+        output = f"找到 {len(results)} 篇包含「{keyword}」的日记：\n"
+        for r in results:
+            output += f"\n- {r['date']}：{r['content'][:100]}...\n"
+        return output
+    else:
+        results = get_recent_diaries(limit=limit)
+        if not results:
+            return "日记本还是空的，还没有写过日记。"
+        output = f"最近 {len(results)} 篇日记：\n"
+        for r in results:
+            output += f"\n- {r['date']}：{r['content'][:100]}...\n"
+        return output
+
+
+def write_diary(message_count: int = None, force: bool = False):
+    """基于今日对话记录生成日记并保存。"""
+    from datetime import datetime
+    from config import get_diary_config
+    from utils.diary import generate_diary_content, save_diary, has_diary_for_date
+
+    if _diary_message_source is None:
+        return "无法获取聊天记录：日记消息源未设置。请从桌面端或QQ端调用此功能。"
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if not force and has_diary_for_date(today_str):
+        return f"今天（{today_str}）已经有一篇日记了。如果你确实想重新生成，请明确告诉我'重新写日记'或'覆盖今天的日记'，我会帮你重写。"
+
+    cfg = get_diary_config()
+    max_msgs = message_count or cfg.get("max_messages", 30)
+    direction = cfg.get("direction", "latest")
+
+    messages = _diary_message_source()
+    if not messages:
+        return "今天还没有任何聊天记录，无法生成日记。等聊了一会儿再试试吧～"
+
+    if direction == "earliest":
+        selected = messages[:max_msgs]
+    else:
+        selected = messages[-max_msgs:] if len(messages) > max_msgs else messages
+
+    if not selected:
+        return "今天还没有任何聊天记录，无法生成日记。"
+
+    # 简化格式：只保留 role 和 content
+    msgs_for_diary = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in selected]
+
+    data = generate_diary_content(msgs_for_diary)
+    if not data:
+        return "日记生成失败，AI 返回的内容无法解析。可能网络不稳定，请稍后再试。"
+
+    try:
+        save_diary(
+            date_str=today_str,
+            content=data.get("content", ""),
+            weather=data.get("weather", "⛅ 多云"),
+            is_red_line=data.get("is_red_line", False),
+            echo_text=data.get("echo_text", ""),
+        )
+    except Exception as e:
+        return f"日记保存失败: {e}"
+
+    weather = data.get("weather", "⛅ 多云")
+    is_red = data.get("is_red_line", False)
+    red_note = " 🔴红线日" if is_red else ""
+    preview = data.get("content", "")[:200]
+    return (
+        f"日记已写好！{today_str} {weather}{red_note}\n\n"
+        f"{preview}…\n\n"
+        f"（完整日记已保存到日记本，可以说【指令】读日记来回顾）"
+    )
+
+
+def set_diary_message_source(source):
+    """设置日记消息源。source 为 Callable[[], List[Dict]]。"""
+    global _diary_message_source
+    _diary_message_source = source
+
+
+def set_music_control_callback(callback):
+    global _music_control_callback
+    _music_control_callback = callback
+
+def control_music(action: str):
+    if _music_control_callback:
+        return _music_control_callback(action)
+    else:
+        return "未连接到音乐播放器，无法控制。"
+    
+def set_music_info_callback(callback):
+    global _music_info_callback
+    _music_info_callback = callback
+
+def get_music_playlist():
+    if _music_info_callback:
+        return _music_info_callback("playlist")
+    else:
+        return "音乐播放器未就绪。"
+
+def get_music_status():
+    if _music_info_callback:
+        return _music_info_callback("status")
+    else:
+        return "音乐播放器未就绪。"
+
+def get_music_stats():
+    if _music_info_callback:
+        return _music_info_callback("stats")
+    else:
+        return "音乐统计未就绪。"
+
+def set_proactive_toggle_callback(callback):
+    """注册主动聊天开关变更后的回调，供 toggle_proactive_chat 调用。"""
+    global _proactive_toggle_callback
+    _proactive_toggle_callback = callback
+
+def set_note_refresh_callback(callback):
+    global _note_refresh_callback
+    _note_refresh_callback = callback
+
+def set_expression_callback(callback):
+    """注册 Galgame 立绘表情切换回调，供 set_expression 工具调用。"""
+    global _expression_callback
+    _expression_callback = callback
+
+def read_note():
+    from utils.note_manager import read_note as _read
+    content = _read()
+    if content.strip():
+        return content
+    else:
+        return "备忘本当前是空的。"
+
+def organize_note():
+    """使用 AI 整理备忘本内容"""
+    from utils.note_manager import read_note, write_note
+    import json
+    from brain.agent import AgentCore
+
+    old_content = read_note()
+    if not old_content.strip():
+        return "备忘本为空，无需整理。"
+
+    # 构建整理 prompt
+    prompt = f"""请整理以下备忘本内容，目标：
+1. 删除重复行
+2. 按主题归类（如果有多个主题）
+3. 保持内容清晰、整洁，使用中文
+4. 输出时只输出整理后的文本，不要添加额外解释。
+
+备忘本内容：
+{old_content}
+"""
+
+    try:
+        # 调用 AI 整理（使用 AgentCore 的 API 调用方法）
+        agent = AgentCore()
+        response = agent._call_api_with_retry([{"role": "user", "content": prompt}])
+        new_content = response.choices[0].message.content.strip()
+        if new_content and new_content != old_content:
+            write_note(new_content)
+            # 刷新备忘本窗口
+            if _note_refresh_callback:
+                _note_refresh_callback()
+            return "已使用 AI 智能整理备忘本，内容已更新。"
+        else:
+            return "整理后内容无变化，未更新。"
+    except Exception as e:
+        return f"AI 整理失败：{e}"
+
+# ==================== 主动聊天开关 ====================
+
+def toggle_proactive_chat(action: str) -> str:
+    """开启/关闭 QQ 主动聊天功能，通过修改 proactive_settings.json 实现。"""
+    from utils.paths import get_user_data_dir
+    settings_path = get_user_data_dir() / "proactive_settings.json"
+
+    try:
+        if settings_path.exists():
+            data = json.loads(settings_path.read_text(encoding="utf-8"))
+        else:
+            data = {}
+
+        enable = action in ("enable", "开启", "on", "true", "1")
+        data["qq_enabled"] = enable
+
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+
+        # 通知调度器重新加载（如果回调已注册）
+        if _proactive_toggle_callback:
+            try:
+                _proactive_toggle_callback()
+            except Exception:
+                pass
+
+        status = "已开启" if enable else "已关闭"
+        return f"QQ主动聊天功能{status}。"
+    except Exception as e:
+        return f"切换主动聊天失败：{e}"
+
+# ==================== 跨端搜索工具函数 ====================
+
+def search_cross_session(keyword: str, limit: int = 5) -> str:
+    """搜索另一端（桌面端↔QQ端）的历史聊天记录。"""
+    ctx = getattr(_tool_context, "cross_session", None)
+    if ctx is None:
+        return "跨端搜索失败：无法获取当前会话上下文。"
+
+    try:
+        history_mgr = ctx["history_mgr"]
+        current_session_id = ctx["session_id"]
+
+        # 读取 qq_session_map.json 判断各端
+        map_path = Path(__file__).parent.parent / "memory" / "qq_session_map.json"
+        if not map_path.exists():
+            return "暂无跨端聊天记录可搜索。"
+
+        data = json.loads(map_path.read_text(encoding="utf-8"))
+        if not data:
+            return "暂无跨端聊天记录可搜索。"
+
+        qq_ids = {int(v) for v in data.values()}
+
+        # 判断当前是哪一端，找到另一端
+        current_is_qq = current_session_id in qq_ids
+        target_id = None
+        source_name = ""
+
+        if current_is_qq:
+            sessions = history_mgr.get_sessions()
+            for s in sessions:
+                if s["id"] not in qq_ids:
+                    target_id = s["id"]
+                    break
+            source_name = "桌面端"
+        else:
+            from config import get_qq_bridge_config
+            cfg = get_qq_bridge_config()
+            owner_qq = cfg.get("owner_qq", "")
+            if not owner_qq:
+                return "未配置 QQ 主人账号，无法搜索另一端。"
+            owner_key = f"qq_private_{owner_qq}"
+            if owner_key not in data:
+                return "未找到 QQ 端的聊天记录。"
+            target_id = int(data[owner_key])
+            source_name = "QQ端"
+
+        if target_id is None or target_id == current_session_id:
+            return f"未找到{source_name}的独立聊天记录。"
+
+        # 执行搜索
+        matched_limit = min(limit, 10)
+        matches = history_mgr.search_session_messages(target_id, keyword, limit=matched_limit)
+
+        if not matches:
+            return f"在{source_name}的聊天记录中，未找到包含「{keyword}」的内容。"
+
+        lines = [f"在{source_name}的聊天记录中找到 {len(matches)} 条相关消息："]
+        for m in matches:
+            speaker = "莲心" if m["role"] == "assistant" else "用户"
+            content = m["content"][:200]
+            lines.append(f"\n[{speaker}] {content}")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"跨端搜索失败：{e}"
+
+
+# ── 技能系统工具函数 ─────────────────────────────────────────
+def _list_skills():
+    from brain.skill_manager import get_skill_list
+    return get_skill_list()
+
+def _activate_skill(name: str) -> str:
+    from brain.skill_manager import activate_skill as _do_activate
+    return _do_activate(name)
+
+def _deactivate_skill(name: str) -> str:
+    from brain.skill_manager import deactivate_skill as _do_deactivate
+    return _do_deactivate(name)
+
+
+def _search_memory(keyword: str, category: str | None = None) -> str:
+    """在长期记忆中搜索包含关键词的事实（分类搜索）。"""
+    matches = _memory_search(keyword, category)
+    return format_search_result(matches)
+
+
+def _update_memory(old_keyword: str, new_fact: str, category: str | None = None) -> str:
+    """更新长期记忆中匹配的事实（分类更新）。"""
+    from datetime import datetime
+
+    new_fact = new_fact.strip()
+    if not new_fact:
+        return "新内容不能为空。"
+    # 追加记录日期
+    today = datetime.now().strftime("%Y-%m-%d")
+    date_tag = f"【记录于{today}】"
+    if date_tag not in new_fact:
+        new_fact = f"{new_fact} {date_tag}"
+
+    updated = _memory_update(old_keyword, new_fact, category)
+    if updated > 0:
+        return f"已更新 {updated} 条记忆。"
+    else:
+        # 没找到，作为新记忆添加
+        cat = category or "knowledge"
+        entry_id = _memory_add(new_fact, cat, source="user_saved")
+        return f"未找到包含「{old_keyword}」的旧事实，已将新内容作为新记忆保存（分类：{cat}）。"
+
+
+def _delete_memory(keyword: str, category: str | None = None) -> str:
+    """从长期记忆中删除匹配的事实（分类删除）。"""
+    deleted = _memory_delete(keyword, category)
+    if deleted == 0:
+        return f"未找到包含「{keyword}」的记忆。"
+    return f"已从长期记忆中删除 {deleted} 条包含「{keyword}」的记忆。"
+
+
+def _list_memories() -> str:
+    """查看全部长期记忆，按分类展示。"""
+    return format_all_memories()
+
+
+def _set_expression(emotion: str) -> str:
+    """切换 Galgame 立绘表情。回调到 MainWindow 执行。"""
+    global _expression_callback
+    if _expression_callback:
+        _expression_callback(emotion)
+        return f"已将立绘表情切换为：{emotion}"
+    return "Galgame 立绘窗口未就绪。"
+
+
+# ── 工具调度表 ───────────────────────────────────────────────
+TOOL_EXECUTORS = {
+    "read_file":       lambda inp: read_file(inp["path"]),
+    "read_file_chunk": lambda inp: read_file_chunk(inp["path"], int(inp["chunk_index"])),
+    "write_file":      lambda inp: write_file(inp["path"], inp["content"]),
+    "list_directory": lambda inp: list_directory(inp.get("path", "")),
+    "search_files":   lambda inp: search_files(inp["directory"], inp["keyword"]),
+    "run_command":    lambda inp: run_command(inp["command"]),
+    "save_memory":    lambda inp: save_memory(inp["fact"], inp.get("category")),
+    "open_app":       lambda inp: open_app(inp["name"]),
+    "get_clipboard":  lambda inp: get_clipboard(),
+    "get_current_time": lambda inp: get_current_time(inp.get("format", "full")),
+    "get_balance":    lambda inp: get_balance(),
+    "add_todo":       lambda inp: _add_todo(inp.get("title", ""), inp.get("due_time"), inp.get("priority", "medium"), inp.get("description", "")),
+    "list_todos":     lambda inp: _list_todos(),
+    "complete_todo":  lambda inp: _complete_todo(inp.get("title_keyword", "")),
+    "read_excel":      lambda inp: read_excel(inp["file_path"], inp.get("sheet_name"), inp.get("max_rows", 100)),
+    "run_python_code": lambda inp: run_python_code(inp["code"], inp.get("timeout", 10)),
+    "write_excel": lambda inp: write_excel(inp["file_path"], inp["data"], inp.get("sheet_name", "Sheet1")),
+    "copy_excel_content": lambda inp: copy_excel_content(inp["source_path"], inp["target_path"], inp.get("source_sheet"), inp.get("target_sheet")),
+    "write_docx": lambda inp: write_docx(inp["file_path"], inp["content"]),
+    "format_document": lambda inp: format_document(inp["content"], inp["output_path"], inp.get("use_template", True)),
+    "web_search": lambda inp: web_search(inp.get("query", ""), inp.get("max_results", 5)),
+    "fetch_webpage": lambda inp: fetch_webpage(inp["url"], inp.get("max_length", 3000)),
+    "fetch_webpage_browser": lambda inp: fetch_webpage_browser(inp["url"], inp.get("max_length", 3000)),
+    "fetch_webpage_via_api": lambda inp: fetch_webpage_via_api(inp["url"], inp.get("max_length", 3000)),
+    "fetch_webpage_stealth": lambda inp: fetch_webpage_stealth(inp["url"], inp.get("max_length", 3000)),
+    "edit_file":       lambda inp: edit_file(inp["path"], inp["old_string"], inp["new_string"], inp.get("replace_all", False)),
+    "grep_file":       lambda inp: grep_file(inp["path"], inp["keyword"], inp.get("context_lines", 2)),
+    "read_file_lines": lambda inp: read_file_lines(inp["path"], int(inp["start_line"]), int(inp["end_line"]) if inp.get("end_line") is not None else None),
+    "glob_files":      lambda inp: glob_files(inp["directory"], inp["pattern"], inp.get("max_results", 50)),
+    "ocr_image": lambda inp: ocr_image(inp["image_path"], inp.get("language", "chi_sim+eng")),
+    "ocr_batch": lambda inp: ocr_batch(inp["folder_path"], inp.get("language", "chi_sim+eng")),
+    "describe_image": lambda inp: describe_image(inp["image_path"], inp.get("prompt", "")),
+    "send_file_to_qq": lambda inp: send_file_to_qq(inp["path"], inp.get("name", "")),
+    "capture_from_camera": lambda inp: capture_from_camera(),
+    "read_diary": lambda inp: read_diary(date=inp.get("date"),keyword=inp.get("keyword"),limit=inp.get("limit", 1)),
+    "write_diary": lambda inp: write_diary(message_count=inp.get("message_count"), force=inp.get("force", False)),
+    "control_music": lambda inp: control_music(inp["action"]),
+    "get_music_playlist": lambda inp: get_music_playlist(),
+    "get_music_status": lambda inp: get_music_status(),
+    "get_music_stats": lambda inp: get_music_stats(),
+    "read_note": lambda inp: read_note(),
+    "organize_note": lambda inp: organize_note(),
+    "search_cross_session": lambda inp: search_cross_session(inp["keyword"], inp.get("limit", 5)),
+    "toggle_proactive_chat": lambda inp: toggle_proactive_chat(inp["action"]),
+    "list_skills":   lambda inp: _list_skills(),
+    "activate_skill":   lambda inp: _activate_skill(inp["name"]),
+    "deactivate_skill": lambda inp: _deactivate_skill(inp["name"]),
+    "search_memory":   lambda inp: _search_memory(inp["keyword"], inp.get("category")),
+    "update_memory":   lambda inp: _update_memory(inp["old_keyword"], inp["new_fact"], inp.get("category")),
+    "delete_memory":   lambda inp: _delete_memory(inp["keyword"], inp.get("category")),
+    "list_memories":   lambda inp: _list_memories(),
+    "set_expression":  lambda inp: _set_expression(inp["emotion"]),
+    "shoulder_photo":  lambda inp: shoulder_photo(),
+    "shoulder_pan":    lambda inp: shoulder_pan(inp["angle"]),
+    "shoulder_tilt":   lambda inp: shoulder_tilt(inp["angle"]),
+    "shoulder_center": lambda inp: shoulder_center(),
+    "shoulder_status": lambda inp: shoulder_status(),
+    "shoulder_temp":   lambda inp: shoulder_temp(),
+    # 观察记忆
+    "save_observation": lambda inp: _save_observation(
+        inp["description"],
+        inp.get("attention", ""),
+        inp.get("tags", []),
+    ),
+    "search_observations": lambda inp: _search_observations(
+        keyword=inp.get("keyword", ""),
+        time_from=inp.get("time_from", ""),
+        time_to=inp.get("time_to", ""),
+        limit=inp.get("limit", 10),
+    ),
+    "get_recent_observations": lambda inp: _get_recent_observations(
+        limit=inp.get("limit", 10),
+    ),
+    "start_shoulder_explore": lambda inp: _start_shoulder_explore(),
+    }
+
+def execute_tool(name: str, tool_input: dict) -> str:
+    """根据工具名称调用对应的执行函数。"""
+    executor = TOOL_EXECUTORS.get(name)
+    if not executor:
+        return f"未知工具: {name}"
+    return executor(tool_input)

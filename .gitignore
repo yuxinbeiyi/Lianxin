@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境 / Conda
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 大模型文件
+models/
+
+# 运行时数据库
+memory/*.db
+
+# 运行时状态文件
+memory/last_active_side.json
+memory/proactive_settings.json
+memory/qq_session_map.json
+
+# 用户运行时数据
+user_data/
+data/
+
+# 临时 / 备份目录
+代码备份/
+文档备份/
+杂项/
+测试ocr/
+
+# 打包文件
+*.zip
+*.tar.gz
+*.7z
+package_esp32_index.json.json
+
+# 空文件/系统残留
+nul
+
+# 环境变量（防密钥泄露）
+.env
