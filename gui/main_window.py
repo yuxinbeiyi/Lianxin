@@ -27,12 +27,13 @@ from gui.api_config_dialog import ApiConfigDialog
 from gui.alarm_dialog      import AlarmDialog
 from gui.qq_settings_dialog import QqSettingsDialog
 
-from config import has_api_key, get_qq_bridge_config
+from config import has_api_key, get_qq_bridge_config, get_heartbeat_config
 from brain.decision import decide
 from workers.agent_worker      import AgentWorker
 from workers.voice_worker      import VoiceWorker, ModelLoader
 from workers.speaker_worker    import SpeakerWorker
 from workers.proactive_worker  import ProactiveWorker
+from workers.heartbeat_worker import HeartbeatWorker
 from workers.standby_worker    import StandbyWorker   # 不再需要 contains_end_phrase, strip_end_phrase
 from utils.accompany_stats  import AccompanyStats
 
@@ -197,6 +198,12 @@ class MainWindow(QMainWindow):
         self._proactive_timer = QTimer(self)
         self._proactive_timer.timeout.connect(self._on_proactive_tick)
         self._proactive_timer.start(5 * 60 * 1000)   # 5 分钟
+
+        # ── 心跳自检定时器（对话结束后 N 分钟触发，回顾遗漏事项）──
+        self._heartbeat_check_timer = QTimer(self)
+        self._heartbeat_check_timer.setSingleShot(True)
+        self._heartbeat_check_timer.timeout.connect(self._on_heartbeat_check)
+        self._heartbeat_check_worker: HeartbeatWorker | None = None
 
         # ── 主线程心跳看门狗（后台线程实时监控，卡顿时立即抓堆栈）──
         self._heartbeat_time = time.monotonic()
@@ -513,6 +520,16 @@ class MainWindow(QMainWindow):
         """)
         self._btn_proactive.clicked.connect(self._on_proactive_clicked)
         top_bar_layout.addWidget(self._btn_proactive)
+
+        # 心跳自检按钮（带状态指示）
+        self._btn_heartbeat = QPushButton("心跳自检 ●")
+        self._btn_heartbeat.setFixedSize(88, 24)
+        self._btn_heartbeat.setFont(QFont("Microsoft YaHei UI", 8))
+        self._btn_heartbeat.setCursor(Qt.PointingHandCursor)
+        self._btn_heartbeat.setToolTip("对话结束后自动检查是否有遗漏的待办事项")
+        self._btn_heartbeat.clicked.connect(self._on_heartbeat_btn_clicked)
+        self._update_heartbeat_button()
+        top_bar_layout.addWidget(self._btn_heartbeat)
 
         # QQ 聊天按钮（一键开关，状态由 _update_qq_bridge_button 维护）
         self._btn_qq_bridge = QPushButton("QQ聊天 ○")
@@ -1554,6 +1571,98 @@ class MainWindow(QMainWindow):
     def _on_proactive_error(self, err: str):
         self._chat_widget.add_system_tip(f"主动消息生成失败：{err}")
 
+    # ── 心跳自检 ─────────────────────────────────────────────
+
+    def _reset_heartbeat_timer(self):
+        """每次用户发消息时重置倒计时。"""
+        cfg = get_heartbeat_config()
+        if not cfg.get("enabled", True):
+            return
+        delay_ms = cfg.get("delay_minutes", 5) * 60 * 1000
+        self._heartbeat_check_timer.start(delay_ms)
+
+    def _on_heartbeat_check(self):
+        """心跳自检触发：检查活跃时段后启动 Worker。"""
+        cfg = get_heartbeat_config()
+        if not cfg.get("enabled", True):
+            return
+        # 检查活跃时段
+        start_str = cfg.get("active_hours_start", "08:00")
+        end_str = cfg.get("active_hours_end", "23:00")
+        try:
+            now = datetime.now().time()
+            start = datetime.strptime(start_str, "%H:%M").time()
+            end = datetime.strptime(end_str, "%H:%M").time()
+            if not (start <= now <= end):
+                return
+        except Exception:
+            pass
+
+        if self._heartbeat_check_worker and self._heartbeat_check_worker.isRunning():
+            return
+
+        self._heartbeat_check_worker = HeartbeatWorker(self._agent._session_id)
+        self._heartbeat_check_worker.response_ready.connect(self._on_heartbeat_response)
+        self._heartbeat_check_worker.finished_silent.connect(self._on_heartbeat_finished_silent)
+        self._heartbeat_check_worker.start()
+
+    def _on_heartbeat_response(self, text: str):
+        """心跳自检有提醒内容，显示给用户。"""
+        self._agent.get_history_manager().save_message(
+            self._agent._session_id, "assistant", f"[心跳提醒] {text}"
+        )
+        self._chat_widget.add_ai_message(text)
+        if self.isMinimized():
+            self.flash_taskbar(flash_count=0)
+        self._speak(text)
+
+    def _on_heartbeat_finished_silent(self):
+        """心跳自检静默完成（无需提醒或失败）。"""
+
+    def _on_heartbeat_btn_clicked(self):
+        """切换心跳自检开关。"""
+        from utils.sound import play_sound
+        play_sound("ButtonAll.mp3")
+        cfg = get_heartbeat_config()
+        new_enabled = not cfg.get("enabled", True)
+        from config import save_heartbeat_config
+        save_heartbeat_config({**cfg, "enabled": new_enabled})
+        self._update_heartbeat_button()
+        if new_enabled:
+            self._reset_heartbeat_timer()
+            self._chat_widget.add_system_tip("心跳自检已开启，对话结束后会自动检查遗漏事项")
+        else:
+            self._heartbeat_check_timer.stop()
+            self._chat_widget.add_system_tip("心跳自检已关闭")
+
+    def _update_heartbeat_button(self):
+        """更新心跳自检按钮样式。"""
+        cfg = get_heartbeat_config()
+        if cfg.get("enabled", True):
+            self._btn_heartbeat.setText("心跳自检 ●")
+            self._btn_heartbeat.setStyleSheet("""
+                QPushButton {
+                    background-color: #EDFFF2;
+                    color: #34C759;
+                    border-radius: 6px;
+                    border: 1px solid #B0ECC4;
+                }
+                QPushButton:hover  { background-color: #D8F5E4; }
+                QPushButton:pressed{ background-color: #C0EBD2; }
+            """)
+        else:
+            self._btn_heartbeat.setText("心跳自检 ○")
+            self._btn_heartbeat.setStyleSheet("""
+                QPushButton {
+                    background-color: #F0F0F8;
+                    color: #777777;
+                    border-radius: 6px;
+                    border: 1px solid #D8D8EE;
+                }
+                QPushButton:hover  { background-color: #E4E4F0; }
+                QPushButton:pressed{ background-color: #D8D8E8; }
+            """)
+
     def _is_shoulder_available(self) -> bool:
         """检查肩载设备（ESP32-CAM）是否在线（通过 socket 探测）。"""
         try:
@@ -1789,6 +1898,7 @@ class MainWindow(QMainWindow):
         route_result = get_router().route(text)
         is_chat = route_result.route == "chat"
         self._proactive_scheduler.notify_user_active()
+        self._reset_heartbeat_timer()
         self._set_thinking_state()
         self._agent_worker = AgentWorker(self._agent, text, self, disable_tools=is_chat)
         # 存储路由结果供 AgentWorker 使用（按需注入工具）
@@ -1829,6 +1939,7 @@ class MainWindow(QMainWindow):
         # 以下是原有关闭逻辑（确认退出时执行）
         self._accompany_stats.end_session()
         self._proactive_timer.stop()
+        self._heartbeat_check_timer.stop()
         self._alarm_timer.stop()
         self._countdown_timer.stop()
         self._todo_reminder_timer.stop()

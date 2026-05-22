@@ -682,3 +682,25 @@ def save_graph_config(config: dict):
     full = _load_full_config()
     full["graph_memory"] = config
     _save_full_config(full)
+
+
+# ── 心跳自检配置默认值 ────────────────────────────────────
+_HEARTBEAT_DEFAULTS = {
+    "enabled": True,
+    "delay_minutes": 5,              # 对话结束后等待多久触发心跳
+    "active_hours_start": "08:00",   # 活跃时段开始
+    "active_hours_end": "23:00",     # 活跃时段结束
+    "ack_max_chars": 300,            # HEARTBEAT_OK 响应超过此长度才显示
+}
+
+
+def get_heartbeat_config() -> dict:
+    full = _load_full_config()
+    cfg = full.get("heartbeat", {})
+    return {**_HEARTBEAT_DEFAULTS, **cfg}
+
+
+def save_heartbeat_config(config: dict):
+    full = _load_full_config()
+    full["heartbeat"] = config
+    _save_full_config(full)
