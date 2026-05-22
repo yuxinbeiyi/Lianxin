@@ -2726,8 +2726,7 @@ def glob_files(directory: str, pattern: str, max_results: int = 50) -> str:
 
 def ocr_image(image_path: str, language: str = "chi_sim+eng") -> str:
     """
-    使用便携版 Tesseract 识别图片文字。
-    支持开发环境和打包后的 exe 环境。
+    识别图片文字。优先使用项目自带的便携版 Tesseract，否则回退到 pytesseract。
     """
     import sys
     import subprocess
@@ -2737,43 +2736,52 @@ def ocr_image(image_path: str, language: str = "chi_sim+eng") -> str:
     if language == "ch":
         language = "chi_sim+eng"
 
-    # 1. 定位 Tesseract 根目录（支持打包后）
+    # 1. 定位便携版 Tesseract（支持打包后）
     if getattr(sys, 'frozen', False):
-        # 打包后：程序所在目录为 base_dir
         base_dir = Path(sys.executable).parent
     else:
-        # 开发环境：项目根目录
         base_dir = Path(__file__).parent.parent
 
     ocr_dir = base_dir / "ocr"
     tesseract_exe = ocr_dir / "tesseract.exe"
     tessdata_dir = ocr_dir / "tessdata"
 
-    if not tesseract_exe.exists():
-        return f"错误：找不到 tesseract.exe，期望路径：{tesseract_exe}"
-    if not tessdata_dir.exists():
-        return f"错误：找不到语言包目录，期望路径：{tessdata_dir}"
+    if tesseract_exe.exists() and tessdata_dir.exists():
+        # 便携版可用 → 直接调用
+        cmd = [
+            str(tesseract_exe),
+            str(Path(image_path).resolve()),
+            "stdout",
+            "-l", language,
+            "--tessdata-dir", str(tessdata_dir)
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=30)
+            if result.returncode != 0:
+                return f"OCR 识别失败（返回码 {result.returncode}）：{result.stderr.decode('utf-8', errors='replace')}"
+            text = result.stdout.decode('utf-8', errors='replace').strip()
+            if not text:
+                return "未能从图片中提取到文字。"
+            if len(text) > 3000:
+                text = text[:3000] + "\n\n... [内容过长，已截断]"
+            return f"图片中的文字识别结果：\n\n{text}"
+        except subprocess.TimeoutExpired:
+            return "OCR 识别超时（30秒）"
+        except Exception as e:
+            return f"OCR 识别失败：{e}"
 
-    # 2. 调用 Tesseract 命令行（避免 pytesseract 编码问题）
-    cmd = [
-        str(tesseract_exe),
-        str(Path(image_path).resolve()),
-        "stdout",
-        "-l", language,
-        "--tessdata-dir", str(tessdata_dir)
-    ]
+    # 2. 便携版不可用 → 回退到 pytesseract（需用户自行安装 Tesseract）
     try:
-        result = subprocess.run(cmd, capture_output=True, timeout=30)
-        if result.returncode != 0:
-            return f"OCR 识别失败（返回码 {result.returncode}）：{result.stderr.decode('utf-8', errors='replace')}"
-        text = result.stdout.decode('utf-8', errors='replace').strip()
-        if not text:
+        import pytesseract
+        img = Image.open(image_path)
+        text = pytesseract.image_to_string(img, lang=language)
+        if not text or not text.strip():
             return "未能从图片中提取到文字。"
         if len(text) > 3000:
             text = text[:3000] + "\n\n... [内容过长，已截断]"
         return f"图片中的文字识别结果：\n\n{text}"
-    except subprocess.TimeoutExpired:
-        return "OCR 识别超时（30秒）"
+    except ImportError:
+        return "OCR 功能不可用：请安装 Tesseract OCR（https://github.com/UB-Mannheim/tesseract/wiki）并确保 pytesseract 已安装。"
     except Exception as e:
         return f"OCR 识别失败：{e}"
     
