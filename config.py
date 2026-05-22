@@ -35,6 +35,7 @@ _ALIYUN_STT_DEFAULTS = {
 # ── QQ 桥接默认值 ─────────────────────────────────────────
 _QQ_BRIDGE_DEFAULTS = {
     "enabled":    False,
+    "auto_start": False,
     "ws_url":     "ws://127.0.0.1:3001",
     "qq_account": "",
     "owner_qq":   "",

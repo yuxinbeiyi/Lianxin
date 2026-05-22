@@ -2178,8 +2178,13 @@ def _get_holiday_info(dt: datetime) -> Optional[str]:
 def get_balance() -> str:
     """查询 DeepSeek API 账户余额并返回格式化文本"""
     from utils.balance import get_balance_info, format_balance_message
-    
-    balance_info, error = get_balance_info()
+    from config import get_api_config
+
+    cfg = get_api_config()
+    api_key = cfg.get("api_key", "")
+    if not api_key:
+        return "查询余额失败：未配置 API Key"
+    balance_info, error = get_balance_info(api_key)
     if error:
         return f"查询余额失败：{error}"
     return format_balance_message(balance_info)

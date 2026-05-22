@@ -6,7 +6,7 @@ ApiConfigDialog：API Key 配置对话框
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QSpinBox, QFrame, QMessageBox, QTabWidget,
-    QWidget, QFormLayout, QCheckBox,
+    QWidget, QFormLayout, QCheckBox, QApplication,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont
@@ -49,6 +49,23 @@ class _TestWorker(QThread):
             self.success.emit(reply[:20])
         except Exception as e:
             self.failed.emit(str(e))
+
+
+class _BalanceWorker(QThread):
+    success = pyqtSignal(dict)
+    failed  = pyqtSignal(str)
+
+    def __init__(self, api_key: str, parent=None):
+        super().__init__(parent)
+        self._api_key = api_key
+
+    def run(self):
+        from utils.balance import get_balance_info
+        result, error = get_balance_info(self._api_key)
+        if error:
+            self.failed.emit(error)
+        else:
+            self.success.emit(result)
 
 
 # ── 对话框主体 ────────────────────────────────────────────────
@@ -318,6 +335,27 @@ class ApiConfigDialog(QDialog):
         cloud_form.addRow("最大 Token 数:", self._tokens_spin)
 
         cloud_layout.addLayout(cloud_form)
+
+        # 余额查询按钮
+        balance_btn = QPushButton("💰 查询余额")
+        balance_btn.setFixedHeight(36)
+        balance_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        balance_btn.setCursor(Qt.PointingHandCursor)
+        balance_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9500;
+                color: white;
+                border-radius: 8px;
+                border: none;
+                padding: 0 16px;
+            }
+            QPushButton:hover   { background-color: #E08600; }
+            QPushButton:pressed { background-color: #C07600; }
+            QPushButton:disabled{ background-color: #CCCCCC; }
+        """)
+        balance_btn.clicked.connect(self._on_balance_query)
+        cloud_layout.addWidget(balance_btn)
+
         layout.addWidget(self._cloud_group)
 
         # ── 本地配置分组 ──
@@ -716,6 +754,41 @@ class ApiConfigDialog(QDialog):
             self, "连接成功",
             f"{api_name} 连接正常！\n模型回复了：{reply}…"
         )
+
+    # ── 余额查询 ──────────────────────────────────────────
+
+    def _on_balance_query(self):
+        api_key = self._key_edit.text().strip()
+        if not api_key:
+            QMessageBox.warning(self, "提示", "请先在 DeepSeek API 选项卡中填写 API Key！")
+            return
+        self._balance_worker = _BalanceWorker(api_key, self)
+        self._balance_worker.success.connect(self._on_balance_success)
+        self._balance_worker.failed.connect(self._on_balance_failed)
+        self._balance_worker.start()
+
+    def _on_balance_success(self, info: dict):
+        total = info["total_balance"]
+        currency = info["currency"]
+        if total < 1.0:
+            message = f"⚠️ 余额预警：当前余额为 {total:.2f} {currency}，已不足 1 元，请尽快充值以免影响使用！"
+        else:
+            message = f"✅ 当前账户余额为：{total:.2f} {currency}"
+        mb = QMessageBox(self)
+        mb.setWindowTitle("💰 余额查询")
+        mb.setText(message)
+        if total < 1.0:
+            import webbrowser
+            recharge_btn = mb.addButton("去充值", QMessageBox.AcceptRole)
+            mb.addButton(QMessageBox.Cancel)
+            mb.exec_()
+            if mb.clickedButton() == recharge_btn:
+                webbrowser.open("https://platform.deepseek.com/usage")
+        else:
+            mb.exec_()
+
+    def _on_balance_failed(self, err: str):
+        QMessageBox.warning(self, "余额查询失败", f"无法获取余额信息：\n{err}")
 
     def _on_test_failed(self, err: str):
         self._test_btn.setEnabled(True)

@@ -6,8 +6,8 @@ CharacterWidget：莲心角色图像显示区域
 
 import os
 from pathlib import Path
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSlider
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QScrollArea, QSlider
+from PyQt5.QtCore import Qt, QTimer, QPoint
 from PyQt5.QtGui import QFont, QIcon
 # 导入动画状态机
 from gui.animation_state_machine import AnimationStateMachine
@@ -35,6 +35,7 @@ class CharacterWidget(QWidget):
         self._previous_mode = "normal"
         self._playing_arms_cross = False
         self._arms_cross_speech_pending = False
+        self._function_expanded = False
         # 加载自定义图标
         icons_dir = self._assets_dir / "icons"
         self.icon_play = QIcon(str(icons_dir / "play.png"))
@@ -65,22 +66,30 @@ class CharacterWidget(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setAlignment(Qt.AlignCenter)
         main_layout.setSpacing(12)
-        main_layout.setContentsMargins(16, 24, 16, 24)
+        main_layout.setContentsMargins(16, 12, 16, 24)
 
-        # 头像向右移动（可调整间距）
-        gif_container = QHBoxLayout()
-        gif_container.addSpacing(50)
-        self._gif_label = QLabel()
-        self._gif_label.setFixedSize(270, 480)
-        self._gif_label.setAlignment(Qt.AlignCenter)
-        self._gif_label.setStyleSheet("""
-            QLabel {
+        # GIF 动画区：85% 缩放居中，外层容器保持边框样式
+        gif_wrapper = QWidget()
+        gif_wrapper.setFixedSize(270, 430)
+        gif_wrapper.setStyleSheet("""
+            QWidget {
                 background-color: rgba(240, 242, 250, 200);
                 border-radius: 16px;
                 border: 2px solid rgba(200, 204, 238, 150);
             }
         """)
-        gif_container.addWidget(self._gif_label)
+        wrapper_layout = QVBoxLayout(gif_wrapper)
+        wrapper_layout.setAlignment(Qt.AlignCenter)
+        wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        self._gif_label = QLabel()
+        self._gif_label.setFixedSize(270, 430)
+        self._gif_label.setAlignment(Qt.AlignCenter)
+        self._gif_label.setStyleSheet("background: transparent; border: none;")
+        wrapper_layout.addWidget(self._gif_label)
+
+        gif_container = QHBoxLayout()
+        gif_container.addSpacing(50)
+        gif_container.addWidget(gif_wrapper)
         main_layout.addLayout(gif_container)
 
         self._state_label = QLabel("● 待机中")
@@ -89,24 +98,26 @@ class CharacterWidget(QWidget):
         self._state_label.setStyleSheet("color: #6C7BFF; background: transparent;")
         main_layout.addWidget(self._state_label)
 
-        # ========== 音乐盒控件（自定义图标，多行布局） ==========
-        music_bar = QWidget()
-        music_bar.setStyleSheet("""
+        # 音乐盒与功能区整体下移
+        main_layout.addSpacing(8)
+
+        # ========== 音乐盒控件 ==========
+        self._music_bar = QWidget()
+        self._music_bar.setStyleSheet("""
             background-color: rgba(60, 60, 70, 220);
             border-radius: 20px;
             margin: 6px 8px;
             padding: 8px;
         """)
-        music_main_layout = QVBoxLayout(music_bar)
+        music_main_layout = QVBoxLayout(self._music_bar)
         music_main_layout.setSpacing(8)
         music_main_layout.setContentsMargins(12, 8, 12, 8)
 
-        # 第一行：播放控制按钮（使用图标）
+        # 第一行：播放控制按钮
         row1 = QHBoxLayout()
         row1.setSpacing(15)
         row1.setAlignment(Qt.AlignCenter)
 
-        # 上一首
         self._btn_prev = QPushButton()
         self._btn_prev.setFixedSize(44, 44)
         self._btn_prev.setIcon(self.icon_prev)
@@ -118,14 +129,10 @@ class CharacterWidget(QWidget):
                 border-radius: 22px;
                 border: 1px solid #aaa;
             }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-                border: 1px solid #6C7BFF;
-            }
+            QPushButton:hover { background-color: #e0e0e0; border: 1px solid #6C7BFF; }
         """)
         row1.addWidget(self._btn_prev)
 
-        # 播放/暂停
         self._btn_play_pause = QPushButton()
         self._btn_play_pause.setFixedSize(54, 54)
         self._btn_play_pause.setIcon(self.icon_play)
@@ -138,13 +145,10 @@ class CharacterWidget(QWidget):
                 border-radius: 27px;
                 border: none;
             }
-            QPushButton:hover {
-                background-color: #5A6AEE;
-            }
+            QPushButton:hover { background-color: #5A6AEE; }
         """)
         row1.addWidget(self._btn_play_pause)
 
-        # 下一首
         self._btn_next = QPushButton()
         self._btn_next.setFixedSize(44, 44)
         self._btn_next.setIcon(self.icon_next)
@@ -156,14 +160,10 @@ class CharacterWidget(QWidget):
                 border-radius: 22px;
                 border: 1px solid #aaa;
             }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-                border: 1px solid #6C7BFF;
-            }
+            QPushButton:hover { background-color: #e0e0e0; border: 1px solid #6C7BFF; }
         """)
         row1.addWidget(self._btn_next)
 
-        # 循环模式按钮
         self._btn_loop = QPushButton()
         self._btn_loop.setFixedSize(36, 36)
         self._btn_loop.setIcon(self.icon_loop)
@@ -176,10 +176,7 @@ class CharacterWidget(QWidget):
                 border-radius: 18px;
                 border: 1px solid #aaa;
             }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-                border: 1px solid #6C7BFF;
-            }
+            QPushButton:hover { background-color: #e0e0e0; border: 1px solid #6C7BFF; }
         """)
         row1.addWidget(self._btn_loop)
 
@@ -189,32 +186,24 @@ class CharacterWidget(QWidget):
         row2 = QHBoxLayout()
         row2.setSpacing(8)
         row2.setContentsMargins(0, 0, 0, 0)
-
         self._music_progress = QSlider(Qt.Horizontal)
         self._music_progress.setRange(0, 100)
         self._music_progress.setValue(0)
         self._music_progress.setCursor(Qt.PointingHandCursor)
         self._music_progress.setStyleSheet("""
             QSlider::groove:horizontal {
-                height: 4px;
-                background: #A0A0A8;
-                border-radius: 2px;
+                height: 4px; background: #A0A0A8; border-radius: 2px;
             }
             QSlider::handle:horizontal {
-                background: #C0C0FF;
-                width: 10px;
-                margin: -4px 0;
-                border-radius: 5px;
+                background: #C0C0FF; width: 10px; margin: -4px 0; border-radius: 5px;
             }
         """)
         row2.addWidget(self._music_progress, 1)
-
         self._time_label = QLabel("00:00 / 00:00")
         self._time_label.setFont(QFont("Microsoft YaHei UI", 8))
         self._time_label.setStyleSheet("color: #E0E0E0;")
         self._time_label.setAlignment(Qt.AlignCenter)
         row2.addWidget(self._time_label)
-
         music_main_layout.addLayout(row2)
 
         # 第三行：频谱跳动条
@@ -226,32 +215,24 @@ class CharacterWidget(QWidget):
         row4 = QHBoxLayout()
         row4.setSpacing(10)
         row4.setAlignment(Qt.AlignVCenter)
-
         self._music_volume_icon = QLabel("🔊")
         self._music_volume_icon.setFont(QFont("Segoe UI Emoji", 10))
         self._music_volume_icon.setCursor(Qt.PointingHandCursor)
         self._music_volume_icon.mousePressEvent = self._on_volume_icon_click
         row4.addWidget(self._music_volume_icon)
-
         self._music_volume_slider = QSlider(Qt.Horizontal)
         self._music_volume_slider.setRange(0, 100)
         self._music_volume_slider.setFixedWidth(80)
         self._music_volume_slider.setCursor(Qt.PointingHandCursor)
         self._music_volume_slider.setStyleSheet("""
             QSlider::groove:horizontal {
-                height: 4px;
-                background: #A0A0A8;
-                border-radius: 2px;
+                height: 4px; background: #A0A0A8; border-radius: 2px;
             }
             QSlider::handle:horizontal {
-                background: #C0C0FF;
-                width: 10px;
-                margin: -4px 0;
-                border-radius: 5px;
+                background: #C0C0FF; width: 10px; margin: -4px 0; border-radius: 5px;
             }
         """)
         row4.addWidget(self._music_volume_slider)
-
         self._music_title_label = QLabel("未导入音乐")
         self._music_title_label.setFont(QFont("Microsoft YaHei UI", 8))
         self._music_title_label.setStyleSheet("color: #E0E0E0;")
@@ -259,7 +240,6 @@ class CharacterWidget(QWidget):
         self._music_title_label.setWordWrap(False)
         self._music_title_label.setMinimumWidth(100)
         row4.addWidget(self._music_title_label, 1)
-
         self._btn_open_music_folder = QPushButton()
         self._btn_open_music_folder.setFixedSize(36, 36)
         self._btn_open_music_folder.setIcon(self.icon_list)
@@ -272,50 +252,89 @@ class CharacterWidget(QWidget):
                 border-radius: 18px;
                 border: 1px solid rgba(255,255,255,0.3);
             }
-            QPushButton:hover {
-                background-color: rgba(240,240,255,1.0);
-            }
+            QPushButton:hover { background-color: rgba(240,240,255,1.0); }
         """)
         row4.addWidget(self._btn_open_music_folder)
-
         music_main_layout.addLayout(row4)
 
-        main_layout.addWidget(music_bar)
+        main_layout.addWidget(self._music_bar)
 
-        # ========== 功能按钮区域（可滚动） ==========
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        # ========== 功能区弹出触发按钮 ==========
+        self._btn_function_toggle = QPushButton("▲ 功能")
+        self._btn_function_toggle.setFixedHeight(28)
+        self._btn_function_toggle.setFont(QFont("Microsoft YaHei UI", 9))
+        self._btn_function_toggle.setCursor(Qt.PointingHandCursor)
+        self._btn_function_toggle.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(100, 100, 120, 200);
+                color: #CCC;
+                border-radius: 10px;
+                border: none;
+            }
+            QPushButton:hover { background-color: rgba(120, 120, 140, 220); color: #FFF; }
+        """)
+        self._btn_function_toggle.clicked.connect(self._toggle_function_panel)
+        main_layout.addWidget(self._btn_function_toggle)
 
-        btn_container = QWidget()
-        btn_layout = QVBoxLayout(btn_container)
-        btn_layout.setSpacing(8)
-        btn_layout.setContentsMargins(0, 0, 0, 0)
+        # ========== 功能区弹出面板（overlay，初始隐藏） ==========
+        self._function_popup = QWidget(self)
+        self._function_popup.setStyleSheet("""
+            QWidget#function_popup {
+                background-color: rgba(30, 30, 45, 245);
+                border-radius: 16px;
+            }
+        """)
+        self._function_popup.setObjectName("function_popup")
+        popup_layout = QVBoxLayout(self._function_popup)
+        popup_layout.setSpacing(8)
+        popup_layout.setContentsMargins(20, 16, 20, 20)
 
-        self._btn_accompany = self._create_button("📊 陪伴时长统计")
-        self._btn_balance   = self._create_button("💰 余额查询")
+        # 顶部标题栏
+        popup_header = QHBoxLayout()
+        popup_title = QLabel("功能")
+        popup_title.setFont(QFont("Microsoft YaHei UI", 14, QFont.Bold))
+        popup_title.setStyleSheet("color: #EEE; background: transparent;")
+        popup_header.addWidget(popup_title)
+        popup_header.addStretch()
+        close_btn = QPushButton("▼ 收起")
+        close_btn.setFixedSize(70, 28)
+        close_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255,255,255,0.15);
+                color: #CCC;
+                border-radius: 8px;
+                border: none;
+            }
+            QPushButton:hover { background-color: rgba(255,255,255,0.3); color: #FFF; }
+        """)
+        close_btn.clicked.connect(self._toggle_function_panel)
+        popup_header.addWidget(close_btn)
+        popup_layout.addLayout(popup_header)
+
+        # 按钮网格
+        grid = QGridLayout()
+        grid.setSpacing(10)
+
+        self._btn_accompany = self._create_button("📊 陪伴时长")
         self._btn_settings  = self._create_button("⚙️ 全局设置")
         self._btn_pomodoro  = self._create_button("🍅 番茄钟")
-        self._btn_api_config = self._create_button("🔑 API Key 配置", color="#FF9500")
-        self._btn_alarm      = self._create_button("⏰ 闹钟功能")
-        self._btn_todo       = self._create_button("✅ 待办清单")
-        self._btn_camera     = self._create_button("📷 拍照OCR")
-        self._btn_vision     = self._create_button("👁 视觉", color="#FF68A8")
+        self._btn_api_config = self._create_button("🔑 API Key", color="#FF9500")
+        self._btn_alarm      = self._create_button("⏰ 闹钟&提醒")
+        self._btn_camera     = self._create_button("视觉理解")
 
-        btn_layout.addWidget(self._btn_accompany)
-        btn_layout.addWidget(self._btn_balance)
-        btn_layout.addWidget(self._btn_settings)
-        btn_layout.addWidget(self._btn_pomodoro)
-        btn_layout.addWidget(self._btn_api_config)
-        btn_layout.addWidget(self._btn_alarm)
-        btn_layout.addWidget(self._btn_todo)
-        btn_layout.addWidget(self._btn_camera)
-        btn_layout.addWidget(self._btn_vision)
-        btn_layout.addStretch()
+        grid.addWidget(self._btn_accompany, 0, 0)
+        grid.addWidget(self._btn_settings, 0, 1)
+        grid.addWidget(self._btn_pomodoro, 1, 0)
+        grid.addWidget(self._btn_api_config, 1, 1)
+        grid.addWidget(self._btn_alarm, 2, 0)
+        grid.addWidget(self._btn_camera, 2, 1)
+        popup_layout.addLayout(grid)
+        popup_layout.addStretch()
 
-        scroll.setWidget(btn_container)
-        main_layout.addWidget(scroll)
+        self._function_popup.hide()
+        self._function_expanded = False
 
     def _create_button(self, text: str, color: str = "#6C7BFF") -> QPushButton:
         btn = QPushButton(text)
@@ -391,6 +410,28 @@ class CharacterWidget(QWidget):
             display_title = title
             self._music_title_label.setToolTip("")
         self._music_title_label.setText(display_title)
+
+    def _toggle_function_panel(self):
+        """弹出/收起功能区覆盖面板"""
+        self._function_expanded = not self._function_expanded
+        if self._function_expanded:
+            self._position_function_popup()
+            self._function_popup.show()
+            self._function_popup.raise_()
+            self._btn_function_toggle.setText("▼ 收起")
+        else:
+            self._function_popup.hide()
+            self._btn_function_toggle.setText("▲ 功能")
+
+    def _position_function_popup(self):
+        """将功能区面板定位到覆盖 GIF + 音乐盒区域"""
+        toggle_y = self._btn_function_toggle.mapTo(self, QPoint(0, 0)).y()
+        self._function_popup.setGeometry(0, 0, self.width(), toggle_y)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._function_expanded:
+            self._position_function_popup()
 
     def _on_volume_icon_click(self, event):
         current = self._music_volume_slider.value()
@@ -509,18 +550,6 @@ class CharacterWidget(QWidget):
             return
         self.anim_machine.set_mode("normal")
 
-    def set_vision_mode(self):
-        if self._playing_arms_cross:
-            return
-        self._previous_mode = self.anim_machine.current_mode
-        self.anim_machine.set_mode("vision")
-
-    def exit_vision_mode(self):
-        if self._playing_arms_cross:
-            return
-        prev = getattr(self, '_previous_mode', 'normal')
-        self.anim_machine.set_mode(prev)
-
     def wave_seen(self):
         self.anim_machine.trigger_event("wave_seen")
 
@@ -529,9 +558,6 @@ class CharacterWidget(QWidget):
 
     def get_accompany_button(self):
         return self._btn_accompany
-
-    def get_balance_button(self):
-        return self._btn_balance
 
     def get_settings_button(self):
         return self._btn_settings
@@ -545,14 +571,8 @@ class CharacterWidget(QWidget):
     def get_alarm_button(self):
         return self._btn_alarm
 
-    def get_todo_button(self):
-        return self._btn_todo
-
     def get_camera_button(self):
         return self._btn_camera
-
-    def get_vision_button(self):
-        return self._btn_vision
 
     def _update_status_label(self, state: str):
         text, color = STATE_CONFIG.get(state, ("● 待机中", "#6C7BFF"))

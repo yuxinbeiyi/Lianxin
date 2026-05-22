@@ -1,10 +1,10 @@
 """
-QQ 桥接参数设置对话框。
+QQ 聊天面板：桥接开关 + 参数设置。
 """
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
     QLabel, QDoubleSpinBox, QSpinBox, QPushButton,
-    QCheckBox,
+    QCheckBox, QFrame,
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
@@ -12,21 +12,59 @@ from config import get_qq_timing_config, save_qq_timing_config
 
 
 class QqSettingsDialog(QDialog):
-    """QQ 聊天定时参数设置面板，可实时调整风控参数。"""
+    """QQ 聊天面板：桥接开关 + 定时参数设置。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("QQ 聊天参数设置")
-        self.setMinimumSize(420, 380)
-        self.resize(460, 420)
+        self._mw = parent  # MainWindow 引用
+        self.setWindowTitle("QQ 聊天")
+        self.setMinimumSize(440, 480)
+        self.resize(460, 520)
 
         self._config = get_qq_timing_config()
         self._build_ui()
         self._load_config()
+        self._refresh_bridge_section()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(14)
+
+        # ── QQ 桥接开关 ──────────────────────────────────────
+        bridge_frame = QFrame()
+        bridge_frame.setFrameShape(QFrame.StyledPanel)
+        bridge_frame.setStyleSheet("QFrame { background-color: #F8F9FF; border-radius: 8px; }")
+        bridge_layout = QHBoxLayout(bridge_frame)
+
+        self._bridge_status = QLabel("QQ 桥接: 未连接")
+        self._bridge_status.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        bridge_layout.addWidget(self._bridge_status)
+
+        bridge_layout.addStretch()
+
+        self._btn_bridge_toggle = QPushButton("连接")
+        self._btn_bridge_toggle.setFixedSize(80, 30)
+        self._btn_bridge_toggle.setStyleSheet("""
+            QPushButton {
+                background-color: #6C7BFF;
+                color: white;
+                border-radius: 6px;
+                border: none;
+                font-weight: bold;
+            }
+            QPushButton:hover  { background-color: #5A6AEE; }
+        """)
+        self._btn_bridge_toggle.clicked.connect(self._on_bridge_toggle)
+        bridge_layout.addWidget(self._btn_bridge_toggle)
+
+        layout.addWidget(bridge_frame)
+
+        # ── 自动启动 ────────────────────────────────────────
+        self._auto_start_cb = QCheckBox("启动莲心时自动连接 QQ 桥接")
+        from config import get_qq_bridge_config
+        self._auto_start_cb.setChecked(get_qq_bridge_config().get("auto_start", False))
+        self._auto_start_cb.stateChanged.connect(self._on_auto_start_changed)
+        layout.addWidget(self._auto_start_cb)
 
         # ── 回复速度 ────────────────────────────────────────
         grp_reply = QGroupBox("回复速度")
@@ -269,3 +307,50 @@ class QqSettingsDialog(QDialog):
         save_qq_bridge_config(bridge_cfg)
 
         self.accept()
+
+    def _on_bridge_toggle(self):
+        """启动/停止 QQ 桥接。"""
+        if self._mw._qq_bridge and self._mw._qq_bridge.isRunning():
+            self._mw._stop_qq_bridge()
+        else:
+            self._mw._start_qq_bridge()
+        self._refresh_bridge_section()
+
+    def _refresh_bridge_section(self):
+        """刷新桥接状态显示。"""
+        if self._mw._qq_bridge and self._mw._qq_bridge.isRunning():
+            self._bridge_status.setText("QQ 桥接: ● 已连接")
+            self._bridge_status.setStyleSheet("color: #34C759;")
+            self._btn_bridge_toggle.setText("断开")
+            self._btn_bridge_toggle.setStyleSheet("""
+                QPushButton {
+                    background-color: #FF6B6B;
+                    color: white;
+                    border-radius: 6px;
+                    border: none;
+                    font-weight: bold;
+                }
+                QPushButton:hover  { background-color: #EE5A5A; }
+            """)
+        else:
+            self._bridge_status.setText("QQ 桥接: ○ 未连接")
+            self._bridge_status.setStyleSheet("color: #999999;")
+            self._btn_bridge_toggle.setText("连接")
+            self._btn_bridge_toggle.setStyleSheet("""
+                QPushButton {
+                    background-color: #6C7BFF;
+                    color: white;
+                    border-radius: 6px;
+                    border: none;
+                    font-weight: bold;
+                }
+                QPushButton:hover  { background-color: #5A6AEE; }
+            """)
+
+    def _on_auto_start_changed(self):
+        """保存自动启动设置到持久化配置。"""
+        from config import get_qq_bridge_config, save_qq_bridge_config
+        cfg = get_qq_bridge_config()
+        cfg["auto_start"] = self._auto_start_cb.isChecked()
+        save_qq_bridge_config(cfg)
+        self._mw._qq_bridge_auto_start = self._auto_start_cb.isChecked()

@@ -26,7 +26,7 @@ from gui.pomodoro_dialog   import PomodoroDialog
 from gui.api_config_dialog import ApiConfigDialog
 from gui.alarm_dialog      import AlarmDialog
 from gui.qq_settings_dialog import QqSettingsDialog
-from gui.quick_launch_dialog import QuickLaunchDialog
+
 from config import has_api_key, get_qq_bridge_config
 from brain.decision import decide
 from workers.agent_worker      import AgentWorker
@@ -34,16 +34,15 @@ from workers.voice_worker      import VoiceWorker, ModelLoader
 from workers.speaker_worker    import SpeakerWorker
 from workers.proactive_worker  import ProactiveWorker
 from workers.standby_worker    import StandbyWorker   # 不再需要 contains_end_phrase, strip_end_phrase
-from vision.vision_worker      import VisionWorker
 from utils.accompany_stats  import AccompanyStats
-from utils.balance import get_balance_info, format_balance_message
+
 from utils.proactive_chat import ProactiveChatScheduler
 from utils.settings import get_settings
 from utils.pomodoro_stats import PomodoroStats
 from utils.autostart import check_network
 from utils.alarm_manager import AlarmManager, REPEAT_LABELS
 from utils.todo_manager import TodoManager
-from gui.todo_dialog import TodoDialog
+
 from datetime import datetime
 import ctypes
 from ctypes import wintypes
@@ -124,12 +123,11 @@ class MainWindow(QMainWindow):
         self._speaker_worker:    SpeakerWorker    | None = None
         self._proactive_worker:  ProactiveWorker  | None = None
         self._ocr_worker = None
-        self._vision_worker: VisionWorker | None = None
-        self._vision_active = False
         self._is_recording = False
 
         # ── QQ 桥接 ──────────────────────────────────────────
         self._qq_bridge = None
+        self._qq_bridge_auto_start = get_qq_bridge_config().get("auto_start", False)
 
         # ── 主动聊天调度器 ────────────────────────────────────
         self._proactive_scheduler = ProactiveChatScheduler()
@@ -156,7 +154,6 @@ class MainWindow(QMainWindow):
 
         # ── 待办清单模块（数据层，UI 无关部分）──────────────
         self._todo_manager = TodoManager()
-        self._todo_dialog: TodoDialog | None = None
         # 将同一实例注入工具层，确保 AI 工具和 UI 共享同一个 TodoManager，
         # 避免 tools.py 懒创建独立实例导致观察者无法收到通知。
         import brain.tools as _brain_tools
@@ -242,9 +239,9 @@ class MainWindow(QMainWindow):
         if not has_api_key():
             QTimer.singleShot(500, self._show_api_config)
 
-        # ── QQ 桥接：配置为启用时自动启动 ────────────────────
+        # ── QQ 桥接：配置为启用且开启自动启动时才自动连接 ────
         qq_cfg = get_qq_bridge_config()
-        if qq_cfg.get("enabled") and qq_cfg.get("qq_account"):
+        if qq_cfg.get("auto_start") and qq_cfg.get("qq_account"):
             QTimer.singleShot(1000, self._start_qq_bridge)
 
         # ── 开机自启动：启动网络检测轮询 ────────────────────
@@ -447,6 +444,23 @@ class MainWindow(QMainWindow):
         self._btn_history.clicked.connect(self._on_history_clicked)
         top_bar_layout.addWidget(self._btn_history)
 
+        self._btn_new_chat = QPushButton("新建对话")
+        self._btn_new_chat.setFixedSize(72, 24)
+        self._btn_new_chat.setFont(QFont("Microsoft YaHei UI", 8))
+        self._btn_new_chat.setCursor(Qt.PointingHandCursor)
+        self._btn_new_chat.setStyleSheet("""
+            QPushButton {
+                background-color: #F0F0F8;
+                color: #5060DD;
+                border-radius: 6px;
+                border: 1px solid #C8CCF0;
+            }
+            QPushButton:hover  { background-color: #E4E4F8; }
+            QPushButton:pressed{ background-color: #D8D8EE; }
+        """)
+        self._btn_new_chat.clicked.connect(self._on_new_chat_clicked)
+        top_bar_layout.addWidget(self._btn_new_chat)
+
         # 日记本按钮
         self._btn_diary = QPushButton("📔 日记本")
         self._btn_diary.setFixedSize(80, 24)
@@ -481,40 +495,6 @@ class MainWindow(QMainWindow):
         self._btn_note.clicked.connect(self._open_note_dialog)
         top_bar_layout.addWidget(self._btn_note)
 
-         # ⏰提醒按钮
-        self._btn_reminder = QPushButton("⏰ 提醒")
-        self._btn_reminder.setFixedSize(80, 24)
-        self._btn_reminder.setFont(QFont("Microsoft YaHei UI", 8))
-        self._btn_reminder.setCursor(Qt.PointingHandCursor)
-        self._btn_reminder.setStyleSheet("""
-            QPushButton {
-                background-color: #F0F0F8;
-                color: #7A4A2A;
-                border-radius: 6px;
-                border: 1px solid #D8C8A0;
-            }
-            QPushButton:hover { background-color: #E8D8C0; }
-        """)
-        self._btn_reminder.clicked.connect(self._open_reminder_dialog)
-        top_bar_layout.addWidget(self._btn_reminder)
-
-
-        self._btn_new_chat = QPushButton("新建对话")
-        self._btn_new_chat.setFixedSize(72, 24)
-        self._btn_new_chat.setFont(QFont("Microsoft YaHei UI", 8))
-        self._btn_new_chat.setCursor(Qt.PointingHandCursor)
-        self._btn_new_chat.setStyleSheet("""
-            QPushButton {
-                background-color: #F0F0F8;
-                color: #5060DD;
-                border-radius: 6px;
-                border: 1px solid #C8CCF0;
-            }
-            QPushButton:hover  { background-color: #E4E4F8; }
-            QPushButton:pressed{ background-color: #D8D8EE; }
-        """)
-        self._btn_new_chat.clicked.connect(self._on_new_chat_clicked)
-        top_bar_layout.addWidget(self._btn_new_chat)
 
         # 主动聊天按钮（带状态指示）
         self._btn_proactive = QPushButton("主动聊天 ○")
@@ -535,24 +515,6 @@ class MainWindow(QMainWindow):
         self._btn_proactive.clicked.connect(self._on_proactive_clicked)
         top_bar_layout.addWidget(self._btn_proactive)
 
-        self._btn_standby = QPushButton("待机模式 🌙")
-        self._btn_standby.setFixedSize(100, 24)
-        self._btn_standby.setFont(QFont("Microsoft YaHei UI", 8))
-        self._btn_standby.setCursor(Qt.PointingHandCursor)
-        self._btn_standby.setToolTip('开启后说"莲心在吗"即可唤醒莲心')
-        self._btn_standby.setStyleSheet("""
-            QPushButton {
-                background-color: #F0F0F8;
-                color: #777777;
-                border-radius: 6px;
-                border: 1px solid #D8D8EE;
-            }
-            QPushButton:hover  { background-color: #E4E4F0; }
-            QPushButton:pressed{ background-color: #D8D8E8; }
-        """)
-        self._btn_standby.clicked.connect(self._on_standby_clicked)
-        top_bar_layout.addWidget(self._btn_standby)
-
         # QQ 聊天按钮（一键开关，状态由 _update_qq_bridge_button 维护）
         self._btn_qq_bridge = QPushButton("QQ聊天 ○")
         self._btn_qq_bridge.setFixedSize(84, 24)
@@ -562,27 +524,6 @@ class MainWindow(QMainWindow):
         self._btn_qq_bridge.clicked.connect(self._on_qq_bridge_clicked)
         self._update_qq_bridge_button()
         top_bar_layout.addWidget(self._btn_qq_bridge)
-
-        # QQ 聊天参数设置按钮
-        self._btn_qq_settings = QPushButton("⚙")
-        self._btn_qq_settings.setFixedSize(24, 24)
-        self._btn_qq_settings.setFont(QFont("Microsoft YaHei UI", 9))
-        self._btn_qq_settings.setCursor(Qt.PointingHandCursor)
-        self._btn_qq_settings.setToolTip("QQ 聊天参数设置")
-        self._btn_qq_settings.setEnabled(True)
-        self._btn_qq_settings.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #999999;
-                border-radius: 4px;
-                border: 1px solid #DDDDDD;
-            }
-            QPushButton:hover  { background-color: #E8E8F0; }
-            QPushButton:pressed{ background-color: #D8D8E8; }
-            QPushButton:disabled { color: #CCCCCC; border-color: #EEEEEE; }
-        """)
-        self._btn_qq_settings.clicked.connect(self._on_qq_settings_clicked)
-        top_bar_layout.addWidget(self._btn_qq_settings)
 
         # Galgame 窗口按钮
         self._galgame_btn = QPushButton("🎮 Galgame")
@@ -603,21 +544,14 @@ class MainWindow(QMainWindow):
         self._galgame_btn.clicked.connect(self._toggle_galgame)
         top_bar_layout.addWidget(self._galgame_btn)
 
-        # 快捷启动管理按钮
-        self._btn_quick_launch = QPushButton("⚡ 快捷启动")
-        self._btn_quick_launch.setFixedSize(86, 24)
-        self._btn_quick_launch.setFont(QFont("Microsoft YaHei UI", 8))
-        self._btn_quick_launch.setCursor(Qt.PointingHandCursor)
-        self._btn_quick_launch.setToolTip("管理常用应用列表，便于快速启动")
-        self._btn_quick_launch.clicked.connect(self._on_quick_launch_clicked)
-        top_bar_layout.addWidget(self._btn_quick_launch)
-
-        self._btn_write_diary = QPushButton("📝 现在就写日记")
-        self._btn_write_diary.setFixedSize(100, 24)
-        self._btn_write_diary.setFont(QFont("Microsoft YaHei UI", 8))
-        self._btn_write_diary.setCursor(Qt.PointingHandCursor)
-        self._btn_write_diary.clicked.connect(self._write_diary_now)
-        top_bar_layout.addWidget(self._btn_write_diary)
+        self._btn_standby = QPushButton("🌙 待机")
+        self._btn_standby.setFixedSize(72, 24)
+        self._btn_standby.setFont(QFont("Microsoft YaHei UI", 8))
+        self._btn_standby.setCursor(Qt.PointingHandCursor)
+        self._btn_standby.setToolTip("待机模式：通过语音与小纸条交互")
+        self._btn_standby.clicked.connect(self._on_standby_clicked)
+        self._update_standby_button()
+        top_bar_layout.addWidget(self._btn_standby)
 
         main_layout.addWidget(top_bar)
 
@@ -630,17 +564,12 @@ class MainWindow(QMainWindow):
         self._char_widget = CharacterWidget()
         # 绑定功能区按钮
         self._char_widget.get_accompany_button().clicked.connect(self._on_accompany_clicked)
-        self._char_widget.get_balance_button().clicked.connect(self._on_balance_clicked)
+
         self._char_widget.get_settings_button().clicked.connect(self._on_settings_clicked)
         self._char_widget.get_pomodoro_button().clicked.connect(self._on_pomodoro_clicked)
         self._char_widget.get_api_config_button().clicked.connect(self._show_api_config)
         self._char_widget.get_alarm_button().clicked.connect(self._on_alarm_clicked)
         self._char_widget.get_camera_button().clicked.connect(self._on_camera_capture)
-        self._char_widget.get_vision_button().clicked.connect(self._on_vision_toggle)
-
-
-        # 绑定待办清单按钮（需要在 character_widget.py 中添加 get_todo_button 方法）
-        self._char_widget.get_todo_button().clicked.connect(self._on_todo_clicked)
         top_layout.addWidget(self._char_widget)
 
         self._chat_widget = ChatWidget()
@@ -652,6 +581,7 @@ class MainWindow(QMainWindow):
         self._input_panel = InputPanel()
         self._input_panel.message_submitted.connect(self._on_user_message)
         self._input_panel.voice_clicked.connect(self._on_voice_clicked)
+
         self._input_panel.enable_clear_button()  # 启用清空按钮
         self._input_panel.clear_clicked.connect(self._on_clear_note)  # 清空小纸条
         self._input_panel.image_submitted.connect(self._on_user_image)
@@ -1184,64 +1114,6 @@ class MainWindow(QMainWindow):
         self._chat_widget.add_ai_message(msg)
         self._speak(msg)
 
-    # ── 余额查询（无阻塞版本）─────────────────────────────────
-
-    def _on_balance_clicked(self):
-        play_sound("ButtonAll.mp3")
-        import webbrowser
-        from PyQt5.QtCore import QTimer
-        self._balance_query_dialog = QMessageBox(self)
-        self._balance_query_dialog.setWindowTitle("余额查询")
-        self._balance_query_dialog.setText("正在查询余额，请稍候...")
-        self._balance_query_dialog.setStandardButtons(QMessageBox.NoButton)
-        self._balance_query_dialog.show()
-        QTimer.singleShot(100, self._do_balance_query)
-
-    def _do_balance_query(self):
-        import webbrowser
-        from PyQt5.QtWidgets import QApplication
-        try:
-            result = get_balance_info()
-            if isinstance(result, tuple) and len(result) == 2:
-                balance_info, error = result
-            else:
-                balance_info = result
-                error = None
-        except Exception as e:
-            if hasattr(self, '_balance_query_dialog'):
-                self._balance_query_dialog.close()
-                self._balance_query_dialog.deleteLater()
-            QMessageBox.warning(self, "余额查询失败", f"查询过程中发生错误：\n{str(e)}")
-            return
-        if hasattr(self, '_balance_query_dialog'):
-            self._balance_query_dialog.close()
-            self._balance_query_dialog.deleteLater()
-        QApplication.processEvents()
-        if error:
-            QMessageBox.warning(self, "余额查询失败", f"无法获取余额信息：\n{error}")
-            return
-        if balance_info is None:
-            QMessageBox.warning(self, "余额查询失败", "无法获取余额信息，请稍后重试")
-            return
-        total_balance = balance_info["total_balance"]
-        currency = balance_info["currency"]
-        if total_balance < 1.0:
-            message = f"⚠️ 余额预警：当前余额为 {total_balance:.2f} {currency}，已不足 1 元，请尽快充值以免影响使用！"
-        else:
-            message = f"✅ 当前账户余额为：{total_balance:.2f} {currency}"
-        final_msg_box = QMessageBox(self)
-        final_msg_box.setWindowTitle("💰 余额查询")
-        final_msg_box.setText(message)
-        if total_balance < 1.0:
-            recharge_button = final_msg_box.addButton("去充值", QMessageBox.AcceptRole)
-            final_msg_box.addButton(QMessageBox.Cancel)
-            final_msg_box.exec_()
-            if final_msg_box.clickedButton() == recharge_button:
-                webbrowser.open("https://platform.deepseek.com/usage")
-        else:
-            final_msg_box.addButton(QMessageBox.Ok)
-            final_msg_box.exec_()
-
     # ── 开机自启动网络检测 ────────────────────────────────────
 
     def _start_autostart_net_poll(self):
@@ -1314,7 +1186,6 @@ class MainWindow(QMainWindow):
         play_sound("ButtonAll.mp3")
         dlg = SettingsDialog(self)
         dlg.date_saved.connect(self._on_first_meet_date_saved)
-        dlg.diary_config_changed.connect(self._setup_diary_timer)  # 新增
         dlg.exec_()
 
     def _on_first_meet_date_saved(self):
@@ -1352,7 +1223,7 @@ class MainWindow(QMainWindow):
     def _on_alarm_clicked(self):
         play_sound("ButtonAll.mp3")
         if self._alarm_dialog is None:
-            self._alarm_dialog = AlarmDialog(self._alarm_manager, self)
+            self._alarm_dialog = AlarmDialog(self._alarm_manager, self, todo_manager=self._todo_manager)
             self._alarm_dialog.alarms_changed.connect(self._on_alarms_changed)
         self._alarm_dialog.show()
         self._alarm_dialog.raise_()
@@ -1420,18 +1291,6 @@ class MainWindow(QMainWindow):
         )
         self._chat_widget.add_ai_message(msg)
         self._speak(msg)
-
-    # ── 待办清单 ─────────────────────────────────────────────
-
-    def _on_todo_clicked(self):
-        play_sound("ButtonAll.mp3")
-        if self._todo_dialog is None:
-            self._todo_dialog = TodoDialog(self._todo_manager, None)   # 父窗口为 None
-            self._todo_dialog.destroyed.connect(lambda: setattr(self, '_todo_dialog', None))
-            self._todo_dialog.show()
-        else:
-            self._todo_dialog.raise_()
-            self._todo_dialog.activateWindow()
 
     def _on_diary_finished(self, success: bool, result: str):
         if success:
@@ -1775,21 +1634,10 @@ class MainWindow(QMainWindow):
         self._chat_widget.add_system_tip("—— 待机模式已关闭 ——")
 
     def _update_standby_button(self):
-        """根据当前待机状态更新顶栏按钮样式"""
-        if self._standby_state == "IDLE":
-            self._btn_standby.setText("待机模式 🌙")
-            self._btn_standby.setStyleSheet("""
-                QPushButton {
-                    background-color: #F0F0F8;
-                    color: #777777;
-                    border-radius: 6px;
-                    border: 1px solid #D8D8EE;
-                }
-                QPushButton:hover  { background-color: #E4E4F0; }
-                QPushButton:pressed{ background-color: #D8D8E8; }
-            """)
-        else:
-            self._btn_standby.setText("待机中 🌙")
+        """根据当前待机状态更新顶部栏待机按钮样式"""
+        is_active = self._standby_state == "STANDBY"
+        if is_active:
+            self._btn_standby.setText("🌙 待机 ●")
             self._btn_standby.setStyleSheet("""
                 QPushButton {
                     background-color: #EEF0FF;
@@ -1799,6 +1647,18 @@ class MainWindow(QMainWindow):
                 }
                 QPushButton:hover  { background-color: #E4E8FF; }
                 QPushButton:pressed{ background-color: #D8DCFF; }
+            """)
+        else:
+            self._btn_standby.setText("🌙 待机")
+            self._btn_standby.setStyleSheet("""
+                QPushButton {
+                    background-color: #F0F0F8;
+                    color: #777777;
+                    border-radius: 6px;
+                    border: 1px solid #D8D8EE;
+                }
+                QPushButton:hover  { background-color: #E4E4F0; }
+                QPushButton:pressed{ background-color: #D8D8E8; }
             """)
 
     def _check_note_file(self):
@@ -1987,9 +1847,6 @@ class MainWindow(QMainWindow):
                 worker.quit()
                 worker.wait(2000)
 
-        if self._vision_worker and self._vision_worker.isRunning():
-            self._vision_worker.stop()
-            self._vision_worker.wait(3000)
         self._speaker.stop()
 
         # ── 停止 QQ 桥接 ────────────────────────────────────
@@ -2029,58 +1886,6 @@ class MainWindow(QMainWindow):
             return
         # 直接复用现有的图片处理流程
         self._on_user_image(image_path)
-
-    # ── 视觉识别 ─────────────────────────────────────────────
-
-    def _on_vision_toggle(self):
-        if self._vision_active:
-            self._stop_vision()
-        else:
-            self._start_vision()
-
-    def _start_vision(self):
-        if self._vision_worker and self._vision_worker.isRunning():
-            return
-        self._vision_worker = VisionWorker(parent=self)
-        self._vision_worker.face_appeared.connect(self._on_face_appeared)
-        self._vision_worker.face_disappeared.connect(self._on_face_disappeared)
-        self._vision_worker.smile_detected.connect(self._on_smile_detected)
-        self._vision_worker.wave_detected.connect(self._on_wave_detected)
-        self._vision_worker.error_occurred.connect(self._on_vision_error)
-        self._vision_worker.start()
-        self._vision_active = True
-        self._char_widget.set_vision_mode()
-        self._char_widget.get_vision_button().setText("👁 视觉 ●")
-        self._chat_widget.add_system_tip("👁 莲心正在看着你…")
-
-    def _stop_vision(self):
-        if self._vision_worker and self._vision_worker.isRunning():
-            self._vision_worker.stop()
-            self._vision_worker.wait(3000)
-        self._vision_worker = None
-        self._vision_active = False
-        self._char_widget.exit_vision_mode()
-        self._char_widget.get_vision_button().setText("👁 视觉")
-        self._chat_widget.add_system_tip("👁 视觉已关闭")
-
-    def _on_face_appeared(self):
-        self._chat_widget.add_system_tip("👀 莲心看到有人来了～")
-
-    def _on_face_disappeared(self):
-        self._chat_widget.add_system_tip("😶 莲心看不到人了…")
-
-    def _on_smile_detected(self, score: float):
-        self._char_widget.smile_seen()
-        self._chat_widget.add_system_tip(f"😊 莲心注意到你在笑～")
-
-    def _on_wave_detected(self):
-        self._char_widget.wave_seen()
-        self._chat_widget.add_system_tip(f"👋 莲心看到你在招手！")
-
-    def _on_vision_error(self, err: str):
-        self._chat_widget.add_system_tip(f"视觉识别错误：{err}")
-        self._stop_vision()
-
 
     def _open_diary_dialog(self):
         play_sound("OpenDiary.mp3")
@@ -2552,12 +2357,13 @@ class MainWindow(QMainWindow):
     # ── QQ 桥接 ─────────────────────────────────────────────
 
     def _on_qq_bridge_clicked(self):
-        """点击顶栏 QQ聊天 按钮：启动/停止切换"""
+        """点击 QQ聊天 按钮：打开 QQ 聊天面板（含桥接开关和参数设置）。"""
         play_sound("ButtonAll.mp3")
-        if self._qq_bridge and self._qq_bridge.isRunning():
-            self._stop_qq_bridge()
-        else:
-            self._start_qq_bridge()
+        self._heartbeat_time = time.monotonic()
+        dlg = QqSettingsDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            if self._qq_bridge and self._qq_bridge.isRunning():
+                self._qq_bridge.reload_timing_config()
 
     def _start_qq_bridge(self):
         """创建并启动 QQBridgeWorker"""
@@ -2669,22 +2475,6 @@ class MainWindow(QMainWindow):
                 QPushButton:hover  { background-color: #E4E4F0; }
                 QPushButton:pressed{ background-color: #D8D8E8; }
             """)
-        if hasattr(self, '_btn_qq_settings'):
-            self._btn_qq_settings.setEnabled(True)
-
-    def _on_qq_settings_clicked(self):
-        """打开 QQ 聊天参数设置对话框。"""
-        dlg = QqSettingsDialog(self)
-        if dlg.exec_() == QDialog.Accepted:
-            if self._qq_bridge and self._qq_bridge.isRunning():
-                self._qq_bridge.reload_timing_config()
-                self._chat_widget.add_system_tip("✅ QQ 聊天参数已更新（即时生效）")
-
-    def _on_quick_launch_clicked(self):
-        """打开快捷启动应用管理对话框。"""
-        self._heartbeat_time = time.monotonic()  # 刷新心跳，防止模态框阻塞误报冻结
-        dlg = QuickLaunchDialog(self)
-        dlg.exec_()
 
 
 class _ImageVisionWorker(QThread):

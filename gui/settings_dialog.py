@@ -6,32 +6,32 @@ SettingsDialog：莲心全局设置对话框
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QCheckBox, QGroupBox, QFrame, QMessageBox, QSpinBox, QSlider, QLineEdit,
-    QFileDialog, QTabWidget, QComboBox, QDateEdit, QWidget, QTimeEdit,
-    QTreeWidget, QTreeWidgetItem, QHeaderView, QAbstractItemView
+    QFileDialog, QTabWidget, QComboBox, QWidget,
+    QTreeWidget, QTreeWidgetItem, QHeaderView, QAbstractItemView,
+    QTableWidget, QTableWidgetItem, QFormLayout,
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QDate, QTime
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 from datetime import datetime
 
 from utils.settings import get_settings
 from utils.autostart import enable_autostart, disable_autostart, is_autostart_enabled
 from utils.accompany_stats import AccompanyStats
-from utils.diary import get_diary_count, init_diary_db
-from config import get_diary_config, save_diary_config, get_memory_config, save_memory_config
+from config import get_memory_config, save_memory_config
+from config import get_quick_launch_apps, save_quick_launch_apps
 from brain.memory_store import get_all, ALL_CATEGORIES, CATEGORY_DESCRIPTIONS, delete as _memory_delete
+from gui.quick_launch_dialog import QuickLaunchEditDialog
 
 
 
 class SettingsDialog(QDialog):
     date_saved = pyqtSignal()          # 初识日期保存信号
     font_size_changed = pyqtSignal(int)  # 字体大小变化信号
-    diary_config_changed = pyqtSignal()  # 日记配置变化信号
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._settings = get_settings()
         self._accompany_stats = AccompanyStats()
-        self._load_diary_config()
         self._load_memory_config()
 
         self.setWindowTitle("全局设置")
@@ -41,21 +41,6 @@ class SettingsDialog(QDialog):
         self.setStyleSheet("background-color: #F8F8FC;")
         self._build_ui()
         self._load_from_settings()
-
-    def _load_diary_config(self):
-        cfg = get_diary_config()
-        self._diary_direction = cfg.get("direction", "latest")
-        self._diary_max_messages = cfg.get("max_messages", 30)
-        self._diary_scheduled_enabled = cfg.get("scheduled_enabled", True)
-        self._diary_scheduled_time = cfg.get("scheduled_time", "23:55")
-
-    def _save_diary_config(self):
-        save_diary_config({
-            "direction": self._diary_direction,
-            "max_messages": self._diary_max_messages,
-            "scheduled_enabled": self._diary_scheduled_enabled,
-            "scheduled_time": self._diary_scheduled_time,
-        })
 
     def _load_memory_config(self):
         self._mem_cfg = get_memory_config()
@@ -281,90 +266,6 @@ class SettingsDialog(QDialog):
         general_layout.addStretch()
         tab_widget.addTab(general_tab, "常规")
 
-        # ----- 日记本设置选项卡 -----
-        diary_tab = QWidget()
-        diary_layout = QVBoxLayout(diary_tab)
-        diary_layout.setSpacing(16)
-
-        # 消息方向
-        dir_frame = self._create_frame()
-        dir_layout = QHBoxLayout(dir_frame)
-        dir_layout.addWidget(QLabel("日记生成使用消息方向："))
-        self.diary_direction_combo = QComboBox()
-        self.diary_direction_combo.addItem("取当天最早消息", "earliest")
-        self.diary_direction_combo.addItem("取当天最晚消息", "latest")
-        dir_layout.addWidget(self.diary_direction_combo)
-        dir_layout.addStretch()
-        diary_layout.addWidget(dir_frame)
-
-        # 消息条数输入框
-        count_frame = self._create_frame()
-        count_layout = QVBoxLayout(count_frame)
-        count_label_row = QHBoxLayout()
-        count_label_row.addWidget(QLabel("📊 参考消息条数："))
-        self.diary_msg_spin = QSpinBox()
-        self.diary_msg_spin.setRange(1, 9999)
-        self.diary_msg_spin.setValue(30)
-        self.diary_msg_spin.setToolTip("输入1~9999，默认30条")
-        self.diary_msg_spin.valueChanged.connect(self._on_diary_msg_changed)
-        count_label_row.addWidget(self.diary_msg_spin)
-        count_label_row.addStretch()
-        count_layout.addLayout(count_label_row)
-        diary_layout.addWidget(count_frame)
-
-        # ========== 定时写日记设置 ==========
-        schedule_frame = self._create_frame()
-        schedule_layout = QVBoxLayout(schedule_frame)
-        schedule_layout.setSpacing(8)
-
-        self.scheduled_enabled_cb = QCheckBox("⏰ 启用定时写日记（每天自动生成）")
-        self.scheduled_enabled_cb.setChecked(True)
-        schedule_layout.addWidget(self.scheduled_enabled_cb)
-
-        time_layout = QHBoxLayout()
-        time_layout.addWidget(QLabel("每天生成时间："))
-        self.scheduled_time_edit = QTimeEdit()
-        self.scheduled_time_edit.setDisplayFormat("HH:mm")
-        self.scheduled_time_edit.setTime(QTime(23, 55))
-        time_layout.addWidget(self.scheduled_time_edit)
-        time_layout.addStretch()
-        schedule_layout.addLayout(time_layout)
-
-        schedule_note = QLabel("💡 莲心会在设定时间自动写日记（如果当天已经有日记则不会重复生成）")
-        schedule_note.setWordWrap(True)
-        schedule_note.setFont(QFont("Microsoft YaHei UI", 8))
-        schedule_note.setStyleSheet("color: #888888;")
-        schedule_layout.addWidget(schedule_note)
-
-        diary_layout.addWidget(schedule_frame)
-
-        # 重新生成指定日期日记
-        regen_frame = self._create_frame()
-        regen_layout = QHBoxLayout(regen_frame)
-        regen_layout.addWidget(QLabel("重新生成日期："))
-        self.diary_date_edit = QDateEdit()
-        self.diary_date_edit.setCalendarPopup(True)
-        self.diary_date_edit.setDate(QDate.currentDate())
-        self.diary_date_edit.setDisplayFormat("yyyy-MM-dd")
-        regen_layout.addWidget(self.diary_date_edit)
-        self.diary_regenerate_btn = QPushButton("重新生成")
-        self.diary_regenerate_btn.setCursor(Qt.PointingHandCursor)
-        self.diary_regenerate_btn.clicked.connect(self._on_regenerate_diary)
-        regen_layout.addWidget(self.diary_regenerate_btn)
-        regen_layout.addStretch()
-        diary_layout.addWidget(regen_frame)
-
-        # 当前日记总数
-        total_frame = self._create_frame()
-        total_layout = QHBoxLayout(total_frame)
-        self.diary_count_label = QLabel()
-        total_layout.addWidget(self.diary_count_label)
-        total_layout.addStretch()
-        diary_layout.addWidget(total_frame)
-
-        diary_layout.addStretch()
-        tab_widget.addTab(diary_tab, "📔 日记本")
-
         # ----- 声音设置选项卡 -----
         sound_tab = QWidget()
         sound_layout = QVBoxLayout(sound_tab)
@@ -533,6 +434,54 @@ class SettingsDialog(QDialog):
         memory_layout.addStretch()
         tab_widget.addTab(memory_tab, "🧠 记忆系统")
 
+        # ----- 快捷启动设置选项卡 -----
+        ql_tab = QWidget()
+        ql_layout = QVBoxLayout(ql_tab)
+        ql_layout.setSpacing(12)
+
+        ql_tip = QLabel(
+            "在这里添加你常用的应用，之后在 QQ 或桌面端说「打开xxx」时，莲心会优先从这里匹配。"
+        )
+        ql_tip.setWordWrap(True)
+        ql_tip.setStyleSheet("color: #666; font-size: 12px;")
+        ql_layout.addWidget(ql_tip)
+
+        self._ql_table = QTableWidget()
+        self._ql_table.setColumnCount(3)
+        self._ql_table.setHorizontalHeaderLabels(["应用名称", "可执行文件", "完整路径"])
+        self._ql_table.horizontalHeader().setStretchLastSection(True)
+        self._ql_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._ql_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self._ql_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._ql_table.setSelectionMode(QTableWidget.SingleSelection)
+        self._ql_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._ql_table.setAlternatingRowColors(True)
+        self._ql_table.verticalHeader().setVisible(False)
+        self._ql_table.setMinimumHeight(200)
+        ql_layout.addWidget(self._ql_table)
+
+        ql_btn_layout = QHBoxLayout()
+        ql_btn_add = QPushButton("＋ 添加")
+        ql_btn_add.setFixedWidth(100)
+        ql_btn_add.setCursor(Qt.PointingHandCursor)
+        ql_btn_add.clicked.connect(self._on_ql_add)
+        ql_btn_edit = QPushButton("✏ 编辑")
+        ql_btn_edit.setFixedWidth(100)
+        ql_btn_edit.setCursor(Qt.PointingHandCursor)
+        ql_btn_edit.clicked.connect(self._on_ql_edit)
+        ql_btn_del = QPushButton("✕ 删除")
+        ql_btn_del.setFixedWidth(100)
+        ql_btn_del.setCursor(Qt.PointingHandCursor)
+        ql_btn_del.clicked.connect(self._on_ql_delete)
+        ql_btn_layout.addWidget(ql_btn_add)
+        ql_btn_layout.addWidget(ql_btn_edit)
+        ql_btn_layout.addWidget(ql_btn_del)
+        ql_btn_layout.addStretch()
+        ql_layout.addLayout(ql_btn_layout)
+
+        ql_layout.addStretch()
+        tab_widget.addTab(ql_tab, "⚡ 快捷启动")
+
         layout.addWidget(tab_widget)
 
         # 底部按钮
@@ -551,9 +500,9 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(btn_row)
 
-        # 初始化日记和记忆设置界面
-        self._init_diary_ui()
+        # 初始化记忆设置界面
         self._init_memory_ui()
+        self._refresh_ql_table()
 
     def _create_frame(self):
         frame = QFrame()
@@ -650,38 +599,6 @@ class SettingsDialog(QDialog):
             QMessageBox.information(self, "导出成功", f"记忆已导出到：\n{file_path}")
         except Exception as e:
             QMessageBox.warning(self, "导出失败", f"导出时出错：{e}")
-
-    def _init_diary_ui(self):
-        if self._diary_direction == "earliest":
-            self.diary_direction_combo.setCurrentIndex(0)
-        else:
-            self.diary_direction_combo.setCurrentIndex(1)
-        self.diary_msg_spin.setValue(self._diary_max_messages)
-
-        self.scheduled_enabled_cb.setChecked(self._diary_scheduled_enabled)
-        time_parts = self._diary_scheduled_time.split(":")
-        if len(time_parts) == 2:
-            self.scheduled_time_edit.setTime(QTime(int(time_parts[0]), int(time_parts[1])))
-        else:
-            self.scheduled_time_edit.setTime(QTime(23, 55))
-
-        init_diary_db()
-        count = get_diary_count()
-        self.diary_count_label.setText(f"📖 当前日记总数：{count} 篇")
-
-    def _on_diary_msg_changed(self, value):
-        pass  # QSpinBox 自带显示，无需更新 label
-
-    def _on_regenerate_diary(self):
-        date = self.diary_date_edit.date().toString("yyyy-MM-dd")
-        if self.parent():
-            if hasattr(self.parent(), 'regenerate_diary_by_date'):
-                self.parent().regenerate_diary_by_date(date)
-                QMessageBox.information(self, "提示", f"开始重新生成 {date} 的日记，请稍后查看结果。")
-            else:
-                QMessageBox.warning(self, "提示", "请重启莲心后再试，或手动在日记对话框中重写。")
-        else:
-            QMessageBox.warning(self, "提示", "无法直接触发，请在日记对话框中点击重写按钮。")
 
     # === 以下为原有方法（保持不变） ===
     def _browse_note_path(self):
@@ -806,19 +723,6 @@ class SettingsDialog(QDialog):
         self._accompany_stats.set_first_meet_date(date_str)
         self.date_saved.emit()
 
-        direction = self.diary_direction_combo.currentData()
-        max_messages = self.diary_msg_spin.value()
-        scheduled_enabled = self.scheduled_enabled_cb.isChecked()
-        scheduled_time = self.scheduled_time_edit.time().toString("HH:mm")
-
-        self._diary_direction = direction
-        self._diary_max_messages = max_messages
-        self._diary_scheduled_enabled = scheduled_enabled
-        self._diary_scheduled_time = scheduled_time
-
-        self._save_diary_config()
-        self.diary_config_changed.emit()
-
         # ── 保存记忆系统配置 ──
         self._mem_cfg["auto_extract"] = self._memory_auto_cb.isChecked()
         self._mem_cfg["extract_interval"] = self._memory_extract_interval_spin.value()
@@ -833,3 +737,46 @@ class SettingsDialog(QDialog):
         percent = value
         self.emotion_prob_value.setText(f"{percent}%")
         self._settings.emotion_probability = percent / 100.0
+
+    # ── 快捷启动管理 ─────────────────────────────────────────
+    def _refresh_ql_table(self):
+        apps = get_quick_launch_apps()
+        self._ql_apps = apps
+        self._ql_table.setRowCount(len(apps))
+        for row, app in enumerate(apps):
+            self._ql_table.setItem(row, 0, QTableWidgetItem(app.get("name", "")))
+            self._ql_table.setItem(row, 1, QTableWidgetItem(app.get("exe_name", "")))
+            self._ql_table.setItem(row, 2, QTableWidgetItem(app.get("path", "")))
+
+    def _on_ql_add(self):
+        dlg = QuickLaunchEditDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            self._ql_apps.append(dlg.get_data())
+            save_quick_launch_apps(self._ql_apps)
+            self._refresh_ql_table()
+
+    def _on_ql_edit(self):
+        row = self._ql_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "提示", "请先选中一个应用")
+            return
+        dlg = QuickLaunchEditDialog(self, data=self._ql_apps[row])
+        if dlg.exec_() == QDialog.Accepted:
+            self._ql_apps[row] = dlg.get_data()
+            save_quick_launch_apps(self._ql_apps)
+            self._refresh_ql_table()
+
+    def _on_ql_delete(self):
+        row = self._ql_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "提示", "请先选中一个应用")
+            return
+        name = self._ql_apps[row].get("name", "")
+        ok = QMessageBox.question(
+            self, "确认删除", f"确定要删除「{name}」吗？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if ok == QMessageBox.Yes:
+            del self._ql_apps[row]
+            save_quick_launch_apps(self._ql_apps)
+            self._refresh_ql_table()

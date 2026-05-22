@@ -4,14 +4,17 @@ gui/diary_dialog.py - 日记查看对话框（支持搜索和日期筛选）
 
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QScrollArea, QWidget, QLabel, QCheckBox, QMessageBox,
-                             QTextEdit, QLineEdit, QDateEdit)
-from PyQt5.QtCore import Qt, pyqtSignal, QDate
+                             QTextEdit, QLineEdit, QDateEdit, QComboBox, QSpinBox,
+                             QTimeEdit, QFrame, QGroupBox)
+from PyQt5.QtCore import Qt, pyqtSignal, QDate, QTime
 from PyQt5.QtGui import QFont
-from utils.diary import get_all_diaries
+from utils.diary import get_all_diaries, get_diary_count, init_diary_db
 from utils.settings import get_settings
+from config import get_diary_config, save_diary_config
 import random
 import pygame
 from pathlib import Path
+from datetime import datetime
 
 class DiaryDialog(QDialog):
     diary_changed = pyqtSignal()
@@ -106,12 +109,42 @@ class DiaryDialog(QDialog):
         scroll.setWidget(self.content_widget)
         main_layout.addWidget(scroll)
 
-        # 关闭按钮
+        # 操作按钮
+        btn_layout = QHBoxLayout()
+
+        write_now_btn = QPushButton("✏️ 立即生成今天的日记")
+        write_now_btn.setFixedSize(180, 30)
+        write_now_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6C7BFF;
+                color: white;
+                border-radius: 6px;
+                border: none;
+            }
+            QPushButton:hover  { background-color: #5A6AEE; }
+        """)
+        write_now_btn.clicked.connect(self._on_write_now)
+        btn_layout.addWidget(write_now_btn)
+
+        settings_btn = QPushButton("⚙️ 设置")
+        settings_btn.setFixedSize(80, 30)
+        settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #E8D8C0;
+                color: #4A2A1A;
+                border-radius: 6px;
+                border: none;
+            }
+            QPushButton:hover { background-color: #D8C8A0; }
+        """)
+        settings_btn.clicked.connect(self._on_diary_settings)
+        btn_layout.addWidget(settings_btn)
+
+        btn_layout.addStretch()
+
         close_btn = QPushButton("关闭")
         close_btn.setFixedSize(80, 30)
         close_btn.clicked.connect(self.accept)
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
         btn_layout.addWidget(close_btn)
         main_layout.addLayout(btn_layout)
 
@@ -385,3 +418,195 @@ class DiaryDialog(QDialog):
         layout.addLayout(btn_layout)
         
         dialog.exec_()
+
+    def _on_write_now(self):
+        """立即生成今天的日记。"""
+        from PyQt5.QtWidgets import QMessageBox
+        if self._main_window is None:
+            return
+        # 检查是否已有今天的日记
+        if self._main_window._has_today_diary():
+            reply = QMessageBox.question(
+                self, "确认", "今天的日记已经存在，是否重新生成？",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+        self._main_window._write_diary_now()
+        self.accept()
+        QMessageBox.information(self, "提示", "正在生成今天的日记，请稍候...")
+
+    def _on_diary_settings(self):
+        """打开日记设置对话框。"""
+        dlg = DiarySettingsDialog(self, main_window=self._main_window)
+        dlg.diary_config_changed.connect(self.diary_changed.emit)
+        if self._main_window:
+            dlg.diary_config_changed.connect(self._main_window._setup_diary_timer)
+        dlg.exec_()
+
+
+class DiarySettingsDialog(QDialog):
+    """日记设置对话框：消息方向、参考条数、定时生成、重新生成等。"""
+    diary_config_changed = pyqtSignal()
+
+    def __init__(self, parent=None, main_window=None):
+        super().__init__(parent)
+        self._main_window = main_window
+        self.setWindowTitle("日记设置")
+        self.setMinimumSize(440, 420)
+        self.setModal(True)
+        self._load_config()
+        self._build_ui()
+        self._init_ui()
+
+    def _load_config(self):
+        cfg = get_diary_config()
+        self._diary_direction = cfg.get("direction", "latest")
+        self._diary_max_messages = cfg.get("max_messages", 30)
+        self._diary_scheduled_enabled = cfg.get("scheduled_enabled", True)
+        self._diary_scheduled_time = cfg.get("scheduled_time", "23:55")
+
+    def _save_config(self):
+        save_diary_config({
+            "direction": self._diary_direction,
+            "max_messages": self._diary_max_messages,
+            "scheduled_enabled": self._diary_scheduled_enabled,
+            "scheduled_time": self._diary_scheduled_time,
+        })
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.setContentsMargins(18, 18, 18, 18)
+
+        # 消息方向
+        dir_frame = self._create_frame()
+        dir_layout = QHBoxLayout(dir_frame)
+        dir_layout.addWidget(QLabel("日记生成使用消息方向："))
+        self._dir_combo = QComboBox()
+        self._dir_combo.addItem("取当天最早消息", "earliest")
+        self._dir_combo.addItem("取当天最晚消息", "latest")
+        dir_layout.addWidget(self._dir_combo)
+        dir_layout.addStretch()
+        layout.addWidget(dir_frame)
+
+        # 消息条数
+        count_frame = self._create_frame()
+        count_layout = QHBoxLayout(count_frame)
+        count_layout.addWidget(QLabel("参考消息条数："))
+        self._msg_spin = QSpinBox()
+        self._msg_spin.setRange(1, 9999)
+        self._msg_spin.setValue(30)
+        count_layout.addWidget(self._msg_spin)
+        count_layout.addStretch()
+        layout.addWidget(count_frame)
+
+        # 定时写日记
+        sched_frame = self._create_frame()
+        sched_layout = QVBoxLayout(sched_frame)
+        sched_layout.setSpacing(8)
+        self._sched_cb = QCheckBox("启用定时写日记（每天自动生成）")
+        sched_layout.addWidget(self._sched_cb)
+        time_layout = QHBoxLayout()
+        time_layout.addWidget(QLabel("每天生成时间："))
+        self._time_edit = QTimeEdit()
+        self._time_edit.setDisplayFormat("HH:mm")
+        time_layout.addWidget(self._time_edit)
+        time_layout.addStretch()
+        sched_layout.addLayout(time_layout)
+        sched_note = QLabel("莲心会在设定时间自动写日记（如果当天已有则不会重复生成）")
+        sched_note.setWordWrap(True)
+        sched_note.setFont(QFont("Microsoft YaHei UI", 8))
+        sched_note.setStyleSheet("color: #888;")
+        sched_layout.addWidget(sched_note)
+        layout.addWidget(sched_frame)
+
+        # 重新生成
+        regen_frame = self._create_frame()
+        regen_layout = QHBoxLayout(regen_frame)
+        regen_layout.addWidget(QLabel("重新生成日期："))
+        self._regen_date = QDateEdit()
+        self._regen_date.setCalendarPopup(True)
+        self._regen_date.setDate(QDate.currentDate())
+        self._regen_date.setDisplayFormat("yyyy-MM-dd")
+        regen_layout.addWidget(self._regen_date)
+        regen_btn = QPushButton("重新生成")
+        regen_btn.setCursor(Qt.PointingHandCursor)
+        regen_btn.clicked.connect(self._on_regenerate)
+        regen_layout.addWidget(regen_btn)
+        regen_layout.addStretch()
+        layout.addWidget(regen_frame)
+
+        # 日记总数
+        count_label_layout = QHBoxLayout()
+        self._count_label = QLabel()
+        count_label_layout.addWidget(self._count_label)
+        count_label_layout.addStretch()
+        layout.addLayout(count_label_layout)
+
+        layout.addStretch()
+
+        # 底部按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        cancel_btn = QPushButton("取消")
+        cancel_btn.setFixedSize(80, 32)
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+        save_btn = QPushButton("保存")
+        save_btn.setFixedSize(80, 32)
+        save_btn.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6C7BFF;
+                color: white;
+                border-radius: 6px;
+                border: none;
+            }
+            QPushButton:hover { background-color: #5A6AEE; }
+        """)
+        save_btn.clicked.connect(self._on_save)
+        btn_layout.addWidget(save_btn)
+        layout.addLayout(btn_layout)
+
+    def _create_frame(self):
+        frame = QFrame()
+        frame.setStyleSheet("""
+            QFrame {
+                background-color: #F0F2F7;
+                border-radius: 8px;
+                border: 1px solid #E0E0E8;
+            }
+        """)
+        return frame
+
+    def _init_ui(self):
+        idx = self._dir_combo.findData(self._diary_direction)
+        if idx >= 0:
+            self._dir_combo.setCurrentIndex(idx)
+        self._msg_spin.setValue(self._diary_max_messages)
+        self._sched_cb.setChecked(self._diary_scheduled_enabled)
+        time_parts = self._diary_scheduled_time.split(":")
+        if len(time_parts) == 2:
+            self._time_edit.setTime(QTime(int(time_parts[0]), int(time_parts[1])))
+        else:
+            self._time_edit.setTime(QTime(23, 55))
+        init_diary_db()
+        self._count_label.setText(f"当前日记总数：{get_diary_count()} 篇")
+
+    def _on_save(self):
+        self._diary_direction = self._dir_combo.currentData()
+        self._diary_max_messages = self._msg_spin.value()
+        self._diary_scheduled_enabled = self._sched_cb.isChecked()
+        self._diary_scheduled_time = self._time_edit.time().toString("HH:mm")
+        self._save_config()
+        self.diary_config_changed.emit()
+        self.accept()
+
+    def _on_regenerate(self):
+        date = self._regen_date.date().toString("yyyy-MM-dd")
+        if self._main_window:
+            self._main_window.regenerate_diary_by_date(date)
+            QMessageBox.information(self, "提示", f"开始重新生成 {date} 的日记，请稍后查看结果。")
+        else:
+            QMessageBox.warning(self, "提示", "无法直接触发，请重启莲心后再试。")
