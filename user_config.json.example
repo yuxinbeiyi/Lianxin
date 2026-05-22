@@ -20,7 +20,7 @@
   "camera": {
     "device_index": 0,
     "save_to_local": false,
-    "save_folder": "E:/Desktop/111"
+    "save_folder": ""
   },
   "qq_bridge": {
     "enabled": true,

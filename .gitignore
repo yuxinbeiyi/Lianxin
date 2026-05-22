@@ -19,6 +19,8 @@ env/
 
 # 大模型文件
 models/
+# 保留视觉模型（MediaPipe 面部/手势检测）
+!vision/models/
 
 # 运行时数据库
 memory/*.db
