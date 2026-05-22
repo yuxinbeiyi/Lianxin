@@ -1,6 +1,8 @@
 # 莲心AI — Windows 桌面 AI 助手
 
 基于 PyQt5 + DeepSeek API 的桌面个人 AI 助手，支持语音对话、视觉理解、QQ 桥接、硬件外设等功能。
+![莲心形象](assets/meme/%E5%8D%95%E6%89%8B%E5%8F%89%E8%85%B0.jpg)
+
 
 ## 功能概览
 
