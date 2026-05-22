@@ -234,18 +234,20 @@ class AgentCore:
             return
 
         def _do_extract():
-            try:
-                target = recent[-self._extract_msg_count:]
-                lines = []
-                for msg in target:
-                    role = "用户" if msg.get("role") == "user" else "莲心"
-                    content = msg.get("content", "")
-                    if content:
-                        lines.append(f"[{role}]: {content}")
-                text = "\n".join(lines)
-                if len(text) < 30:
-                    return
+            # 构建对话文本（分类提取和五元组提取共用）
+            target = recent[-self._extract_msg_count:]
+            lines = []
+            for msg in target:
+                role = "用户" if msg.get("role") == "user" else "莲心"
+                content = msg.get("content", "")
+                if content:
+                    lines.append(f"[{role}]: {content}")
+            text = "\n".join(lines)
+            if len(text) < 30:
+                return
 
+            # ── 分类记忆提取（独立 try，失败不影响五元组提取） ──
+            try:
                 prompt = build_extraction_prompt(text)
                 response = litellm.completion(
                     model=self._model,
@@ -274,16 +276,16 @@ class AgentCore:
 
                 if added > 0:
                     self._last_extraction_idx = len(self.history)
-
-                # ── 五元组图记忆提取 ──
-                if self._graph_enabled and self._auto_extract_quintuples:
-                    try:
-                        from brain.quintuple_extractor import extract_and_store
-                        extract_and_store(text)
-                    except Exception:
-                        pass
             except Exception:
                 pass
+
+            # ── 五元组图记忆提取（独立 try，失败不影响分类提取） ──
+            if self._graph_enabled and self._auto_extract_quintuples:
+                try:
+                    from brain.quintuple_extractor import extract_and_store
+                    extract_and_store(text)
+                except Exception:
+                    pass
 
         threading.Thread(target=_do_extract, daemon=True).start()
 
