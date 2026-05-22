@@ -33,6 +33,9 @@ memory/qq_session_map.json
 user_data/
 data/
 
+# OCR 运行时依赖（Tesseract）
+ocr/
+
 # 临时 / 备份目录
 代码备份/
 文档备份/

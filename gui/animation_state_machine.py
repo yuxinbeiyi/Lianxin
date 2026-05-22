@@ -47,6 +47,8 @@ class AnimationStateMachine(QObject):
                     continue
                 movie = QMovie(str(full_path))
                 movie.setCacheMode(QMovie.CacheAll)
+                movie.start()
+                movie.stop()
                 self._movie_cache[(mode_name, state_name)] = movie
 
     def set_mode(self, mode: str):
