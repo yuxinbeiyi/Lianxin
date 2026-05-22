@@ -81,6 +81,16 @@ pip install -r requirements.txt
 
 > 注意：本地模型不支持 Function Calling，切换后将自动使用纯聊天模式。
 
+## 可选外部依赖
+
+| 组件 | 用途 | 需要单独安装 |
+|------|------|-------------|
+| [NapCatQQ](https://github.com/NapNeko/NapCatQQ) | QQ 聊天功能（WebSocket 连接） | 是 |
+| [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) | 图片文字识别 | 是 |
+| [Ollama](https://ollama.com) | 本地模型运行 | 否（可选） |
+
+> NapCatQQ 和 Tesseract 需要用户自行部署，莲心不内置这两者。
+
 ## 运行
 
 ```bash

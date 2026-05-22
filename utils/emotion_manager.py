@@ -3,8 +3,7 @@ import random
 from pathlib import Path
 from typing import Optional
 
-# 表情包根目录（根据你的实际路径调整）
-EMOTION_BASE_PATH = Path("E:/Desktop/莲心AI/表情包")
+EMOTION_BASE_PATH = Path(__file__).resolve().parent.parent / "表情包"
 # 情绪标签与文件夹名的映射（文件夹名必须与标签完全一致）
 EMOTION_FOLDER_MAP = {
     # 直接对应

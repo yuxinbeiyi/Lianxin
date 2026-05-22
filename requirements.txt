@@ -1,0 +1,50 @@
+# 莲心AI核心依赖 - 完整版
+# 注意：请先创建Python环境（如：conda create -n lianxin python=3.12）
+
+# AI核心
+openai>=2.32.0
+
+# GUI界面
+PyQt5>=5.15.11
+PyQt5-sip>=12.15.0
+
+# 文档处理
+python-docx>=1.2.0
+pypdfium2>=5.7.0
+pdfplumber>=0.11.9
+
+# 图像处理
+Pillow>=11.0.0
+opencv-python>=4.10.0.84
+
+# OCR功能
+pytesseract>=0.3.13
+
+# 语音功能
+edge-tts>=7.2.8
+sounddevice>=0.5.5
+pydub>=0.25.1
+alibabacloud-nls-python-sdk>=1.0.2
+pygame>=2.6.1
+faster-whisper>=1.2.1
+
+# 网络与系统
+requests>=2.32.3
+psutil>=6.1.0
+pywin32>=308
+
+# 数据处理
+numpy>=1.26.4
+
+# Markdown转Word（工具函数需要）
+md2docx-python>=1.0.0
+
+# 日期解析（待办事项功能需要）
+dateparser>=1.4.0
+
+# 其他必要依赖
+typing-extensions>=4.0.0
+certifi>=2024.8.30
+charset-normalizer>=3.4.0
+idna>=3.10
+urllib3>=2.2.0

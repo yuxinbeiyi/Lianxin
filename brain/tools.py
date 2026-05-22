@@ -14,6 +14,8 @@ from datetime import datetime
 from typing import Optional
 import sys
 
+from utils.paths import get_user_data_dir
+
 # 记忆系统
 from brain.memory_store import (
     search as _memory_search,
@@ -1853,28 +1855,8 @@ def open_app(name: str) -> str:
         except Exception as e:
             return f"无法启动 '{raw_name}'：{e}"
 
-    # ── 4) 已知应用 → 检查常见安装路径（非递归，快速） ─────
-    _KNOWN_PATHS: dict[str, list[str]] = {
-        "网易云": [
-            r"E:\CloudMusic\CloudMusic\cloudmusic.exe",
-            r"C:\Program Files\NetEase\CloudMusic\cloudmusic.exe",
-        ],
-        "网易云音乐": [
-            r"E:\CloudMusic\CloudMusic\cloudmusic.exe",
-            r"C:\Program Files\NetEase\CloudMusic\cloudmusic.exe",
-        ],
-        "steam": [
-            r"C:\Program Files (x86)\Steam\steam.exe",
-        ],
-        "微信": [
-            r"D:\weChatData\Weixin\Weixin.exe",
-            r"C:\Program Files\Tencent\WeChat\WeChat.exe",
-        ],
-        "qq": [
-            r"E:\Edge_install\QQ\QQ.exe",
-            r"C:\Program Files\Tencent\QQ\QQ.exe",
-        ],
-    }
+    # ── 4) 已知应用 → 通过快捷启动界面由用户自行配置 ─────
+    _KNOWN_PATHS: dict[str, list[str]] = {}
     for known_path in _KNOWN_PATHS.get(raw_name.lower(), []):
         if Path(known_path).exists():
             try:
@@ -2874,7 +2856,7 @@ def _shoulder_exec(coro_factory):
 
 def shoulder_photo() -> str:
     """拍摄一张照片并保存，返回保存路径。"""
-    save_dir = Path("E:/Desktop/莲心AI/user_data/camera_shots")
+    save_dir = get_user_data_dir() / "camera_shots"
     save_dir.mkdir(parents=True, exist_ok=True)
     path = str(save_dir / f"shoulder_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg")
 
