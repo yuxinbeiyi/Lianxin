@@ -1,13 +1,17 @@
 """
-AgentCore：莲心AI 的大脑（DeepSeek API + Function Calling）
-使用 openai SDK 连接 DeepSeek，接口完全兼容 OpenAI 规范。
+AgentCore：莲心AI 的大脑（LiteLLM 统一网关 + Function Calling）
+使用 LiteLLM 统一接入 DeepSeek / Anthropic / Ollama 等多种模型。
 """
 
 import json
 import re
 import threading
 from datetime import datetime
-from openai import OpenAI
+import os as _os
+_os.environ.setdefault("LITELLM_LOG", "ERROR")  # 抑制 litellm 导入时的 WARNING
+import litellm
+litellm.set_verbose = False
+litellm.suppress_debug_info = True  # 关闭 "Give Feedback" stderr 输出
 from config import get_api_config, get_base_prompt, get_local_base_prompt, get_qq_bridge_config, get_qq_timing_config, get_memory_config
 from brain.tools import TOOL_DEFINITIONS, execute_tool, set_cross_session_context
 from brain.skill_manager import get_active_tool_definitions, get_active_knowledge
@@ -41,23 +45,24 @@ class AgentCore:
         # 每次实例化都从文件读取最新配置，支持热重载
         cfg = get_api_config()
         self._use_local = cfg.get("use_local", False)
+        self._api_format = cfg.get("api_format", "openai")
         if self._use_local:
-            self._model      = cfg.get("local_model_name", "my-deepseek")
+            self._model      = f"ollama/{cfg.get('local_model_name', 'my-deepseek')}"
             self._max_tokens = min(cfg["max_tokens"], 2048)
-            self.client = OpenAI(
-                api_key="ollama",
-                base_url=cfg.get("local_base_url", "http://localhost:11434/v1"),
-            )
+            self._api_base   = cfg.get("local_base_url", "http://localhost:11434/v1")
         else:
-            self._model      = cfg["model"]
+            model = cfg["model"]
+            if "/" not in model:  # litellm 需要 provider 前缀
+                model = f"deepseek/{model}"
+            self._model      = model
             self._max_tokens = cfg["max_tokens"]
-            self.client = OpenAI(
-                api_key=cfg["api_key"],
-                base_url=cfg["base_url"],
-            )
+            self._api_base   = cfg["base_url"]
+        self._api_key = cfg["api_key"] if not self._use_local else "ollama"
+
         self._disable_tools = disable_tools
         self._last_emotion = None     # 本轮回复的情绪标签（供 GUI 选图用）
         self._last_raw_response = None  # 本轮回复原始文本（含标签）
+        self._last_reasoning = None    # 本轮回复的 COT 推理链
         # 对话历史（OpenAI messages 格式）
         self.history: list[dict] = []
 
@@ -108,6 +113,11 @@ class AgentCore:
         # 启动时构建完整的 System Prompt（包含时间和记忆，只做一次）
         self._system_prompt = self._build_system_prompt_once()
 
+        # ── 加载上一会话的压缩摘要 ──────────────────────────
+        self._prev_session_summary = self._load_previous_session_summary()
+        if self._prev_session_summary:
+            self._system_prompt += f"\n\n{self._prev_session_summary}"
+
         # ── 用户上下文：让 AI 知道当前在跟谁说话 ───────────────
         if user_desc:
             self._system_prompt += f"\n\n【当前对话对象】\n{user_desc}"
@@ -126,6 +136,16 @@ class AgentCore:
 如果情绪不在列表中，输出【表情：默认】。不要创造列表外的情绪。"""
 
     # ── 对外接口 ─────────────────────────────────────────────
+
+    @property
+    def last_emotion(self) -> str | None:
+        """本轮回复的情绪标签（供 GUI 选 Live2D 表情）。"""
+        return self._last_emotion
+
+    @property
+    def last_reasoning(self) -> str | None:
+        """本轮回复的 COT 推理链（供 GUI 展示思考过程）。"""
+        return self._last_reasoning
 
     def chat(self, user_message: str,
             on_tool_call=None, on_tool_result=None,
@@ -210,7 +230,7 @@ class AgentCore:
                     return
 
                 prompt = build_extraction_prompt(text)
-                response = self.client.chat.completions.create(
+                response = litellm.completion(
                     model=self._model,
                     messages=[
                         {"role": "system",
@@ -219,6 +239,8 @@ class AgentCore:
                     ],
                     response_format={"type": "json_object"},
                     temperature=0.1,
+                    api_key=self._api_key,
+                    api_base=self._api_base,
                     timeout=30,
                 )
                 raw = response.choices[0].message.content or "{}"
@@ -274,20 +296,20 @@ class AgentCore:
             base_prompt = get_local_base_prompt()
         else:
             base_prompt = get_base_prompt()
-        
+
         # 获取当前时间信息（启动时）
         now = datetime.now()
         weekday_names = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
         weekday = weekday_names[now.weekday()]
         date_str = now.strftime("%Y年%m月%d日")
         time_str = now.strftime("%H:%M:%S")
-        
+
         # 农历信息（尝试获取）
         lunar_info = self._get_lunar_info(now)
-        
+
         # 节假日信息（尝试获取）
         holiday_info = self._get_holiday_info(now)
-        
+
         # 构建时间信息块
         time_block = f"【当前时间（启动时）】\n公历：{date_str} {time_str} {weekday}"
         if lunar_info:
@@ -326,6 +348,49 @@ class AgentCore:
             full_prompt = f"{base_prompt}\n\n{time_block}{peripheral_block}"
 
         return full_prompt
+
+    def _load_previous_session_summary(self) -> str | None:
+        """加载上一会话的压缩摘要。使用本地小模型压缩，失败静默跳过。"""
+        if self._use_local:
+            return None
+        try:
+            # 获取上一个不同 session_id 的会话
+            sessions = self._history_mgr.get_sessions()
+            if len(sessions) < 2:
+                return None
+            # 找到当前 session 的前一个
+            prev = None
+            for s in sessions:
+                if s["id"] == self._session_id and prev is not None:
+                    break
+                if s["id"] != self._session_id:
+                    prev = s
+            if prev is None:
+                return None
+
+            msgs = self._history_mgr.get_messages(prev["id"], limit=40)
+            if not msgs or len(msgs) < 6:
+                return None
+
+            lines = []
+            for m in msgs:
+                role = "用户" if m["role"] == "user" else "莲心"
+                content = m["content"][:300]
+                if content.strip():
+                    lines.append(f"[{role}]: {content}")
+            history_text = "\n".join(lines)
+
+            from brain.context_compressor import compress_previous_session
+            summary = compress_previous_session(
+                history_text,
+                model="ollama/my-qwen",
+                api_base=self._api_base if self._use_local else "http://localhost:11434/v1",
+            )
+            if summary:
+                logger.info(f"[记忆] 已加载上一会话摘要 (session {prev['id']} → {self._session_id})")
+            return summary
+        except Exception:
+            return None
 
     def _get_lunar_info(self, dt: datetime) -> str:
         """获取农历日期信息。"""
@@ -527,14 +592,17 @@ class AgentCore:
         # ── 禁用工具模式：直接纯文本对话，不走工具循环 ──────
         if disable_tools:
             try:
-                response = self.client.chat.completions.create(
+                response = litellm.completion(
                     model=self._model,
                     max_tokens=self._max_tokens,
                     messages=messages,
+                    api_key=self._api_key,
+                    api_base=self._api_base,
                     timeout=30,
                 )
             except Exception as e:
                 return f"（API 调用失败：{e}）"
+            self._last_reasoning = getattr(response.choices[0].message, "reasoning_content", None)
             return response.choices[0].message.content or "（莲心没有说话）"
 
         # ── 长期记忆说明（仅在走工具路径时注入） ────────────
@@ -560,6 +628,22 @@ class AgentCore:
         })
 
 
+        # ── 运行时压缩：长对话自动压缩早期消息 ────────────
+        if not self._use_local and len(messages) > 30:
+            try:
+                compress_model = "ollama/my-qwen"
+                compress_base = "http://localhost:11434/v1"
+                from brain.context_compressor import maybe_compress
+                # 从 messages 中找出非 system 消息进行压缩检查
+                non_system = [m for m in messages if m.get("role") != "system"]
+                if len(non_system) > 20:
+                    compressed = maybe_compress(non_system, model=compress_model, api_base=compress_base)
+                    # 重建 messages：保留 system 消息 + 压缩后的结果
+                    system_msgs = [m for m in messages if m.get("role") == "system"]
+                    messages = system_msgs + compressed
+            except Exception:
+                pass
+
         max_iterations = 10
         iteration = 0
 
@@ -570,18 +654,24 @@ class AgentCore:
             if forced_tool and forced_tool in [t["function"]["name"] for t in all_tools]:
                 tool_choice = {"type": "function", "function": {"name": forced_tool}}
             try:
-                response = self.client.chat.completions.create(
+                response = litellm.completion(
                     model=self._model,
                     max_tokens=self._max_tokens,
-                    tools=all_tools,
+                    tools=all_tools if all_tools else None,
                     tool_choice=tool_choice,
                     messages=messages,
+                    api_key=self._api_key,
+                    api_base=self._api_base,
                     timeout=30,
                 )
             except Exception as e:
                 return f"（API 调用失败：{e}）"
 
             choice = response.choices[0]
+            # 捕获 COT 推理链（DeepSeek-R1 等推理模型）
+            reasoning = getattr(choice.message, "reasoning_content", None)
+            if reasoning:
+                self._last_reasoning = reasoning
 
             if choice.finish_reason == "stop":
                 return choice.message.content or "（莲心没有说话）"
@@ -589,10 +679,31 @@ class AgentCore:
                 messages.append(choice.message)
                 for tool_call in choice.message.tool_calls:
                     name = tool_call.function.name
-                    try:
-                        args = json.loads(tool_call.function.arguments)
-                    except json.JSONDecodeError:
-                        args = {}
+                    raw_args = tool_call.function.arguments or "{}"
+                    args = self._extract_json_args(raw_args)
+                    # 解析失败时记录原始参数作为 tool result 返回给 LLM
+                    if not args and raw_args.strip() and raw_args.strip() not in ("{}", "[]"):
+                        logger.warning(f"[ToolLoop] 参数解析失败: {name}({raw_args[:100]})")
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": f"参数解析失败，原始参数: {raw_args}。请修正 JSON 格式后重试。",
+                        })
+                        continue
+
+                    # ── 重复调用检测 ──
+                    call_key = (name, json.dumps(args, ensure_ascii=False, sort_keys=True))
+                    last_key = getattr(self, "_last_tool_call_key", None)
+                    if call_key == last_key:
+                        logger.warning(f"[ToolLoop] 重复工具调用: {name}，终止循环")
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": "工具重复调用已终止。请基于已有信息给出回复。",
+                        })
+                        return "（检测到重复工具调用，已自动停止）"
+                    self._last_tool_call_key = call_key
+
                     if on_tool_call:
                         on_tool_call(name, args)
                     set_cross_session_context(self._session_id, self._history_mgr)
@@ -635,10 +746,12 @@ class AgentCore:
         delay = initial_delay
         for attempt in range(max_retries):
             try:
-                response = self.client.chat.completions.create(
+                response = litellm.completion(
                     model=self._model,
                     max_tokens=self._max_tokens,
                     messages=messages,
+                    api_key=self._api_key,
+                    api_base=self._api_base,
                     timeout=30,
                 )
                 return response
@@ -667,3 +780,80 @@ class AgentCore:
         if isinstance(content, str):
             return content.strip()
         return str(content)
+
+    # ── Tool Loop 健壮化辅助 ──────────────────────────────
+
+    @staticmethod
+    def _normalize_fullwidth_json(text: str) -> str:
+        """将常见全角 JSON 字符归一化为 ASCII。"""
+        if not text:
+            return text
+        return text.translate(str.maketrans({
+            "ｊ": "{", "ｋ": "}", "：": ":",
+            "，": ",", "“": '"', "”": '"',
+            "‘": "'", "’": "'",
+            "［": "[", "］": "]",
+        }))
+
+    @staticmethod
+    def _extract_json_args(raw_args: str) -> dict:
+        """多层尝试解析 JSON arguments。"""
+        if not raw_args or not raw_args.strip():
+            return {}
+        text = raw_args.strip()
+
+        # 1. 直接解析
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 2. 全角归一化后解析
+        normalized = AgentCore._normalize_fullwidth_json(text)
+        if normalized != text:
+            try:
+                return json.loads(normalized)
+            except json.JSONDecodeError:
+                pass
+
+        # 3. 花括号深度匹配提取
+        start = text.find("{")
+        if start >= 0:
+            depth = 0
+            for i in range(start, len(text)):
+                ch = text[i]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(text[start:i + 1])
+                        except json.JSONDecodeError:
+                            pass
+                        normed = AgentCore._normalize_fullwidth_json(text[start:i + 1])
+                        if normed != text[start:i + 1]:
+                            try:
+                                return json.loads(normed)
+                            except json.JSONDecodeError:
+                                pass
+                        break
+
+        # 4. 全角花括号匹配
+        full_start = text.find("ｊ")
+        if full_start >= 0:
+            depth = 0
+            for i in range(full_start, len(text)):
+                ch = text[i]
+                if ch in ("ｊ", "{"):
+                    depth += 1
+                elif ch in ("ｋ", "}"):
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(AgentCore._normalize_fullwidth_json(text[full_start:i + 1]))
+                        except json.JSONDecodeError:
+                            pass
+                        break
+
+        return {}

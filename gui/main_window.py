@@ -1785,11 +1785,14 @@ class MainWindow(QMainWindow):
         """内部方法：将文字作为用户消息发送给 AI，并可选择跳过添加用户气泡"""
         from brain.tools import set_diary_message_source
         set_diary_message_source(self._get_today_messages)
-        route = decide(text)
-        is_chat = route == "chat"
+        from brain.intent_router import get_router
+        route_result = get_router().route(text)
+        is_chat = route_result.route == "chat"
         self._proactive_scheduler.notify_user_active()
         self._set_thinking_state()
         self._agent_worker = AgentWorker(self._agent, text, self, disable_tools=is_chat)
+        # 存储路由结果供 AgentWorker 使用（按需注入工具）
+        self._last_route_result = route_result
         self._agent_worker.response_ready.connect(self._on_ai_response)
         self._agent_worker.tool_called.connect(self._on_tool_called)
         self._agent_worker.error_occurred.connect(self._on_error)

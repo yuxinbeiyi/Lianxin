@@ -6,7 +6,7 @@ ApiConfigDialog：API Key 配置对话框
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QSpinBox, QFrame, QMessageBox, QTabWidget,
-    QWidget, QFormLayout, QCheckBox, QApplication,
+    QWidget, QFormLayout, QCheckBox, QComboBox, QApplication,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont
@@ -316,6 +316,30 @@ class ApiConfigDialog(QDialog):
         self._apply_field_style(self._model_edit)
         cloud_form.addRow("模型名称:", self._model_edit)
 
+        # API 格式
+        self._api_format_combo = QComboBox()
+        self._api_format_combo.addItems(["openai", "anthropic"])
+        self._api_format_combo.setFixedHeight(34)
+        self._api_format_combo.setFont(QFont("Microsoft YaHei UI", 10))
+        self._api_format_combo.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #D8D8EE;
+                border-radius: 8px;
+                padding: 4px 8px;
+                background-color: #FFFFFF;
+                color: #2C2C2C;
+            }
+            QComboBox:focus { border: 1px solid #6C7BFF; }
+            QComboBox::drop-down { border: none; width: 24px; }
+            QComboBox QAbstractItemView {
+                background-color: #FFFFFF;
+                border: 1px solid #D8D8EE;
+                selection-background-color: #ECEEFF;
+                color: #2C2C2C;
+            }
+        """)
+        cloud_form.addRow("API 格式:", self._api_format_combo)
+
         # 最大 Token 数
         self._tokens_spin = QSpinBox()
         self._tokens_spin.setRange(512, 32768)
@@ -380,6 +404,13 @@ class ApiConfigDialog(QDialog):
         self._local_model_edit.setFont(QFont("Consolas", 10))
         self._apply_field_style(self._local_model_edit)
         local_form.addRow("本地模型名:", self._local_model_edit)
+
+        # 路由模型名称（意图分类用小模型）
+        self._router_model_edit = QLineEdit()
+        self._router_model_edit.setPlaceholderText("my-qwen（留空则回退到规则路由）")
+        self._router_model_edit.setFont(QFont("Consolas", 10))
+        self._apply_field_style(self._router_model_edit)
+        local_form.addRow("路由模型名:", self._router_model_edit)
 
         local_layout.addLayout(local_form)
         self._local_group.hide()
@@ -612,8 +643,14 @@ class ApiConfigDialog(QDialog):
         self._url_edit.setText(ds_cfg.get("base_url", "https://api.deepseek.com"))
         self._model_edit.setText(ds_cfg.get("model", "deepseek-v4-flash"))
         self._tokens_spin.setValue(ds_cfg.get("max_tokens", 4096))
+        # api_format
+        api_format = ds_cfg.get("api_format", "openai")
+        idx = self._api_format_combo.findText(api_format)
+        if idx >= 0:
+            self._api_format_combo.setCurrentIndex(idx)
         self._local_url_edit.setText(ds_cfg.get("local_base_url", "http://localhost:11434/v1"))
         self._local_model_edit.setText(ds_cfg.get("local_model_name", "my-deepseek"))
+        self._router_model_edit.setText(ds_cfg.get("router_model", "my-qwen"))
         # 根据 use_local 状态切换 UI（toggle 信号不会在 setChecked 前触发）
         self._cloud_group.setVisible(not use_local)
         self._local_group.setVisible(use_local)
@@ -653,9 +690,11 @@ class ApiConfigDialog(QDialog):
             "base_url":   self._url_edit.text().strip() or "https://api.deepseek.com",
             "model":      self._model_edit.text().strip() or "deepseek-v4-flash",
             "max_tokens": self._tokens_spin.value(),
+            "api_format": self._api_format_combo.currentText(),
             "use_local": self._use_local_check.isChecked(),
             "local_base_url": self._local_url_edit.text().strip() or "http://localhost:11434/v1",
             "local_model_name": self._local_model_edit.text().strip() or "my-deepseek",
+            "router_model": self._router_model_edit.text().strip(),
         }
 
     def _collect_aliyun(self) -> dict:

@@ -3,6 +3,7 @@
 
 # AI核心
 openai>=2.32.0
+litellm>=1.80.0
 
 # GUI界面
 PyQt5>=5.15.11
