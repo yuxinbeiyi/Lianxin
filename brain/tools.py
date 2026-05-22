@@ -28,8 +28,8 @@ from brain.graph_memory import (
     # 统一搜索（事实 + 图边）
     unified_search,
     format_unified_search_result,
-    # 五元组图查询（保持不变）
-    search_graph,
+    # 五元组图查询
+    search_graph_ranked,
     query_by_entity,
     query_connected,
     format_graph_result,
@@ -1261,9 +1261,10 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "keyword": {
-                        "type": "string",
-                        "description": "搜索关键词，匹配实体名或关系名"
+                    "keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "搜索关键词列表。从用户问题中提取所有相关实体名和关系词。例如问'我跟小明喜欢什么音乐'应提取['我','小明','喜欢','音乐']；问'上次聊的项目用了哪些技术'应提取['项目','技术']"
                     },
                     "entity_type": {
                         "type": "string",
@@ -1271,7 +1272,7 @@ TOOL_DEFINITIONS = [
                         "description": "可选，限定实体类型"
                     }
                 },
-                "required": ["keyword"]
+                "required": ["keywords"]
             }
         }
     },
@@ -3441,11 +3442,13 @@ def _ensure_migrated():
         pass
 
 
-def _search_graph_memory(keyword: str, entity_type: str = None) -> str:
-    """在图记忆中搜索实体关联。"""
-    if not keyword or not keyword.strip():
+def _search_graph_memory(keywords, entity_type: str = None) -> str:
+    """在图记忆中搜索实体关联（支持多关键词相关性排序）。"""
+    if isinstance(keywords, str):
+        keywords = [keywords]  # 向后兼容旧版单字符串
+    if not keywords:
         return "请提供搜索关键词。"
-    results = search_graph([keyword.strip()])
+    results = search_graph_ranked(keywords)
     if entity_type:
         results = [r for r in results
                    if r.get("head_type") == entity_type or r.get("tail_type") == entity_type]
@@ -3538,7 +3541,7 @@ TOOL_EXECUTORS = {
     "update_memory":   lambda inp: _update_memory(inp["old_keyword"], inp["new_fact"], inp.get("category")),
     "delete_memory":   lambda inp: _delete_memory(inp["keyword"], inp.get("category")),
     "list_memories":   lambda inp: _list_memories(),
-    "search_graph_memory": lambda inp: _search_graph_memory(inp["keyword"], inp.get("entity_type")),
+    "search_graph_memory": lambda inp: _search_graph_memory(inp["keywords"], inp.get("entity_type")),
     "query_connected_entities": lambda inp: _query_connected_entities(inp["entity_name"], inp.get("depth", 1)),
     "delete_graph_entity": lambda inp: _delete_graph_entity(inp["entity_name"]),
     "set_expression":  lambda inp: _set_expression(inp["emotion"]),

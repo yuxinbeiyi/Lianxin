@@ -20,7 +20,7 @@ from config import get_api_config
 logger = logging.getLogger("ContextCompressor")
 
 # ── 常量 ──
-TOKEN_THRESHOLD = 60_000          # 运行时压缩触发阈值（字符估算）
+TOKEN_THRESHOLD = 100_000         # 运行时压缩触发阈值（真实 token 数）
 MAX_KEEP_ROUNDS = 12              # 压缩时保留的最近对话轮数
 COMPRESS_SUMMARY_PATH_TEMPLATE = "compress_session_{session_id}.json"
 
@@ -50,18 +50,21 @@ _COMPRESS_USER = """请将以下对话历史压缩为四个分区的摘要：
 
 
 def _estimate_tokens(messages: list) -> int:
-    """粗略估算消息列表的 token 数（字符数 × 1.5）。"""
-    total_chars = 0
-    for m in messages:
-        content = m.get("content", "")
-        if isinstance(content, str):
-            total_chars += len(content)
-        elif isinstance(content, list):
-            total_chars += sum(
-                len(p.get("text", "")) for p in content
-                if isinstance(p, dict) and p.get("type") == "text"
-            )
-    return int(total_chars * 1.5)
+    """使用 litellm token_counter 精确估算 token 数。失败时回退到字符估算。"""
+    try:
+        return litellm.token_counter(model="gpt-4", messages=messages)
+    except Exception:
+        total_chars = 0
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                total_chars += len(content)
+            elif isinstance(content, list):
+                total_chars += sum(
+                    len(p.get("text", "")) for p in content
+                    if isinstance(p, dict) and p.get("type") == "text"
+                )
+        return int(total_chars * 1.5)
 
 
 def maybe_compress(

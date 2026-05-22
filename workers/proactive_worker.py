@@ -173,10 +173,22 @@ class ProactiveWorker(QThread):
         if sessions:
             latest_session_id = sessions[0]["id"]
             msgs = self._history_mgr.get_messages(latest_session_id)
-            recent = msgs[-12:] if len(msgs) > 12 else msgs
+            recent = msgs[-24:] if len(msgs) > 24 else msgs
             if recent:
+                # 转为 OpenAI 消息格式，超长时自动压缩
+                recent_msgs = [{"role": m["role"], "content": m["content"]} for m in recent]
+                try:
+                    from brain.context_compressor import maybe_compress
+                    recent_msgs = maybe_compress(
+                        recent_msgs,
+                        model="ollama/my-qwen",
+                        api_base="http://localhost:11434/v1",
+                        max_tokens=6000,  # 主动消息上下文上限
+                    )
+                except Exception:
+                    pass  # 压缩失败就用原始消息
                 lines = []
-                for m in recent:
+                for m in recent_msgs:
                     role_name = "主人" if m["role"] == "user" else "莲心"
                     lines.append(f"{role_name}：{m['content']}")
                 parts.append("【最近的对话】\n" + "\n".join(lines))

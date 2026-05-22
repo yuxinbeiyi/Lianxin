@@ -272,6 +272,41 @@ def search_graph(keywords: list[str]) -> list[dict]:
     return results[:50]
 
 
+def search_graph_ranked(keywords: list[str]) -> list[dict]:
+    """多关键词相关性排序搜索。每条结果按命中关键词数计分，分数高的排前面。"""
+    if isinstance(keywords, str):
+        keywords = [keywords]
+    keywords = [kw.strip() for kw in keywords if kw.strip()]
+    if not keywords:
+        return []
+
+    conn = _get_conn()
+    scored: dict[tuple, tuple[dict, int]] = {}
+
+    for kw in keywords:
+        q = "%" + kw + "%"
+        rows = conn.execute("""
+            SELECT h.name AS head, e.head_type, e.relation,
+                   t.name AS tail, e.tail_type, e.source, e.strength
+            FROM graph_edges e
+            JOIN graph_entities h ON e.head_id = h.id
+            JOIN graph_entities t ON e.tail_id = t.id
+            WHERE h.name LIKE ? OR t.name LIKE ? OR e.relation LIKE ?
+            ORDER BY e.strength DESC LIMIT 15
+        """, (q, q, q)).fetchall()
+
+        for r in rows:
+            key = (r["head"], r["relation"], r["tail"])
+            d = dict(r)
+            if key in scored:
+                scored[key] = (d, scored[key][1] + 1)
+            else:
+                scored[key] = (d, 1)
+
+    ranked = sorted(scored.values(), key=lambda x: x[1], reverse=True)
+    return [item[0] for item in ranked[:30]]
+
+
 def format_graph_result(rows: list[dict]) -> str:
     """将图查询结果格式化为 LLM 可读文本。"""
     if not rows:
