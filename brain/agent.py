@@ -16,10 +16,10 @@ from config import get_api_config, get_base_prompt, get_local_base_prompt, get_q
 from brain.tools import TOOL_DEFINITIONS, execute_tool, set_cross_session_context
 from brain.skill_manager import get_active_tool_definitions, get_active_knowledge
 from brain.memory_store import (
-    add as _memory_add,
     build_extraction_prompt,
     ALL_CATEGORIES,
 )
+from brain.graph_memory import add_fact as _memory_add
 from memory.history_manager import HistoryManager
 from pathlib import Path
 
@@ -637,7 +637,7 @@ class AgentCore:
             "role": "system",
             "content": (
                 "【关于你的长期记忆】\n"
-                "你的长期记忆存储在 long_term.json 中，按分类组织，不会自动加载到 system prompt中。\n"
+                "你的长期记忆存储在本地知识库中，按分类组织，不会自动加载到 system prompt 中。\n"
                 "记忆分为以下分类：\n"
                 "  profile — 个人档案（姓名、外貌、性格、背景故事等稳定信息）\n"
                 "  preferences — 偏好（喜欢的音乐、游戏、食物等）\n"
@@ -656,7 +656,9 @@ class AgentCore:
                 "  6. 使用 search_graph_memory 搜索实体间的关联，如\"A(人物)—[喜欢]→B(物品)\"\n"
                 "     适用于：\"我和X有什么关系\"、\"谁喜欢Y\"、\"我之前提过什么Z\"\n"
                 "  7. 使用 query_connected_entities 查找与某实体间接关联的所有关系\n"
-                "     适用于：\"这个项目用了哪些技术\"、\"和X相关的所有信息\""
+                "     适用于：\"这个项目用了哪些技术\"、\"和X相关的所有信息\"\n"
+                "  8. 使用 delete_graph_entity 删除图记忆中的实体及其所有关联边\n"
+                "     适用于：删除错误或测试数据（不可恢复）"
             )
         })
 

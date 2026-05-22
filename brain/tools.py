@@ -16,25 +16,32 @@ import sys
 
 from utils.paths import get_user_data_dir
 
-# 记忆系统
-from brain.memory_store import (
-    search as _memory_search,
-    add as _memory_add,
-    update as _memory_update,
-    delete as _memory_delete,
-    format_search_result,
-    format_all_memories,
-    ALL_CATEGORIES,
-    CATEGORY_DESCRIPTIONS,
-)
-# 图记忆（五元组知识图谱）
+# 记忆系统（统一使用 SQLite 后端）
 from brain.graph_memory import (
+    # 分类事实 CRUD（替换 long_term.json）
+    add_fact as _memory_add,
+    search_facts as _memory_search,
+    update_facts as _memory_update,
+    delete_facts as _memory_delete,
+    list_all_facts,
+    migrate_from_json,
+    # 统一搜索（事实 + 图边）
+    unified_search,
+    format_unified_search_result,
+    # 五元组图查询（保持不变）
     search_graph,
     query_by_entity,
     query_connected,
     format_graph_result,
     get_graph_stats,
     delete_entity,
+)
+# 格式化工具和常量仍然从 memory_store 取（无存储依赖）
+from brain.memory_store import (
+    format_search_result,
+    format_all_memories,
+    ALL_CATEGORIES,
+    CATEGORY_DESCRIPTIONS,
 )
 
 # 每块最大字符数（read_file 默认读第0块，read_file_chunk 可读任意块）
@@ -1292,6 +1299,23 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "delete_graph_entity",
+            "description": "从知识图谱中删除指定实体及其所有关联边（不可恢复）。适用于删除错误或测试数据。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "entity_name": {
+                        "type": "string",
+                        "description": "要删除的实体名称（精确匹配）"
+                    }
+                },
+                "required": ["entity_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "shoulder_photo",
             "description": "用肩载摄像头（ESP32-CAM）拍一张照片并保存为 JPG 文件。返回保存路径。拍完后如需查看内容，可以调用 describe_image 或 ocr_image。",
             "parameters": {
@@ -1714,9 +1738,11 @@ def _extract_pdf(p: Path) -> str:
 
 
 def save_memory(fact: str, category: str | None = None) -> str:
-    """将事实写入长期记忆（分类存储），使用新的记忆引擎。"""
+    """将事实写入长期记忆（分类存储），使用 SQLite 后端。"""
     from datetime import datetime
     from config import get_memory_config
+
+    _ensure_migrated()
 
     # 未指定分类时从配置读取默认分类
     if not category:
@@ -3361,15 +3387,17 @@ def _deactivate_skill(name: str) -> str:
 
 
 def _search_memory(keyword: str, category: str | None = None) -> str:
-    """在长期记忆中搜索包含关键词的事实（分类搜索）。"""
-    matches = _memory_search(keyword, category)
-    return format_search_result(matches)
+    """在长期记忆中搜索（统一搜索：分类事实 + 知识图谱关联）。"""
+    _ensure_migrated()
+    result = unified_search(keyword, category)
+    return format_unified_search_result(result)
 
 
 def _update_memory(old_keyword: str, new_fact: str, category: str | None = None) -> str:
     """更新长期记忆中匹配的事实（分类更新）。"""
     from datetime import datetime
 
+    _ensure_migrated()
     new_fact = new_fact.strip()
     if not new_fact:
         return "新内容不能为空。"
@@ -3391,6 +3419,7 @@ def _update_memory(old_keyword: str, new_fact: str, category: str | None = None)
 
 def _delete_memory(keyword: str, category: str | None = None) -> str:
     """从长期记忆中删除匹配的事实（分类删除）。"""
+    _ensure_migrated()
     deleted = _memory_delete(keyword, category)
     if deleted == 0:
         return f"未找到包含「{keyword}」的记忆。"
@@ -3399,7 +3428,17 @@ def _delete_memory(keyword: str, category: str | None = None) -> str:
 
 def _list_memories() -> str:
     """查看全部长期记忆，按分类展示。"""
-    return format_all_memories()
+    _ensure_migrated()
+    facts = list_all_facts()
+    return format_all_memories(facts)
+
+
+def _ensure_migrated():
+    """惰性迁移：首次调用记忆工具时将 long_term.json 迁移到 SQLite。"""
+    try:
+        migrate_from_json()
+    except Exception:
+        pass
 
 
 def _search_graph_memory(keyword: str, entity_type: str = None) -> str:
@@ -3425,6 +3464,16 @@ def _query_connected_entities(entity_name: str, depth: int = 1) -> str:
     if not results:
         return f"在图记忆中未找到与「{entity_name}」直接关联的实体。"
     return format_graph_result(results)
+
+
+def _delete_graph_entity(entity_name: str) -> str:
+    """从知识图谱中删除指定实体及其所有关联边。"""
+    if not entity_name or not entity_name.strip():
+        return "请提供要删除的实体名称。"
+    count = delete_entity(entity_name.strip())
+    if count == 0:
+        return f"在图记忆中未找到名为「{entity_name}」的实体。"
+    return f"已从图记忆中删除实体「{entity_name}」及其 {count} 条关联边。"
 
 
 def _set_expression(emotion: str) -> str:
@@ -3491,6 +3540,7 @@ TOOL_EXECUTORS = {
     "list_memories":   lambda inp: _list_memories(),
     "search_graph_memory": lambda inp: _search_graph_memory(inp["keyword"], inp.get("entity_type")),
     "query_connected_entities": lambda inp: _query_connected_entities(inp["entity_name"], inp.get("depth", 1)),
+    "delete_graph_entity": lambda inp: _delete_graph_entity(inp["entity_name"]),
     "set_expression":  lambda inp: _set_expression(inp["emotion"]),
     "shoulder_photo":  lambda inp: shoulder_photo(),
     "shoulder_pan":    lambda inp: shoulder_pan(inp["angle"]),

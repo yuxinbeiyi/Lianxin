@@ -19,7 +19,8 @@ from utils.autostart import enable_autostart, disable_autostart, is_autostart_en
 from utils.accompany_stats import AccompanyStats
 from config import get_memory_config, save_memory_config
 from config import get_quick_launch_apps, save_quick_launch_apps
-from brain.memory_store import get_all, ALL_CATEGORIES, CATEGORY_DESCRIPTIONS, delete as _memory_delete
+from brain.memory_store import ALL_CATEGORIES, CATEGORY_DESCRIPTIONS
+from brain.graph_memory import list_all_facts, delete_facts
 from gui.quick_launch_dialog import QuickLaunchEditDialog
 
 
@@ -527,9 +528,9 @@ class SettingsDialog(QDialog):
         self._refresh_memory_tree()
 
     def _refresh_memory_tree(self):
-        """从文件重新加载记忆并刷新树形列表。"""
+        """从 SQLite 知识库重新加载记忆并刷新树形列表。"""
         self._memory_tree.clear()
-        all_mem = get_all()
+        all_mem = list_all_facts()
         for cat in ALL_CATEGORIES:
             items = all_mem.get(cat, [])
             for item in items:
@@ -546,7 +547,7 @@ class SettingsDialog(QDialog):
                 self._memory_tree.addTopLevelItem(qitem)
 
     def _delete_selected_memories(self):
-        """删除列表中选中的记忆条目。"""
+        """删除列表中选中的记忆条目（从 SQLite 知识库）。"""
         selected = self._memory_tree.selectedItems()
         if not selected:
             QMessageBox.information(self, "提示", "请先在列表中选择要删除的记忆条目。")
@@ -564,8 +565,7 @@ class SettingsDialog(QDialog):
         for item in selected:
             content = item.text(1)
             cat = item.data(1, Qt.UserRole)
-            # 使用 content 的精确匹配删除
-            n = _memory_delete(content, category=cat)
+            n = delete_facts(content, category=cat)
             deleted += n
         if deleted > 0:
             QMessageBox.information(self, "删除成功", f"已删除 {deleted} 条记忆。")
@@ -586,7 +586,7 @@ class SettingsDialog(QDialog):
             return
         try:
             import json
-            all_mem = get_all()
+            all_mem = list_all_facts()
             export_data = {
                 "version": 2,
                 "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M"),

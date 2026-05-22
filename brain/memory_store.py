@@ -373,9 +373,11 @@ def format_search_result(matches: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def format_all_memories() -> str:
-    """格式化输出全部记忆（用于 LLM 查看）。"""
-    data = load()
+def format_all_memories(data: dict[str, list[dict]] | None = None) -> str:
+    """格式化输出全部记忆（用于 LLM 查看）。
+    如果 data 不为 None，使用传入的数据；否则从 JSON 文件读取（向后兼容）。"""
+    if data is None:
+        data = load()
     lines = []
     for cat in ALL_CATEGORIES:
         items = data.get(cat, [])

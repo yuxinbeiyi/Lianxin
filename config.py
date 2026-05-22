@@ -587,21 +587,18 @@ def get_explorer_prompt() -> str:
     return _EXPLORER_PROMPT
 
 def load_memories() -> list:
-    """从文件读取长期记忆列表（兼容 v1 v2 格式）。"""
+    """从 SQLite 知识库读取长期记忆列表（会自动迁移旧 JSON 数据）。"""
     try:
-        if not _MEMORY_PATH.exists():
-            return []
-        data = json.loads(_MEMORY_PATH.read_text(encoding="utf-8"))
-        # v2 格式：按分类组织
-        if "version" in data and data.get("version") == 2:
-            from brain.memory_store import ALL_CATEGORIES
-            result = []
-            for cat in ALL_CATEGORIES:
-                for item in data.get(cat, []):
-                    result.append(item["content"])
-            return result
-        # v1 格式：扁平 facts 列表
-        return [f for f in data.get("facts", []) if f]
+        from brain.graph_memory import migrate_from_json, list_all_facts
+        migrate_from_json()
+        facts = list_all_facts()
+        result = []
+        for cat_items in facts.values():
+            for item in cat_items:
+                content = item.get("content", "")
+                if content:
+                    result.append(content)
+        return result
     except Exception:
         return []
 
