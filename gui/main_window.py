@@ -495,7 +495,6 @@ class MainWindow(QMainWindow):
         self._btn_note.clicked.connect(self._open_note_dialog)
         top_bar_layout.addWidget(self._btn_note)
 
-
         # 主动聊天按钮（带状态指示）
         self._btn_proactive = QPushButton("主动聊天 ○")
         self._btn_proactive.setFixedSize(96, 24)
@@ -848,7 +847,7 @@ class MainWindow(QMainWindow):
         if self._galgame_visible:
             self._hide_galgame()
         else:
-            self._show_galgame()
+            QTimer.singleShot(50, self._show_galgame)
 
     def _show_galgame(self):
         """显示 Galgame 窗口。"""
@@ -2447,6 +2446,14 @@ class MainWindow(QMainWindow):
     def _on_qq_bridge_error(self, err: str):
         self._chat_widget.add_system_tip(f"⚠️ QQ 桥接错误：{err}")
         self._update_qq_bridge_button()
+
+    def _on_qq_settings_clicked(self):
+        """打开 QQ 聊天参数设置对话框。"""
+        dlg = QqSettingsDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            if self._qq_bridge and self._qq_bridge.isRunning():
+                self._qq_bridge.reload_timing_config()
+                self._chat_widget.add_system_tip("✅ QQ 聊天参数已更新（即时生效）")
 
     def _update_qq_bridge_button(self):
         """根据 QQ 桥接状态更新按钮外观"""
