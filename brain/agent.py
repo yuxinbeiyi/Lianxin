@@ -82,6 +82,23 @@ class AgentCore:
             self._extract_interval = 6
             self._extract_msg_count = 20
 
+        # ── 五元组图记忆配置 ──────────────────────────────────────
+        try:
+            graph_cfg = get_graph_config()
+            self._graph_enabled = graph_cfg.get("graph_enabled", True)
+            self._auto_extract_quintuples = graph_cfg.get("auto_extract_quintuples", True)
+        except Exception:
+            self._graph_enabled = True
+            self._auto_extract_quintuples = True
+
+        # 初始化图记忆表（延迟导入，首次启动时建表）
+        if self._graph_enabled:
+            try:
+                from brain.graph_memory import _init_tables, _get_conn
+                _init_tables(_get_conn())
+            except Exception:
+                pass
+
         if session_id is not None:
             # ── 指定了 session_id：加载该会话（用于 QQ 桥接等多会话场景）
             self._session_id = session_id
@@ -257,6 +274,14 @@ class AgentCore:
 
                 if added > 0:
                     self._last_extraction_idx = len(self.history)
+
+                # ── 五元组图记忆提取 ──
+                if self._graph_enabled and self._auto_extract_quintuples:
+                    try:
+                        from brain.quintuple_extractor import extract_and_store
+                        extract_and_store(text)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -623,7 +648,13 @@ class AgentCore:
                 "  2. 使用 save_memory 保存新的事实，可指定分类（会立刻生效）\n"
                 "  3. 使用 update_memory 更新已过时的事实（会立刻生效）\n"
                 "  4. 使用 delete_memory 删除不需要的事实（会立刻生效）\n"
-                "  5. 使用 list_memories 查看全部记忆内容"
+                "  5. 使用 list_memories 查看全部记忆内容\n"
+                "\n"
+                "【知识图谱记忆】（五元组图记忆，存实体之间的关联关系）\n"
+                "  6. 使用 search_graph_memory 搜索实体间的关联，如\"A(人物)—[喜欢]→B(物品)\"\n"
+                "     适用于：\"我和X有什么关系\"、\"谁喜欢Y\"、\"我之前提过什么Z\"\n"
+                "  7. 使用 query_connected_entities 查找与某实体间接关联的所有关系\n"
+                "     适用于：\"这个项目用了哪些技术\"、\"和X相关的所有信息\""
             )
         })
 

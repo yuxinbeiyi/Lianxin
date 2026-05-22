@@ -27,6 +27,15 @@ from brain.memory_store import (
     ALL_CATEGORIES,
     CATEGORY_DESCRIPTIONS,
 )
+# 图记忆（五元组知识图谱）
+from brain.graph_memory import (
+    search_graph,
+    query_by_entity,
+    query_connected,
+    format_graph_result,
+    get_graph_stats,
+    delete_entity,
+)
 
 # 每块最大字符数（read_file 默认读第0块，read_file_chunk 可读任意块）
 _CHUNK_SIZE = 15000
@@ -1234,6 +1243,49 @@ TOOL_DEFINITIONS = [
                 "type": "object",
                 "properties": {},
                 "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_graph_memory",
+            "description": "在知识图谱记忆中搜索实体之间的关联。返回形如\"A(人物)—[喜欢]→B(物品)\"的关系。适用于用户问\"我和X有什么关系\"、\"X是谁\"、\"我提过哪些Y\"、\"谁喜欢Z\"等涉及实体间关联的问题。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "搜索关键词，匹配实体名或关系名"
+                    },
+                    "entity_type": {
+                        "type": "string",
+                        "enum": ["人物", "地点", "组织", "物品", "概念", "时间", "事件", "活动", "技术", "文件"],
+                        "description": "可选，限定实体类型"
+                    }
+                },
+                "required": ["keyword"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_connected_entities",
+            "description": "查找与某个实体间接关联的所有实体和关系（图谱多跳遍历）。适用于用户问\"这个项目用了哪些技术\"、\"我的朋友都住在哪里\"、\"和X相关的所有信息\"。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "entity_name": {
+                        "type": "string",
+                        "description": "要查询的实体名称"
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "查询深度（1=直接关联, 2=两跳, 最多3），默认1"
+                    }
+                },
+                "required": ["entity_name"]
             }
         }
     },
@@ -3350,6 +3402,31 @@ def _list_memories() -> str:
     return format_all_memories()
 
 
+def _search_graph_memory(keyword: str, entity_type: str = None) -> str:
+    """在图记忆中搜索实体关联。"""
+    if not keyword or not keyword.strip():
+        return "请提供搜索关键词。"
+    results = search_graph([keyword.strip()])
+    if entity_type:
+        results = [r for r in results
+                   if r.get("head_type") == entity_type or r.get("tail_type") == entity_type]
+    return format_graph_result(results)
+
+
+def _query_connected_entities(entity_name: str, depth: int = 1) -> str:
+    """多跳遍历查找关联实体。"""
+    if not entity_name or not entity_name.strip():
+        return "请提供要查询的实体名称。"
+    if depth < 1:
+        depth = 1
+    if depth > 3:
+        depth = 3
+    results = query_connected(entity_name.strip(), depth=depth)
+    if not results:
+        return f"在图记忆中未找到与「{entity_name}」直接关联的实体。"
+    return format_graph_result(results)
+
+
 def _set_expression(emotion: str) -> str:
     """切换 Galgame 立绘表情。回调到 MainWindow 执行。"""
     global _expression_callback
@@ -3412,6 +3489,8 @@ TOOL_EXECUTORS = {
     "update_memory":   lambda inp: _update_memory(inp["old_keyword"], inp["new_fact"], inp.get("category")),
     "delete_memory":   lambda inp: _delete_memory(inp["keyword"], inp.get("category")),
     "list_memories":   lambda inp: _list_memories(),
+    "search_graph_memory": lambda inp: _search_graph_memory(inp["keyword"], inp.get("entity_type")),
+    "query_connected_entities": lambda inp: _query_connected_entities(inp["entity_name"], inp.get("depth", 1)),
     "set_expression":  lambda inp: _set_expression(inp["emotion"]),
     "shoulder_photo":  lambda inp: shoulder_photo(),
     "shoulder_pan":    lambda inp: shoulder_pan(inp["angle"]),

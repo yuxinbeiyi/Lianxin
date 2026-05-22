@@ -660,3 +660,28 @@ def save_diary_config(config: dict):
     full = _load_full_config()
     full["diary"] = config
     _save_full_config(full)
+
+
+# ── 五元组图记忆配置 ────────────────────────────────────────
+
+_GRAPH_MEMORY_DEFAULTS = {
+    "graph_enabled": True,
+    "graph_max_edges": 2000,
+    "auto_extract_quintuples": True,
+}
+
+
+def get_graph_config() -> dict:
+    """读取图记忆配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    graph = full.get("graph_memory", {})
+    result = _GRAPH_MEMORY_DEFAULTS.copy()
+    result.update(graph)
+    return result
+
+
+def save_graph_config(config: dict):
+    """保存图记忆配置（仅更新 graph_memory 部分）。"""
+    full = _load_full_config()
+    full["graph_memory"] = config
+    _save_full_config(full)
