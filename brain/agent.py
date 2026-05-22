@@ -6,13 +6,14 @@ AgentCore：莲心AI 的大脑（LiteLLM 统一网关 + Function Calling）
 import json
 import re
 import threading
+import logging
 from datetime import datetime
 import os as _os
 _os.environ.setdefault("LITELLM_LOG", "ERROR")  # 抑制 litellm 导入时的 WARNING
 import litellm
 litellm.set_verbose = False
 litellm.suppress_debug_info = True  # 关闭 "Give Feedback" stderr 输出
-from config import get_api_config, get_base_prompt, get_local_base_prompt, get_qq_bridge_config, get_qq_timing_config, get_memory_config
+from config import get_api_config, get_base_prompt, get_local_base_prompt, get_qq_bridge_config, get_qq_timing_config, get_memory_config, get_graph_config
 from brain.tools import TOOL_DEFINITIONS, execute_tool, set_cross_session_context
 from brain.skill_manager import get_active_tool_definitions, get_active_knowledge
 from brain.memory_store import (
@@ -22,6 +23,8 @@ from brain.memory_store import (
 from brain.graph_memory import add_fact as _memory_add
 from memory.history_manager import HistoryManager
 from pathlib import Path
+
+logger = logging.getLogger("Agent")
 
 # 跨端设备切换标记
 _SIDE_MARKER_PATH = Path(__file__).parent.parent / "memory" / "last_active_side.json"
