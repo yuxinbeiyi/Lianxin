@@ -63,6 +63,7 @@ _RESOURCE_GROUPS = {
     "shoulder_photo": "hardware",
     "shoulder_pan": "hardware",
     "shoulder_tilt": "hardware",
+    "shoulder_servo": "hardware",
     "shoulder_center": "hardware",
     "shoulder_status": "hardware",
     "shoulder_temp": "hardware",
@@ -401,14 +402,19 @@ class AgentCore:
 4. 一个白色补光灯（GPIO33 控制，但主要是上电指示用）
 
 使用场景：
-• 用户问「看看周围/有什么/我在干嘛」→ 先调 shoulder_pan/tilt 摆好角度 → 调 shoulder_photo 拍照 → 调 describe_image 描述画面
+• 用户问「看看周围/有什么/我在干嘛」→ 先调 shoulder_pan/tilt 或 shoulder_servo 摆好角度 → 调 shoulder_photo 拍照 → 调 describe_image 描述画面
 • 用户问「左边/右边有什么」→ shoulder_pan 转到对应方向 → shoulder_photo → describe_image
+• 需要同时调整水平和垂直角度 → shoulder_servo(pan, tilt) 比分两次调更高效
 • 用户问「温度/湿度/热不热」→ shoulder_temp
 • 主动想看看雨心在做什么 → 拍一张看看
 • 云台复位 → shoulder_center
 • 查看设备状态和 WiFi 信号 → shoulder_status
 
-注意：拍照后如果需要看内容，必须调 describe_image 或 ocr_image 来分析画面，因为你看不到图片本身。
+注意：拍照后如果画面内容需要描述，必须调用 describe_image 或 ocr_image，因为你看不到图片本身。
+
+重要规则：
+• **除非用户明确要求复位/回中，否则绝对不要调用 shoulder_center！** 看完一个方向后保持角度不变，不要自动复位。
+• 调整角度时如果用户只说方向（如"看看左边"），用极值角度：最左=0、最右=180、最上=180、最下=0。如果只说"稍微"，则微调 ±15°。
 """
 
         # 组合完整 prompt（本地模式不加外设说明和复杂规则）
@@ -450,14 +456,17 @@ class AgentCore:
                     lines.append(f"[{role}]: {content}")
             history_text = "\n".join(lines)
 
-            from brain.context_compressor import compress_previous_session
-            summary = compress_previous_session(
-                history_text,
-                model="ollama/my-qwen",
-                api_base=self._api_base if self._use_local else "http://localhost:11434/v1",
-            )
-            if summary:
-                logger.info(f"[记忆] 已加载上一会话摘要 (session {prev['id']} → {self._session_id})")
+            from brain.context_compressor import compress_previous_session, _ollama_available
+            summary = None
+            # 快速检测 Ollama 是否可用，不可用则跳过压缩
+            if self._use_local or _ollama_available():
+                summary = compress_previous_session(
+                    history_text,
+                    model="ollama/my-qwen",
+                    api_base=self._api_base if self._use_local else "http://localhost:11434/v1",
+                )
+                if summary:
+                    logger.info(f"[记忆] 已加载上一会话摘要 (session {prev['id']} → {self._session_id})")
             return summary
         except Exception:
             return None

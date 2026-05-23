@@ -10,6 +10,7 @@
 
 import json
 import logging
+import socket
 from typing import Optional
 
 import litellm
@@ -23,6 +24,7 @@ logger = logging.getLogger("ContextCompressor")
 TOKEN_THRESHOLD = 100_000         # 运行时压缩触发阈值（真实 token 数）
 MAX_KEEP_ROUNDS = 12              # 压缩时保留的最近对话轮数
 COMPRESS_SUMMARY_PATH_TEMPLATE = "compress_session_{session_id}.json"
+COMPRESS_COOLDOWN = 600           # 压缩冷却时间（秒），防止频繁尝试
 
 # ── 压缩 prompt ──
 
@@ -47,6 +49,19 @@ _COMPRESS_USER = """请将以下对话历史压缩为四个分区的摘要：
 
 输出JSON：
 {{"关键事实": "...", "用户偏好": "...", "待办事项": "...", "最近状态": "..."}}"""
+
+
+_last_compress_time = 0  # 上次尝试压缩的时间戳
+
+
+def _ollama_available(host: str = "localhost", port: int = 11434, timeout: float = 1.0) -> bool:
+    """快速检测 Ollama 服务是否可用。"""
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+        sock.close()
+        return True
+    except (socket.timeout, ConnectionRefusedError, OSError):
+        return False
 
 
 def _estimate_tokens(messages: list) -> int:
@@ -84,6 +99,21 @@ def maybe_compress(
     estimated = _estimate_tokens(messages)
     if estimated < max_tokens:
         return messages
+
+    # 冷却检查：距离上次压缩尝试不足 COMPRESS_COOLDOWN 秒则跳过
+    global _last_compress_time
+    now = __import__('time').time()
+    if now - _last_compress_time < COMPRESS_COOLDOWN:
+        logger.debug(f"[Compress] 距上次压缩仅 {now - _last_compress_time:.0f}s，跳过")
+        _last_compress_time = now
+        keep_total = (MAX_KEEP_ROUNDS + 6) * 2
+        return messages[-keep_total:]  # 直接截断
+    _last_compress_time = now
+
+    if not _ollama_available():
+        logger.info("[Compress] Ollama 未运行，直接截断")
+        keep_total = (MAX_KEEP_ROUNDS + 6) * 2
+        return messages[-keep_total:]
 
     logger.info(f"[Compress] 触发运行时压缩: {len(messages)} 条消息, 估算 {estimated} tokens")
 
@@ -157,6 +187,10 @@ def compress_previous_session(
     返回摘要文本，或 None（压缩失败时）。
     """
     if not history_text or len(history_text) < 100:
+        return None
+
+    if not _ollama_available():
+        logger.debug("[Compress] Ollama 未运行，跳过上轮会话压缩")
         return None
 
     try:

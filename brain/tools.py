@@ -1396,6 +1396,27 @@ TOOL_DEFINITIONS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "shoulder_servo",
+            "description": "同时控制肩载摄像头云台的水平（Pan）和垂直（Tilt）角度。比单独调 shoulder_pan 再 shoulder_tilt 效率更高，两个舵机会同时动作。Pan 范围 0~180（90=正前方），Tilt 范围 0~180（90=水平）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pan": {
+                        "type": "integer",
+                        "description": "水平角度 0~180，90 为正前方，0 为最左，180 为最右"
+                    },
+                    "tilt": {
+                        "type": "integer",
+                        "description": "垂直角度 0~180，90 为水平，0 为最下，180 为最上"
+                    }
+                },
+                "required": ["pan", "tilt"]
+            }
+        }
+    },
     # ── 观察记忆工具 ─────────────────────────────────────────
     {
         "type": "function",
@@ -3124,6 +3145,17 @@ def shoulder_tilt(angle: int) -> str:
         return result
     return "垂直旋转失败"
 
+def shoulder_servo(pan: int, tilt: int) -> str:
+    """同时控制云台水平和垂直角度。"""
+    def _do(bridge):
+        return bridge.servo(pan, tilt)
+    result = _shoulder_exec(_do)
+    if isinstance(result, dict) and "pan" in result and "tilt" in result:
+        return f"云台已转到 水平={pan}° 垂直={tilt}°"
+    if isinstance(result, str):
+        return result
+    return "云台控制失败"
+
 def shoulder_center() -> str:
     """云台复位到中心。"""
     def _do(bridge):
@@ -3741,6 +3773,7 @@ TOOL_EXECUTORS = {
     "shoulder_photo":  lambda inp: shoulder_photo(),
     "shoulder_pan":    lambda inp: shoulder_pan(inp["angle"]),
     "shoulder_tilt":   lambda inp: shoulder_tilt(inp["angle"]),
+    "shoulder_servo":  lambda inp: shoulder_servo(inp["pan"], inp["tilt"]),
     "shoulder_center": lambda inp: shoulder_center(),
     "shoulder_status": lambda inp: shoulder_status(),
     "shoulder_temp":   lambda inp: shoulder_temp(),

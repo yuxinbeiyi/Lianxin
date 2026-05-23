@@ -64,6 +64,13 @@ _TOOL_KEYWORDS = {
     "list_directory":     ["查看目录", "里面都有什么", "里面都有啥", "文件夹里有什么", "列出文件", "看文件夹", "查看文件夹"],
     "write_diary":        ["写日记", "写一篇日记", "生成日记", "记日记", "写日记吧", "重新写日记"],
     "read_diary":         ["读日记", "看看日记", "日记写了什么", "最近日记", "看日记"],
+    # 肩部外设（排前面，避免 "水平" 等通用字被非肩部工具抢匹配）
+    "shoulder_pan":       ["水平舵机", "左右舵机"],
+    "shoulder_tilt":      ["竖直舵机", "上下舵机", "垂直舵机"],
+    "shoulder_center":    ["复位", "归位", "肩膀复位", "云台复位"],
+    "shoulder_status":    ["肩膀状态", "外设状态", "肩部状态"],
+    "shoulder_temp":      ["肩膀温度", "肩膀湿度", "外设温度", "外设湿度"],
+    "shoulder_servo":     ["水平", "竖直", "垂直", "pan", "tilt"],
 }
 
 
@@ -278,6 +285,10 @@ class QQBridgeWorker(QThread):
         self._segment_has_sent = False  # 后台是否已发出至少一段（用于群聊 @ 判断）
         self._segment_clear_count = 0  # 队列被清空的次数（用于检测旧分段是否应丢弃）
         self._segment_lock = Lock()   # 分段状态的互斥锁
+
+        # ── 肩部云台状态缓存（用于自然语言角度注入） ──────
+        self._shoulder_state = {"pan": None, "tilt": None}
+        self._is_direct_cmd = False   # 标记当前为【指令】直接执行模式
 
         # ── 分段接收状态（用户 → 莲心，由"。。"触发） ────
         self._pending_buffer = {}     # session_key -> {"fragments": [str], "original_msg": dict, "user_id": str}
@@ -635,12 +646,14 @@ class QQBridgeWorker(QThread):
                 args = self._extract_tool_args(forced, cmd_text)
                 tool_calls_made.append(forced)
                 self._log(f"[指令] 直接执行: {forced}")
+                self._is_direct_cmd = True
                 # 写日记耗时较长（AI 生成），先告知用户
                 if forced == "write_diary":
                     self._send_quick_reply(msg, "正在整理今天的聊天记录，请稍候…大概需要十秒钟左右(｀・ω・´)")
                 try:
                     result = execute_tool(forced, args)
                     response = _strip_roleplay(str(result))
+                    self._update_shoulder_state(forced, args)
                     self._log(f"[指令] 执行成功: {forced}")
                 except Exception as e:
                     response = f"（{forced} 执行失败：{e}）"
@@ -662,6 +675,21 @@ class QQBridgeWorker(QThread):
                 text = "[重要：你必须调用 read_diary 工具来获取日记内容，不要直接回答。]\n" + text
             elif any(kw in text for kw in write_diary_kw):
                 text = "[重要：你必须调用 write_diary 工具来生成日记，不要直接说'已写好'。]\n" + text
+            # 肩部云台方向关键词注入（强制触发工具调用）
+            shoulder_kw = ["看看最左边", "看看最右边", "看看最上面", "看看最下面",
+                           "看看左边", "看看右边", "看看上面", "看看下面",
+                           "看左边", "看右边", "看上面", "看下面",
+                           "左上方", "右上方", "左下方", "右下方",
+                           "往左", "往右", "往上", "往下",
+                           "转过去", "转头", "向左转", "向右转",
+                           "抬起头", "低下头", "抬头", "低头",
+                           "看看周围", "环顾四周", "扫视一下"]
+            if any(kw in text for kw in shoulder_kw):
+                text = self._inject_shoulder_state(text)
+                text = (
+                    "[重要：你必须调用 shoulder_pan/shoulder_tilt/shoulder_servo 工具来控制云台角度，"
+                    "不要只描述画面或说你会去做。立即调用对应工具。]\n"
+                ) + text
             try:
                 route = decide(text)
                 is_chat = route == "chat"
@@ -686,9 +714,12 @@ class QQBridgeWorker(QThread):
         response = self._parse_qq_emotion(response, agent)
 
         # ── 思考延迟（8~15 秒，模拟人类思考） ────────────────
-        think = random.uniform(*self._think_delay)
-        self._log(f"[思考] [{session_key}] 思考 {think:.1f} 秒...")
-        self._sleep_with_check(think)
+        if not self._is_direct_cmd:
+            think = random.uniform(*self._think_delay)
+            self._log(f"[思考] [{session_key}] 思考 {think:.1f} 秒...")
+            self._sleep_with_check(think)
+        else:
+            self._is_direct_cmd = False  # 用完清除标志
 
         # ── 语音回复分支 ─────────────────────────────────────
         voice_handled = False
@@ -707,10 +738,12 @@ class QQBridgeWorker(QThread):
             segments = self._split_response(response)
 
             if len(segments) <= 1:
-                # 短回复：直接发送，按字符数计算打字时间
                 typing_time = self._calc_typing_time(segments[0])
-                self._log(f"[打字] [{session_key}] 输入 {len(segments[0])} 字，约需 {typing_time:.1f} 秒...")
-                self._sleep_with_check(typing_time)
+                if not self._is_direct_cmd:
+                    self._log(f"[打字] [{session_key}] 输入 {len(segments[0])} 字，约需 {typing_time:.1f} 秒...")
+                    self._sleep_with_check(typing_time)
+                else:
+                    self._is_direct_cmd = False
 
                 reply_msg = _build_reply_msg(segments[0], msg, self._bot_qq)
                 self._send_msg({
@@ -1030,6 +1063,24 @@ class QQBridgeWorker(QThread):
             "◆ 查看目录内容\n"
             "  关键词：查看目录、里面都有什么\n"
             "  示例：【指令】查看目录 E:\\path\n\n"
+            "◆ 肩部云台 - 双轴同时控制\n"
+            "  关键词：水平、竖直\n"
+            "  示例：【指令】水平30，竖直45\n\n"
+            "◆ 肩部云台 - 水平\n"
+            "  关键词：水平舵机、左右舵机\n"
+            "  示例：【指令】水平舵机30度\n\n"
+            "◆ 肩部云台 - 竖直\n"
+            "  关键词：竖直舵机、上下舵机\n"
+            "  示例：【指令】竖直舵机45度\n\n"
+            "◆ 肩部云台 - 复位\n"
+            "  关键词：复位、归位\n"
+            "  示例：【指令】复位\n\n"
+            "◆ 肩部外设 - 状态\n"
+            "  关键词：肩膀状态、外设状态\n"
+            "  示例：【指令】肩膀状态\n\n"
+            "◆ 肩部外设 - 温湿度\n"
+            "  关键词：肩膀温度、外设温度\n"
+            "  示例：【指令】肩膀温度\n\n"
             "◆ 显示本帮助\n"
             "  关键词：提示\n"
             "  示例：【提示】\n\n"
@@ -1225,7 +1276,75 @@ class QQBridgeWorker(QThread):
             return args
         elif tool_name == "read_diary":
             return {}
+        # ── 肩部外设 ─────────────────────────────────────────
+        elif tool_name == "shoulder_servo":
+            # 解析 "水平30，竖直45" 或 "pan30 tilt45" 格式
+            pan = None
+            tilt = None
+            # 中文：水平(\d+) 或 pan[=:]?(\d+)
+            m_pan = re.search(r'(?:水平|pan)[=:：]?\s*(\d+)', text, re.I)
+            if m_pan:
+                pan = int(m_pan.group(1))
+            m_tilt = re.search(r'(?:竖直|垂直|tilt)[=:：]?\s*(\d+)', text, re.I)
+            if m_tilt:
+                tilt = int(m_tilt.group(1))
+            if pan is None and tilt is not None:
+                pan = 90
+            if tilt is None and pan is not None:
+                tilt = 90
+            if pan is not None and tilt is not None:
+                return {"pan": max(0, min(180, pan)), "tilt": max(0, min(180, tilt))}
+            # 兜底：尝试提取两个纯数字（用逗号/空格分隔）
+            nums = re.findall(r'(\d+)', text)
+            if len(nums) >= 2:
+                return {"pan": max(0, min(180, int(nums[0]))), "tilt": max(0, min(180, int(nums[1])))}
+            return {}
+        elif tool_name == "shoulder_pan":
+            m = re.search(r'(?:水平|pan)[=:：]?\s*(\d+)', text, re.I)
+            if m:
+                return {"angle": max(0, min(180, int(m.group(1))))}
+            m = re.search(r'(\d+)', text)
+            if m:
+                return {"angle": max(0, min(180, int(m.group(1))))}
+            return {}
+        elif tool_name == "shoulder_tilt":
+            m = re.search(r'(?:竖直|垂直|tilt)[=:：]?\s*(\d+)', text, re.I)
+            if m:
+                return {"angle": max(0, min(180, int(m.group(1))))}
+            m = re.search(r'(\d+)', text)
+            if m:
+                return {"angle": max(0, min(180, int(m.group(1))))}
+            return {}
+        elif tool_name in ("shoulder_center", "shoulder_status", "shoulder_temp"):
+            return {}
         return {}
+
+    # ── 肩部云台状态跟踪 ────────────────────────────────────
+
+    def _update_shoulder_state(self, tool_name: str, args: dict):
+        """根据工具调用参数更新缓存的云台角度。"""
+        s = self._shoulder_state
+        if tool_name == "shoulder_servo":
+            if "pan" in args:
+                s["pan"] = args["pan"]
+            if "tilt" in args:
+                s["tilt"] = args["tilt"]
+        elif tool_name == "shoulder_pan":
+            if "angle" in args:
+                s["pan"] = args["angle"]
+        elif tool_name == "shoulder_tilt":
+            if "angle" in args:
+                s["tilt"] = args["angle"]
+        elif tool_name == "shoulder_center":
+            s["pan"] = 90
+            s["tilt"] = 90
+
+    def _inject_shoulder_state(self, text: str) -> str:
+        """如果缓存了云台角度且消息涉及肩部控制，在消息前注入当前状态。"""
+        s = self._shoulder_state
+        if s["pan"] is not None and s["tilt"] is not None:
+            return f"[当前云台：水平={s['pan']}°, 垂直={s['tilt']}°]\n{text}"
+        return text
 
     # ── 分段接收（用户用"。。"分段发送消息） ────────────────
 
@@ -1376,9 +1495,11 @@ class QQBridgeWorker(QThread):
                 from brain.tools import execute_tool
                 args = self._extract_tool_args(forced, cmd_text)
                 tool_calls_made.append(forced)
+                self._is_direct_cmd = True
                 try:
                     result = execute_tool(forced, args)
                     response = _strip_roleplay(str(result))
+                    self._update_shoulder_state(forced, args)
                 except Exception as e:
                     response = f"（{forced} 执行失败：{e}）"
             else:
@@ -1408,9 +1529,12 @@ class QQBridgeWorker(QThread):
         response = self._parse_qq_emotion(response, agent)
 
         # ── 思考延迟 ─────────────────────────────────────
-        think = random.uniform(*self._think_delay)
-        self._log(f"[思考] [{session_key}] 思考 {think:.1f} 秒...")
-        self._sleep_with_check(think)
+        if not self._is_direct_cmd:
+            think = random.uniform(*self._think_delay)
+            self._log(f"[思考] [{session_key}] 思考 {think:.1f} 秒...")
+            self._sleep_with_check(think)
+        else:
+            self._is_direct_cmd = False
 
         # ── 语音回复分支 ─────────────────────────────────
         voice_handled = False
@@ -1429,8 +1553,11 @@ class QQBridgeWorker(QThread):
             segments = self._split_response(response)
             if len(segments) <= 1:
                 typing_time = self._calc_typing_time(segments[0])
-                self._log(f"[打字] [{session_key}] 输入 {len(segments[0])} 字，约需 {typing_time:.1f} 秒...")
-                self._sleep_with_check(typing_time)
+                if not self._is_direct_cmd:
+                    self._log(f"[打字] [{session_key}] 输入 {len(segments[0])} 字，约需 {typing_time:.1f} 秒...")
+                    self._sleep_with_check(typing_time)
+                else:
+                    self._is_direct_cmd = False
                 reply_msg = _build_reply_msg(segments[0], msg, self._bot_qq)
                 self._send_msg({
                     "message_type": msg.get("message_type"),
