@@ -430,11 +430,37 @@ _BASE_PROMPT = r"""你是莲心，来自雨心的小说《异象处理者》—�
 - 如果失败（403/空内容/超时），则尝试 fetch_webpage_via_api。
 - 如果 API 解析也超时或失败，则改用 fetch_webpage_browser（浏览器模式）。
 
--【网页内容提取指南】
+【网页内容提取指南】
 - 当用户直接提供URL并要求查看内容、总结文章或提取信息时，**必须调用 fetch_webpage 工具**。
-- 示例：“帮我看看这个链接里说了什么：https://xxx.com”
+- 示例：”帮我看看这个链接里说了什么：https://xxx.com”
 - 工具会返回网页的主要文本内容，基于这些内容回复用户。
 - 注意：部分网站可能限制访问，如果获取失败，请告知用户。
+
+【浏览器交互指南】（交互式网页操作）
+你现在拥有完整的浏览器控制能力！当用户要求你与网页交互（不仅仅是读取内容）时，按以下流程操作：
+
+**可用浏览器工具**：
+1. browser_navigate(url) — 打开网页，返回页面结构和可交互元素列表
+2. browser_snapshot() — 刷新当前页面结构（点击/填表后页面变化时用）
+3. browser_click(ref) — 点击页面上的按钮/链接（ref 来自快照中的 [ref=eX] 标记）
+4. browser_fill(ref, text) — 在输入框中填写文字
+5. browser_screenshot() — 截取当前页面全貌，保存为图片
+
+**典型工作流**：
+- 登录网站：browser_navigate → 看到 textbox [ref=e2] 和 button [ref=e3] → browser_fill(ref=”e2”, ...) → browser_click(ref=”e3”) → browser_snapshot 查看结果
+- 搜索内容：browser_navigate → browser_fill(ref=”e1”, text=”关键词”) → browser_click(ref=”e2”) → browser_snapshot
+- 浏览页面：browser_navigate → 看到内容后如需滚动 → browser_scroll(300) → 继续浏览
+
+**适用场景**：
+- 用户说”帮我登录XX网站”、”帮我看看XX网站有什么”
+- 用户说”在XX网站上搜索YY”
+- 用户说”帮我打开XX页面并截图”
+- 任何需要与网页进行点击、填表、导航等交互操作的需求
+
+**注意**：
+- 每个快照中的 [ref=eX] 标记用于定位元素，每次导航/操作后 ref 可能变化
+- 不要试图让用户提供密码——如果用户要求登录，可以让用户自己在浏览器中操作登录步骤
+- 对于纯读取网页内容的需求，优先使用 fetch_webpage（更快）
 
 【文档排版指南】（如果已实现 format_document 工具）
 - 当用户要求”生成报告”、”整理成文档”、”排版美化”时，你必须调用 format_document 工具。
@@ -703,4 +729,28 @@ def get_heartbeat_config() -> dict:
 def save_heartbeat_config(config: dict):
     full = _load_full_config()
     full["heartbeat"] = config
+    _save_full_config(full)
+
+
+# ── 浏览器自动化配置默认值 ────────────────────────────────────
+_BROWSER_DEFAULTS = {
+    "headless": False,         # False = 可见窗口，True = 后台运行
+    "channel": "msedge",       # 浏览器类型: ""=Chromium, "msedge"=Edge, "chrome"=Chrome
+    "timeout": 30_000,
+    "viewport_width": 1280,
+    "viewport_height": 720,
+}
+
+
+def get_browser_config() -> dict:
+    """读取浏览器自动化配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    browser = full.get("browser", {})
+    return {**_BROWSER_DEFAULTS, **browser}
+
+
+def save_browser_config(config: dict):
+    """保存浏览器自动化配置（仅更新 browser 部分）。"""
+    full = _load_full_config()
+    full["browser"] = config
     _save_full_config(full)

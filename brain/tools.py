@@ -1485,6 +1485,105 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    # ── 浏览器自动化工具 ─────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_navigate",
+            "description": (
+                "打开指定网址，返回页面结构和可交互元素列表（ARIA 快照）。"
+                "页面元素会标注 [ref=eX] 标记，供后续点击或填表使用。"
+                "适用：打开网页、导航到新页面。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "要打开的网页 URL，如 https://www.baidu.com"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_snapshot",
+            "description": (
+                "获取当前浏览器页面的最新 ARIA 快照，显示所有可交互元素及其 [ref=eX] 标记。"
+                "在点击按钮、填写表单后页面内容发生变化时，用此工具刷新页面结构。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_click",
+            "description": (
+                "点击页面上指定 ref 标记对应的元素（按钮、链接等）。"
+                "ref 值来自 browser_navigate 或 browser_snapshot 返回的快照中的 [ref=eX]。"
+                "点击后建议调用 browser_snapshot 查看页面变化。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ref": {
+                        "type": "string",
+                        "description": "要点击的元素 ref 标记，如 e3"
+                    }
+                },
+                "required": ["ref"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_fill",
+            "description": (
+                "向页面上指定 ref 标记的输入框填写文字。"
+                "ref 值来自快照中的 [ref=eX]。"
+                "填写后建议调用 browser_snapshot 查看效果。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ref": {
+                        "type": "string",
+                        "description": "要填写的输入框 ref 标记，如 e2"
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "要填入的文字内容"
+                    }
+                },
+                "required": ["ref", "text"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_screenshot",
+            "description": (
+                "截取当前浏览器页面的可见区域，保存为 PNG 图片。"
+                "返回临时文件路径，可用于 describe_image 进行视觉分析。"
+                "适用：用户想看页面长什么样、页面快照不够直观时。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
 ]
 
 
@@ -2005,25 +2104,63 @@ def run_command(command: str) -> str:
 # ==================== 联网搜索工具函数 ====================
 
 def web_search(query: str, max_results: int = 5) -> str:
-    """使用 DuckDuckGo 搜索并返回格式化的结果"""
+    """联网搜索，优先百度，DuckDuckGo 兜底。"""
+    import urllib.parse
+
+    # ── 后端 1：百度（requests 直连，适合国内网络） ──────
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+
+        url = f"https://www.baidu.com/s?wd={urllib.parse.quote(query)}&rn={max_results}"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        }
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        results = []
+        for item in soup.select(".result, .c-container"):
+            title_el = item.select_one("h3 a")
+            if not title_el:
+                continue
+            title = title_el.get_text(strip=True)
+            href = title_el.get("href", "")
+            abstract_el = item.select_one(".c-abstract, .content-right_8Zs40")
+            abstract = abstract_el.get_text(strip=True) if abstract_el else ""
+            results.append({"title": title, "href": href, "body": abstract})
+
+        if results:
+            output_lines = [f"搜索「{query}」的结果："]
+            for i, r in enumerate(results[:max_results], 1):
+                output_lines.append(f"\n{i}. {r['title']}\n   链接：{r['href']}\n   摘要：{r['body']}")
+            return "\n".join(output_lines)
+    except Exception:
+        pass  # 静默回退到 DuckDuckGo
+
+    # ── 后端 2：DuckDuckGo ──────────────────────────────
     try:
         from duckduckgo_search import DDGS
-    except ImportError:
-        return "错误：未安装 duckduckgo-search 库，请执行：pip install duckduckgo-search"
-
-    try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=min(max_results, 10)))
         if not results:
             return f"未找到与「{query}」相关的结果。"
-        
-        output_lines = [f"🔍 搜索「{query}」的结果："]
+        output_lines = [f"搜索「{query}」的结果："]
         for i, r in enumerate(results, 1):
-            title = r.get('title', '无标题')
-            href = r.get('href', '')
-            body = r.get('body', '')
-            output_lines.append(f"\n{i}. {title}\n   链接：{href}\n   摘要：{body}")
+            output_lines.append(
+                f"\n{i}. {r.get('title', '无标题')}"
+                f"\n   链接：{r.get('href', '')}"
+                f"\n   摘要：{r.get('body', '')}"
+            )
         return "\n".join(output_lines)
+    except ImportError:
+        return "搜索失败：网络不通且 duckduckgo-search 未安装。"
     except Exception as e:
         return f"搜索失败：{e}"
 
@@ -2152,7 +2289,7 @@ def fetch_webpage_via_api(url: str, max_length: int = 3000) -> str:
     session.mount('https://', HTTPAdapter(max_retries=retries))
     
     try:
-        resp = session.get(api_url, headers=headers, timeout=60)  # 增加到60秒
+        resp = session.get(api_url, headers=headers, timeout=15)
         if resp.status_code == 200:
             text = resp.text
             if len(text) > max_length:
@@ -2577,27 +2714,30 @@ def fetch_webpage_stealth(url: str, max_length: int = 3000) -> str:
 def fetch_webpage_browser(url: str, max_length: int = 3000) -> str:
     try:
         from playwright.sync_api import sync_playwright
-        from playwright_stealth import stealth_sync
     except ImportError:
-        return "错误：未安装 playwright 或 playwright-stealth，请执行：pip install playwright playwright-stealth"
+        return "错误：未安装 playwright，请执行：pip install playwright"
+
+    try:
+        from playwright_stealth import stealth_sync
+        _has_stealth = True
+    except ImportError:
+        _has_stealth = False
 
     if not url.startswith(('http://', 'https://')):
         return "错误：URL 必须以 http:// 或 https:// 开头"
 
     try:
         with sync_playwright() as p:
-            # 使用有头模式（可以设置为 False，但增加 stealth 后无头也可能通过）
             browser = p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
             context = browser.new_context(
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 viewport={'width': 1920, 'height': 1080}
             )
             page = context.new_page()
-            # 应用 stealth 隐藏自动化特征
-            stealth_sync(page)
+            if _has_stealth:
+                stealth_sync(page)
             page.goto(url, timeout=30000)
             page.wait_for_load_state("networkidle")
-            # 模拟滚动到底部，触发懒加载
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             page.wait_for_timeout(1000)
             text = page.inner_text('body')
@@ -2608,7 +2748,7 @@ def fetch_webpage_browser(url: str, max_length: int = 3000) -> str:
             text = '\n'.join(line for line in lines if line)
             if len(text) > max_length:
                 text = text[:max_length] + "\n\n... [内容过长，已截断]"
-            return f"网页内容（增强浏览器模式）如下：\n\n{text}"
+            return f"网页内容（浏览器模式）如下：\n\n{text}"
     except Exception as e:
         return f"浏览器获取网页失败：{e}"
 
@@ -3488,6 +3628,59 @@ def _set_expression(emotion: str) -> str:
     return "Galgame 立绘窗口未就绪。"
 
 
+# ── 浏览器自动化工具函数 ──────────────────────────────────────
+
+def _browser_navigate(url: str) -> str:
+    """打开网页，返回 ARIA 快照。"""
+    try:
+        from brain.browser_controller import get_browser
+        browser = get_browser()
+        return browser.navigate(url)
+    except Exception as e:
+        return f"浏览器导航失败: {e}"
+
+
+def _browser_snapshot() -> str:
+    """获取当前页面 ARIA 快照。"""
+    try:
+        from brain.browser_controller import get_browser
+        browser = get_browser()
+        return browser.snapshot()
+    except Exception as e:
+        return f"获取页面快照失败: {e}"
+
+
+def _browser_click(ref: str) -> str:
+    """点击 ref 标记的元素。"""
+    try:
+        from brain.browser_controller import get_browser
+        browser = get_browser()
+        return browser.click(ref)
+    except Exception as e:
+        return f"点击失败: {e}"
+
+
+def _browser_fill(ref: str, text: str) -> str:
+    """向 ref 输入框填表。"""
+    try:
+        from brain.browser_controller import get_browser
+        browser = get_browser()
+        return browser.fill(ref, text)
+    except Exception as e:
+        return f"填写失败: {e}"
+
+
+def _browser_screenshot() -> str:
+    """截取当前页面并返回文件路径。"""
+    try:
+        from brain.browser_controller import get_browser
+        browser = get_browser()
+        path = browser.screenshot()
+        return f"截图已保存: {path}\n可使用 describe_image 工具查看截图内容。"
+    except Exception as e:
+        return f"截图失败: {e}"
+
+
 # ── 工具调度表 ───────────────────────────────────────────────
 TOOL_EXECUTORS = {
     "read_file":       lambda inp: read_file(inp["path"]),
@@ -3567,6 +3760,12 @@ TOOL_EXECUTORS = {
         limit=inp.get("limit", 10),
     ),
     "start_shoulder_explore": lambda inp: _start_shoulder_explore(),
+    # 浏览器自动化
+    "browser_navigate":   lambda inp: _browser_navigate(inp["url"]),
+    "browser_snapshot":   lambda inp: _browser_snapshot(),
+    "browser_click":      lambda inp: _browser_click(inp["ref"]),
+    "browser_fill":       lambda inp: _browser_fill(inp["ref"], inp["text"]),
+    "browser_screenshot": lambda inp: _browser_screenshot(),
     }
 
 def execute_tool(name: str, tool_input: dict) -> str:

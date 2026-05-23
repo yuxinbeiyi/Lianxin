@@ -7,6 +7,7 @@ import json
 import re
 import threading
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import os as _os
 _os.environ.setdefault("LITELLM_LOG", "ERROR")  # 抑制 litellm 导入时的 WARNING
@@ -41,6 +42,45 @@ def _get_qq_session_ids() -> set:
     except Exception:
         pass
     return set()
+
+
+# ── 工具资源分组（共享资源的工具必须串行执行） ──────────────────
+# 未列出的工具无资源锁，可自由并行
+_RESOURCE_GROUPS = {
+    # 浏览器（共享 BrowserController 单例）
+    "browser_navigate": "browser",
+    "browser_snapshot": "browser",
+    "browser_click": "browser",
+    "browser_fill": "browser",
+    "browser_screenshot": "browser",
+    "fetch_webpage_browser": "browser",
+    # SQLite 写入（共享数据库连接）
+    "save_memory": "db_write",
+    "update_memory": "db_write",
+    "delete_memory": "db_write",
+    "delete_graph_entity": "db_write",
+    # 肩部硬件（共享 ESP32 WebSocket）
+    "shoulder_photo": "hardware",
+    "shoulder_pan": "hardware",
+    "shoulder_tilt": "hardware",
+    "shoulder_center": "hardware",
+    "shoulder_status": "hardware",
+    "shoulder_temp": "hardware",
+    "start_shoulder_explore": "hardware",
+}
+_resource_locks: dict[str, threading.Lock] = {}
+_resource_init_lock = threading.Lock()
+
+# 需要线程亲和性的资源组（浏览器 Playwright / 硬件 event loop）
+# 这些组必须在调用线程上执行，不能进入 ThreadPoolExecutor
+_THREAD_AFFINE_GROUPS = {"browser", "hardware"}
+
+def _get_group_lock(group: str) -> threading.Lock:
+    if group not in _resource_locks:
+        with _resource_init_lock:
+            if group not in _resource_locks:
+                _resource_locks[group] = threading.Lock()
+    return _resource_locks[group]
 
 
 class AgentCore:
@@ -571,6 +611,115 @@ class AgentCore:
 
     # ── 内部实现 ─────────────────────────────────────────────
 
+    def _execute_tool_calls_parallel(self, tool_calls, messages, on_tool_call=None, on_tool_result=None):
+        """资源感知的工具并行执行。
+
+        同一轮 LLM 返回的多个工具调用按资源组分类：
+        - 无锁工具 → ThreadPoolExecutor 并发执行
+        - 同组工具 → 组内串行（持锁排队），不同组间并行
+        """
+        from brain.tools import execute_tool as _exec, set_cross_session_context as _set_ctx
+
+        # ── 第一遍：解析参数，检查重复 ──────────────────────
+        parsed: list[dict] = []
+        for tc in tool_calls:
+            name = tc.function.name
+            raw_args = tc.function.arguments or "{}"
+            args = self._extract_json_args(raw_args)
+            if not args and raw_args.strip() and raw_args.strip() not in ("{}", "[]"):
+                logger.warning(f"[ToolLoop] 参数解析失败: {name}({raw_args[:100]})")
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id,
+                    "content": f"参数解析失败，原始参数: {raw_args}。请修正 JSON 格式后重试。",
+                })
+                continue
+
+            call_key = (name, json.dumps(args, ensure_ascii=False, sort_keys=True))
+            last_key = getattr(self, "_last_tool_call_key", None)
+            if call_key == last_key:
+                logger.warning(f"[ToolLoop] 重复工具调用: {name}，终止循环")
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id,
+                    "content": "工具重复调用已终止。请基于已有信息给出回复。",
+                })
+                # 不 return，只标记跳过 - 其余工具继续执行
+                continue
+            self._last_tool_call_key = call_key
+            parsed.append({"tc": tc, "name": name, "args": args})
+
+        if not parsed:
+            return
+
+        # ── 第二遍：按资源组分类 ────────────────────────────
+        lock_free: list[dict] = []          # 无资源锁，可自由并行
+        groups: dict[str, list[dict]] = {}   # 资源组 → 排队项
+
+        for item in parsed:
+            group = _RESOURCE_GROUPS.get(item["name"])
+            if group is None:
+                lock_free.append(item)
+            else:
+                groups.setdefault(group, []).append(item)
+
+        # 结果收集（保持原始顺序）
+        n = len(parsed)
+        results = [None] * n
+        parsed_order = {id(item["tc"]): i for i, item in enumerate(parsed)}
+
+        def _run_one(item: dict):
+            """执行单个工具调用（在 worker 线程内）。"""
+            _set_ctx(self._session_id, self._history_mgr)
+            name, args = item["name"], item["args"]
+            if on_tool_call:
+                on_tool_call(name, args)
+            print(f"\n  [工具调用] {name}({json.dumps(args, ensure_ascii=False)})", flush=True)
+            result = _exec(name, args)
+            preview = result[:200].replace("\n", " ") + ("..." if len(result) > 200 else "")
+            print(f"  [工具结果] {name} → {preview}\n", flush=True)
+            if on_tool_result:
+                on_tool_result(name, result)
+            idx = parsed_order[id(item["tc"])]
+            results[idx] = result
+
+        def _run_group(group: str, items: list[dict]):
+            """串行执行同一资源组的工具。"""
+            lock = _get_group_lock(group)
+            with lock:
+                for item in items:
+                    _run_one(item)
+
+        # ── 第三遍：并行调度 ────────────────────────────────
+        # 线程亲和组（browser/hardware）→ 调用线程串行执行
+        # 原因：Playwright 要求在创建浏览器的同一线程操作，ESP32 也有 event loop 线程亲和
+        pool_groups: dict[str, list[dict]] = {}
+        for grp, items in groups.items():
+            if grp not in _THREAD_AFFINE_GROUPS:
+                pool_groups[grp] = items
+
+        max_workers = min(8, len(parsed)) if len(parsed) > 0 else 1
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            # 无锁工具 → 线程池并发
+            for item in lock_free:
+                pool.submit(_run_one, item)
+            # 池兼容组（如 db_write）→ 线程池内组间并行、组内串行
+            for grp, items in pool_groups.items():
+                pool.submit(_run_group, grp, items)
+        # 线程亲和组 → 调用线程上逐组串行（池已关闭，调用线程空闲）
+        for grp in _THREAD_AFFINE_GROUPS:
+            items = groups.get(grp)
+            if items:
+                _run_group(grp, items)
+
+        # ── 第四遍：结果注入 messages（保持原始顺序）────────
+        for i, item in enumerate(parsed):
+            result = results[i]
+            if result is not None:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": item["tc"].id,
+                    "content": result,
+                })
+
     def _function_calling_loop(self, on_tool_call=None, on_tool_result=None, forced_tool: str = None, disable_tools: bool = False) -> str:
         messages = [{"role": "system", "content": self._system_prompt}]
 
@@ -715,47 +864,12 @@ class AgentCore:
                 return choice.message.content or "（莲心没有说话）"
             elif choice.finish_reason == "tool_calls":
                 messages.append(choice.message)
-                for tool_call in choice.message.tool_calls:
-                    name = tool_call.function.name
-                    raw_args = tool_call.function.arguments or "{}"
-                    args = self._extract_json_args(raw_args)
-                    # 解析失败时记录原始参数作为 tool result 返回给 LLM
-                    if not args and raw_args.strip() and raw_args.strip() not in ("{}", "[]"):
-                        logger.warning(f"[ToolLoop] 参数解析失败: {name}({raw_args[:100]})")
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": f"参数解析失败，原始参数: {raw_args}。请修正 JSON 格式后重试。",
-                        })
-                        continue
-
-                    # ── 重复调用检测 ──
-                    call_key = (name, json.dumps(args, ensure_ascii=False, sort_keys=True))
-                    last_key = getattr(self, "_last_tool_call_key", None)
-                    if call_key == last_key:
-                        logger.warning(f"[ToolLoop] 重复工具调用: {name}，终止循环")
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": "工具重复调用已终止。请基于已有信息给出回复。",
-                        })
-                        return "（检测到重复工具调用，已自动停止）"
-                    self._last_tool_call_key = call_key
-
-                    if on_tool_call:
-                        on_tool_call(name, args)
-                    set_cross_session_context(self._session_id, self._history_mgr)
-                    result = execute_tool(name, args)
-                    if on_tool_result:
-                        on_tool_result(name, result)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result,
-                    })
-                # 如果强制工具且已经调用过一次，可以在这里将 forced_tool 置为 None，避免后续循环强制
-                # 但模型可能在一次 tool_calls 中调用多个工具，强制工具可能只是第一个。
-                # 这里为简单起见，只在第一次调用后取消强制，让后续自由组合。
+                self._execute_tool_calls_parallel(
+                    choice.message.tool_calls,
+                    messages,
+                    on_tool_call=on_tool_call,
+                    on_tool_result=on_tool_result,
+                )
                 if forced_tool:
                     forced_tool = None
             else:
