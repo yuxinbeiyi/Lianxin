@@ -82,14 +82,14 @@ def _extract_plain_text(msg_data) -> str:
     msg_data 可能是字符串或数组（消息段列表）。
     """
     if isinstance(msg_data, str):
-        return msg_data
+        return msg_data.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
     if isinstance(msg_data, list):
         parts = []
         for seg in msg_data:
             if seg.get("type") == "text":
                 parts.append(seg.get("data", {}).get("text", ""))
-        return "".join(parts)
-    return str(msg_data)
+        return "".join(parts).encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
+    return str(msg_data).encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
 
 
 def _extract_at_qqs(msg_data) -> list:
@@ -286,9 +286,12 @@ class QQBridgeWorker(QThread):
         self._segment_clear_count = 0  # 队列被清空的次数（用于检测旧分段是否应丢弃）
         self._segment_lock = Lock()   # 分段状态的互斥锁
 
-        # ── 肩部云台状态缓存（用于自然语言角度注入） ──────
+# ── 肩部云台状态缓存（用于自然语言角度注入） ──────
         self._shoulder_state = {"pan": None, "tilt": None}
         self._is_direct_cmd = False   # 标记当前为【指令】直接执行模式
+
+        # ── 观察模式引用 ─────────────────────────────────
+        self._obs_worker = None       # ObservationModeWorker 实例
 
         # ── 分段接收状态（用户 → 莲心，由"。。"触发） ────
         self._pending_buffer = {}     # session_key -> {"fragments": [str], "original_msg": dict, "user_id": str}
@@ -482,6 +485,32 @@ class QQBridgeWorker(QThread):
             seg_types = [s.get("type", "?") for s in (msg.get("message", []) if isinstance(msg.get("message"), list) else [])]
             if seg_types:
                 self._log(f"[跳过] 未处理的消息段类型: {seg_types}")
+            return
+
+        # ── 【观察模式】指令处理（必须以【观察模式】开头） ──────
+        clean_text = text.strip()
+        if clean_text.startswith("【观察模式】"):
+            self._handle_observation_cmd(clean_text, msg)
+            return
+
+        # ── 普通消息 + 观察模式激活 → 排队等待 ──────────────
+        if self._is_observation_active():
+            from brain.observation_mode import get_observation_state
+            obs_state = get_observation_state()
+            obs_state.enqueue_message({
+                "session_key": session_key,
+                "user_id": user_id,
+                "text": clean_text,
+                "msg": msg,
+                "image_urls": image_urls,
+                "files_info": files_info,
+                "voice_urls": voice_urls,
+                "forward_urls": forward_urls,
+                "has_cmd": False,
+                "cmd_text": "",
+            })
+            self._log(f"[观察模式] [{session_key}] 消息已排队: {clean_text[:40]}…")
+            self._send_quick_reply(msg, "等等哦～我先看完这一圈再回你(｀・ω・´)")
             return
 
         # ── 分段接收检测（用户用"。。"分段发送） ──────────────
@@ -1345,6 +1374,140 @@ class QQBridgeWorker(QThread):
         if s["pan"] is not None and s["tilt"] is not None:
             return f"[当前云台：水平={s['pan']}°, 垂直={s['tilt']}°]\n{text}"
         return text
+
+    # ── 观察模式 ────────────────────────────────────────────
+
+    def _is_observation_active(self) -> bool:
+        """检查观察模式是否激活。"""
+        try:
+            from brain.observation_mode import get_observation_state
+            return get_observation_state().is_active
+        except Exception:
+            return False
+
+    def _handle_observation_cmd(self, text: str, msg: dict):
+        """处理【观察模式】开启/关闭 指令。"""
+        from brain.observation_mode import get_observation_state
+        from workers.observation_mode_worker import ObservationModeWorker
+
+        if "开启" in text or "启动" in text:
+            if self._is_observation_active():
+                self._send_quick_reply(msg, "已经在观察模式啦～我正看着周围呢(｀・ω・´)")
+                return
+
+            state = get_observation_state()
+            state.set_qq_bridge(self)
+            state.activate()
+
+            # 启动 Worker
+            self._obs_worker = ObservationModeWorker(state)
+            self._obs_worker.pending_messages.connect(
+                self._on_observation_pending_messages
+            )
+            self._obs_worker.mode_exited.connect(self._on_observation_mode_exit)
+            self._obs_worker.start()
+
+            self._send_quick_reply(msg, "好嘞！让我看看周围有什么有趣的东西～(^-^)")
+            self._log("[观察模式] 已开启")
+
+        elif "关闭" in text or "退出" in text or "停止" in text:
+            state = get_observation_state()
+            if not state.is_active:
+                self._send_quick_reply(msg, "观察模式本来就是关闭的哦(｀・ω・´)")
+                return
+
+            state.deactivate()  # Worker 会在下次检查时自动退出
+            self._obs_worker = None
+            self._send_quick_reply(msg, "好的，我乖乖待着～(^-^)")
+            self._log("[观察模式] 已关闭")
+
+        else:
+            self._send_quick_reply(msg, "要用【观察模式】开启 或 【观察模式】关闭 来告诉我哦(｀・ω・´)")
+
+    def _on_observation_pending_messages(self, msgs: list):
+        """处理观察模式期间排队的用户消息。每条在独立 daemon 线程中处理。"""
+        total = len(msgs)
+        self._log(f"[观察模式] 开始处理 {total} 条排队消息")
+
+        from brain.observation_mode import get_observation_state
+        state = get_observation_state()
+        if not state.is_active:
+            return
+
+        done_counter = {"n": 0}
+        done_lock = Lock()
+
+        def _process_one(item):
+            try:
+                self._process_observation_pending(item)
+            except Exception as e:
+                self._log(f"[观察模式] 消息处理失败: {e}")
+            finally:
+                with done_lock:
+                    done_counter["n"] += 1
+                    if done_counter["n"] >= total:
+                        state.notify_processing_done()
+
+        for item in msgs:
+            if not state.is_active:
+                state.notify_processing_done()
+                return
+            Thread(target=_process_one, args=(item,), daemon=True).start()
+
+    def _process_observation_pending(self, item: dict):
+        """处理单条观察模式排队消息。"""
+        text = item.get("text", "")
+        if not text.strip():
+            return
+
+        session_key = item.get("session_key", "")
+        user_id = item.get("user_id", "")
+        original_msg = item.get("msg", {})
+
+        # 获取 AgentCore 实例
+        agent = self._get_or_create_agent(session_key, user_id)
+        from brain.tools import set_diary_message_source
+        set_diary_message_source(lambda: self._get_session_messages(session_key))
+        from brain.tools import _register_qq_bridge
+        _register_qq_bridge(self)
+
+        has_cmd, cmd_text = self._strip_command_prefix(text)
+
+        if has_cmd:
+            # 【指令】模式
+            forced = self._match_forced_tool(cmd_text)
+            self._is_direct_cmd = True
+            if forced:
+                args = self._extract_tool_args(forced, cmd_text)
+                try:
+                    from brain.tools import execute_tool
+                    result = execute_tool(forced, args)
+                    response = str(result)
+                    self._update_shoulder_state(forced, args)
+                except Exception as e:
+                    response = f"（{forced} 执行失败：{e}）"
+            else:
+                try:
+                    from brain.agent import AgentCore
+                    response = agent.chat(cmd_text)
+                except Exception as e:
+                    response = f"（处理失败：{e}）"
+
+            self._send_quick_reply(original_msg, response)
+            self._log(f"[观察模式-指令] [{session_key}] 回复: {response[:50]}…")
+        else:
+            # 普通聊天
+            try:
+                response = agent.chat(text)
+                self._send_quick_reply(original_msg, response)
+                self._log(f"[观察模式-聊天] [{session_key}] 回复: {response[:50]}…")
+            except Exception as e:
+                self._log(f"[观察模式-聊天] 失败: {e}")
+
+    def _on_observation_mode_exit(self, reason: str):
+        """观察模式退出回调。"""
+        self._obs_worker = None
+        self._log(f"[观察模式] 已退出: {reason}")
 
     # ── 分段接收（用户用"。。"分段发送消息） ────────────────
 

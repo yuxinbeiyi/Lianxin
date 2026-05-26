@@ -68,6 +68,8 @@ _RESOURCE_GROUPS = {
     "shoulder_status": "hardware",
     "shoulder_temp": "hardware",
     "start_shoulder_explore": "hardware",
+    "start_observation_mode": "hardware",
+    "stop_observation_mode": "hardware",
 }
 _resource_locks: dict[str, threading.Lock] = {}
 _resource_init_lock = threading.Lock()
@@ -409,6 +411,11 @@ class AgentCore:
 • 主动想看看雨心在做什么 → 拍一张看看
 • 云台复位 → shoulder_center
 • 查看设备状态和 WiFi 信号 → shoulder_status
+
+【观察模式】说明：
+• start_observation_mode — 启动观察模式，莲心会持续主动转头→拍照→分析→发QQ
+• stop_observation_mode — 退出观察模式，云台复位
+• 注意：start_observation_mode/stop_observation_mode 是启动/停止后台自主循环，与单次拍照观察不同
 
 注意：拍照后如果画面内容需要描述，必须调用 describe_image 或 ocr_image，因为你看不到图片本身。
 

@@ -1506,6 +1506,36 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    # ── 观察模式工具 ─────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "start_observation_mode",
+            "description": (
+                "启动【观察模式】——莲心会通过肩载摄像头持续主动观察周围环境。"
+                "莲心会像好奇的小宠物一样不断转头观察、拍照、并把看到的内容发到主人QQ上。"
+                "此模式会持续运行直到收到【观察模式】关闭指令，或30分钟无消息自动退出。"
+                "注意：需要肩载摄像头（ESP32-CAM）已通电在线。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "stop_observation_mode",
+            "description": "退出【观察模式】——莲心会停止主动观察，云台复位到中心位置。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
     # ── 浏览器自动化工具 ─────────────────────────────────────────
     {
         "type": "function",
@@ -2749,7 +2779,7 @@ def fetch_webpage_browser(url: str, max_length: int = 3000) -> str:
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled'])
+            browser = p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled', '--disable-features=UseDnsHttpsSvcb'])
             context = browser.new_context(
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 viewport={'width': 1920, 'height': 1080}
@@ -3259,6 +3289,49 @@ def _start_shoulder_explore():
         return "\n".join(lines)
     else:
         return f"探索完成。{summary}（无新增记录）"
+
+
+# ════════ 观察模式工具 ════════
+
+def _start_observation_mode() -> str:
+    """启动【观察模式】——莲心持续主动观察环境。"""
+    from brain.observation_mode import get_observation_state
+    state = get_observation_state()
+    if state.is_active:
+        return "【观察模式】已经在运行中了哦，我正看着周围呢(｀・ω・´)"
+
+    state.activate()
+
+    # 如果 QQ 桥接可用，启动后台 Worker
+    from brain import tools as _self
+    qq = _self._qq_bridge_worker
+    if qq and hasattr(qq, '_owner_qq') and qq._owner_qq:
+        from workers.observation_mode_worker import ObservationModeWorker
+        state.set_qq_bridge(qq)
+        worker = ObservationModeWorker(state)
+        worker.pending_messages.connect(qq._on_observation_pending_messages)
+        worker.mode_exited.connect(qq._on_observation_mode_exit)
+        worker.start()
+        qq._obs_worker = worker
+        return "【观察模式】已启动！让我看看周围有什么有趣的东西～(^-^)"
+    else:
+        return "【观察模式】已激活，但未检测到 QQ 桥接，观察结果将仅显示在桌面端。"
+
+
+def _stop_observation_mode() -> str:
+    """退出【观察模式】。停止循环并复位云台。"""
+    from brain.observation_mode import get_observation_state
+    state = get_observation_state()
+    if not state.is_active:
+        return "【观察模式】本来就是关闭的哦(｀・ω・´)"
+    state.deactivate()
+    # 尝试复位云台（工具调用场景，Worker 的 _cleanup 也会复位）
+    try:
+        from brain.tools import shoulder_center
+        result = shoulder_center()
+    except Exception:
+        pass
+    return "【观察模式】已退出，云台已复位～(´-ω-`)"
 
 
 def read_diary(date: str = None, keyword: str = None, limit: int = 1):
@@ -3793,6 +3866,9 @@ TOOL_EXECUTORS = {
         limit=inp.get("limit", 10),
     ),
     "start_shoulder_explore": lambda inp: _start_shoulder_explore(),
+    # 观察模式
+    "start_observation_mode": lambda inp: _start_observation_mode(),
+    "stop_observation_mode": lambda inp: _stop_observation_mode(),
     # 浏览器自动化
     "browser_navigate":   lambda inp: _browser_navigate(inp["url"]),
     "browser_snapshot":   lambda inp: _browser_snapshot(),
