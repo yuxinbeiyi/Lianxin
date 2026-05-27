@@ -71,6 +71,7 @@ _TOOL_KEYWORDS = {
     "shoulder_status":    ["肩膀状态", "外设状态", "肩部状态"],
     "shoulder_temp":      ["肩膀温度", "肩膀湿度", "外设温度", "外设湿度"],
     "shoulder_servo":     ["水平", "竖直", "垂直", "pan", "tilt"],
+    "shoulder_observe":  ["拍照", "看看", "观察", "拍张照", "看一看", "照张相"],
 }
 
 

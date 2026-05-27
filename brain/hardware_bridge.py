@@ -55,17 +55,38 @@ class HardwareBridge:
             self._connected = False
             return False
 
+    async def _drain_pending(self, timeout=0.3):
+        """读取并丢弃残留的 WebSocket 数据，恢复同步。
+
+        拍照超时后，ESP32 可能仍会发回旧的 JPEG 数据，
+        导致后续命令读到错误类型的数据。此方法清空缓冲。
+        """
+        if not self.ws:
+            return
+        try:
+            while True:
+                _ = await asyncio.wait_for(self.ws.recv(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass  # 正常：没有残留数据了
+        except Exception:
+            pass  # 连接问题，由下一个命令处理
+
     async def _send_cmd(self, cmd: str, binary=False, timeout_sec=5):
         if not self.ws or not self._connected:
             print("[bridge] not connected")
             return None
         try:
             await self.ws.send(cmd)
-            resp = await asyncio.wait_for(self.ws.recv(), timeout=timeout_sec)
-
-            if binary:
-                return resp if isinstance(resp, bytes) else None
-            return resp if isinstance(resp, str) else resp.decode()
+            for _ in range(2):  # 最多读2次（第1次可能拿到上个命令残留的数据）
+                resp = await asyncio.wait_for(self.ws.recv(), timeout=timeout_sec)
+                # 类型匹配 → 返回
+                if binary and isinstance(resp, bytes):
+                    return resp
+                if not binary and isinstance(resp, str):
+                    return resp
+                # 类型不匹配 → 丢弃残留数据，重试
+                print(f"[bridge] 丢弃残留数据 ({type(resp).__name__}), 重试 {cmd}")
+            return None  # 读了2次都是残留数据，放弃
         except asyncio.TimeoutError:
             print(f"[bridge] timeout: {cmd}")
             return None
@@ -124,7 +145,7 @@ class HardwareBridge:
         return None
 
     async def center(self) -> dict | None:
-        resp = await self._send_cmd("center")
+        resp = await self._send_cmd("servo 90 45")
         if resp:
             try:
                 return json.loads(resp)
@@ -202,14 +223,16 @@ class HardwareBridge:
     # ── 长连接模式下的命令发送（带自动重连） ────────────────
 
     async def _send_cmd_persistent(self, cmd: str, binary=False, timeout_sec=5):
-        """长连接模式下发送命令，断开时自动重连。"""
+        """长连接模式下发送命令，断开时自动重连。发送前清空残留数据防不同步。"""
         if not await self._ensure_connected():
             return None
+        # 发送前快速 drain，避免上个超时命令的残留数据
+        await self._drain_pending(timeout=0.2)
         return await self._send_cmd(cmd, binary=binary, timeout_sec=timeout_sec)
 
     async def photo_persistent(self, save_path=None) -> bytes | None:
-        """长连接模式下拍照（复用已有连接）。"""
-        data = await self._send_cmd_persistent("photo", binary=True, timeout_sec=15)
+        """长连接模式下拍照（复用已有连接）。超时 25 秒。"""
+        data = await self._send_cmd_persistent("photo", binary=True, timeout_sec=25)
         if data and isinstance(data, bytes) and len(data) > 100:
             if save_path:
                 Path(save_path).parent.mkdir(parents=True, exist_ok=True)
@@ -249,8 +272,8 @@ class HardwareBridge:
         return None
 
     async def center_persistent(self) -> dict | None:
-        """长连接模式下云台复位。"""
-        resp = await self._send_cmd_persistent("center")
+        """长连接模式下云台复位到 (90°, 45°)。"""
+        resp = await self._send_cmd_persistent("servo 90 45")
         if resp:
             try:
                 return json.loads(resp)

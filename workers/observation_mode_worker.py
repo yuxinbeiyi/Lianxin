@@ -15,9 +15,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 # ── 舵机角度限制 ─────────────────────────────────────────
 PAN_MIN = 20
 PAN_MAX = 150
-TILT_MIN = 30
-TILT_CENTER = 90
-TILT_MAX = 90
+TILT_CENTER = 45
 
 
 def get_qq_bridge():
@@ -50,6 +48,9 @@ class ObservationModeWorker(QThread):
         self._qq = None
         self._photo_save_dir = Path.home() / ".lianxin" / "observations"
         self._photo_save_dir.mkdir(parents=True, exist_ok=True)
+        # 连续失败追踪（防止无限重试风暴）
+        self._consecutive_failures = 0
+        self._max_consecutive_failures = 3
 
     def run(self):
         """主循环入口。"""
@@ -114,18 +115,22 @@ class ObservationModeWorker(QThread):
         round_num = self._cost_tracker._daily_calls + 1
         print(f"[观察模式] === 第 {round_num} 轮观察 ===")
 
-        # ① 垂直舵机复位到 90°
-        if not self._do_center_tilt():
-            return False
-
-        # ② 好奇转头 1~8 次（范围 20~150°）
+        # ① 好奇转头 1~8 次（范围 20~150°）
         if not self._curious_look_around():
             return False
 
         # ③ 拍照 + 压缩 ≤200KB
         photo_path = self._take_photo()
         if not photo_path:
-            # 拍照失败不计入周期限制，直接重试
+            # 拍照失败：记录循环次数防止忙等，连续超阈值则退出
+            self._consecutive_failures += 1
+            self._cycle_limiter.record_cycle()
+            print(f"[观察模式] ⚠ 拍照失败 ({self._consecutive_failures}/{self._max_consecutive_failures})")
+            if self._consecutive_failures >= self._max_consecutive_failures:
+                self._safe_exit(
+                    "连续多次拍照失败，请检查肩载设备状态，退出【观察模式】"
+                )
+                return False
             return True
 
         # ④ 检查费用
@@ -157,6 +162,7 @@ class ObservationModeWorker(QThread):
 
         # 登记本轮完成（用于 2 次/分钟限频）
         self._cycle_limiter.record_cycle()
+        self._consecutive_failures = 0
         return True
 
     # ════════════════════════════════════════════════════════
@@ -164,15 +170,7 @@ class ObservationModeWorker(QThread):
     # ════════════════════════════════════════════════════════
 
     def _idle_pan_around(self, duration_seconds: float):
-        """在循环等待期间，水平随机转头但不拍照。垂直保持在 90°。"""
-        # 确保垂直在 90°
-        if self._current_tilt != TILT_CENTER:
-            try:
-                self._loop.run_until_complete(self._bridge.tilt_persistent(TILT_CENTER))
-                self._current_tilt = TILT_CENTER
-            except Exception:
-                pass
-
+        """在循环等待期间，水平随机转头但不拍照。"""
         end = time.time() + duration_seconds
         count = 0
         while time.time() < end and self._state.is_active:
@@ -194,18 +192,23 @@ class ObservationModeWorker(QThread):
     # ════════════════════════════════════════════════════════
 
     def _do_center_tilt(self) -> bool:
-        """垂直舵机复位到 90°。"""
+        """垂直舵机复位到 TILT_CENTER。失败时计数，超阈值退出。"""
         try:
             self._loop.run_until_complete(self._bridge.tilt_persistent(TILT_CENTER))
             self._current_tilt = TILT_CENTER
             time.sleep(0.3)
+            self._consecutive_failures = 0
             return True
         except Exception as e:
             print(f"[观察模式] 垂直复位失败: {e}")
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self._max_consecutive_failures:
+                self._safe_exit("肩载设备连续多次无响应，退出【观察模式】")
+                return False
             return self._state.is_active
 
     def _curious_look_around(self) -> bool:
-        """随机水平转头 1~8 次，范围 20~150°。"""
+        """随机水平转头 1~8 次，范围 20~150°。失败时计数，超阈值退出。"""
         n = random.randint(1, 8)
         print(f"[观察模式] 🐾 扭头 {n} 次 ({self._current_pan}°→...)")
         for _ in range(n):
@@ -216,17 +219,36 @@ class ObservationModeWorker(QThread):
             try:
                 self._loop.run_until_complete(self._bridge.pan_persistent(new_pan))
                 self._current_pan = new_pan
+                self._consecutive_failures = 0
             except Exception as e:
                 print(f"[观察模式] 转头失败: {e}")
-                return False
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self._max_consecutive_failures:
+                    self._safe_exit("肩载设备连续多次无响应，退出【观察模式】")
+                    return False
+                return self._state.is_active
             time.sleep(random.uniform(0.5, 1.5))
         return True
 
     def _take_photo(self) -> str:
-        """拍照并压缩到 ≤200KB。"""
+        """拍照并压缩到 ≤200KB。
+
+        先拍一张丢弃（预热摄像头传感器），第二张才正式使用。
+        解决 ESP32-CAM 在某些条件下返回旧帧缓存的问题。
+        """
         try:
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             save_path = str(self._photo_save_dir / f"obs_{timestamp}.jpg")
+
+            # 第一张：预热摄像头（丢弃），唤醒传感器，清空帧缓冲
+            warmup = self._loop.run_until_complete(
+                self._bridge.photo_persistent()
+            )
+            if warmup:
+                print(f"[观察模式] 📸 预热完成 ({len(warmup)} bytes)")
+            time.sleep(0.3)
+
+            # 第二张：正式拍照
             data = self._loop.run_until_complete(
                 self._bridge.photo_persistent(save_path=save_path)
             )
@@ -274,18 +296,19 @@ class ObservationModeWorker(QThread):
         return result
 
     def _generate_message(self, description: str) -> str:
-        """LLM 生成简洁拟人化描述（≤300 字）。"""
+        """LLM 生成简洁拟人化描述（≤300 字）。失败时对原文加前缀降级。"""
         from openai import OpenAI
         from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, MODEL
 
         if not DEEPSEEK_API_KEY:
-            return f"{description}"
+            print("[观察模式] ⚠ 无 API Key，使用原始描述")
+            return _truncate(description)
 
         try:
             client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
             resp = client.chat.completions.create(
                 model=MODEL,
-                max_tokens=200,
+                max_tokens=400,
                 messages=[
                     {
                         "role": "system",
@@ -302,17 +325,23 @@ class ObservationModeWorker(QThread):
                     },
                     {"role": "user", "content": f"画面内容：{description}"},
                 ],
-                timeout=15,
+                timeout=20,
             )
-            msg = resp.choices[0].message.content or _truncate(description)
-            # 确保不超过 300 字
-            if len(msg) > 300:
-                msg = msg[:297] + "..."
-            print(f"[观察模式] 💬 生成消息 ({len(msg)} 字)")
-            return msg
+            msg = resp.choices[0].message.content
+            if msg and msg.strip():
+                # LLM 成功生成
+                if len(msg) > 300:
+                    msg = msg[:297] + "..."
+                print(f"[观察模式] 💬 LLM 生成消息 ({len(msg)} 字)")
+                return msg
+
+            # LLM 返回了空内容 → 降级
+            print("[观察模式] ⚠ LLM 返回空，降级使用原始描述")
+            # 给原始描述加个简短的前缀，让它看起来不像是"直接输出"
+            return f"我看到啦——{_truncate(description)}"
         except Exception as e:
-            print(f"[观察模式] 消息生成失败: {e}")
-            return _truncate(description)
+            print(f"[观察模式] ⚠ LLM 生成失败 ({e})，降级使用原始描述")
+            return f"我看到啦——{_truncate(description)}"
 
     def _send_observation(self, photo_path: str, message: str):
         """发送图片+文字到 QQ，带打字速度延迟。"""

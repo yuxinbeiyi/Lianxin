@@ -9,6 +9,8 @@ import json
 import asyncio
 import subprocess
 import threading
+import time
+import random
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -1364,7 +1366,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "shoulder_center",
-            "description": "将肩载摄像头云台复位到中心位置（Pan=90, Tilt=90）。",
+            "description": "将肩载摄像头云台复位到中心位置（Pan=90°, Tilt=45°）。",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -1414,6 +1416,18 @@ TOOL_DEFINITIONS = [
                     }
                 },
                 "required": ["pan", "tilt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shoulder_observe",
+            "description": "用肩载摄像头观察当前环境：拍照→视觉AI分析→LLM生成描述→发送照片和描述到你的QQ。常用于你想让莲心看看周围环境时调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
             }
         }
     },
@@ -3143,8 +3157,11 @@ def shoulder_photo() -> str:
     save_dir.mkdir(parents=True, exist_ok=True)
     path = str(save_dir / f"shoulder_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg")
 
-    def _do(bridge):
-        return bridge.photo(save_path=path)
+    async def _do(bridge):
+        # 预热：丢弃第一张，清空 ESP32 帧缓冲，避免拿到旧帧
+        await bridge.photo()
+        await asyncio.sleep(0.3)
+        return await bridge.photo(save_path=path)
 
     data = _shoulder_exec(_do)
     if isinstance(data, str):
@@ -3152,6 +3169,119 @@ def shoulder_photo() -> str:
     if data and isinstance(data, bytes) and len(data) > 100:
         return f"拍照成功，已保存到 {path}"
     return "拍照失败：未收到图片数据"
+
+
+def _compress_jpeg(path: str, max_kb=200) -> str:
+    """JPEG 质量压缩到 ≤max_kb KB，返回压缩后的路径。"""
+    try:
+        from PIL import Image
+        img = Image.open(path)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        stem, ext = os.path.splitext(path)
+        compressed = f"{stem}_c{ext}"
+        quality = 85
+        while quality >= 20:
+            img.save(compressed, "JPEG", quality=quality)
+            if os.path.getsize(compressed) <= max_kb * 1024:
+                break
+            quality -= 5
+        return compressed
+    except Exception:
+        return path
+
+
+def shoulder_observe() -> str:
+    """拍照→视觉分析→LLM描述→发送照片+描述到QQ。一步完成观察。"""
+    save_dir = get_user_data_dir() / "camera_shots"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_path = str(save_dir / f"observe_{timestamp}.jpg")
+
+    # ① 拍照（预热丢弃 + 正式）
+    async def _do(bridge):
+        await bridge.photo()  # 预热，清空帧缓冲
+        await asyncio.sleep(0.3)
+        return await bridge.photo(save_path=raw_path)
+    data = _shoulder_exec(_do)
+    if isinstance(data, str):
+        return data  # 错误信息
+    if not data or not isinstance(data, bytes) or len(data) < 100:
+        return "拍照失败：未收到图片数据"
+
+    # ② 压缩
+    photo_path = _compress_jpeg(raw_path)
+
+    # ③ 视觉 API 分析
+    try:
+        from brain.vision import describe_image
+        prompt = (
+            "请详细描述这张画面里的内容。注意观察——"
+            "画面中有什么人物、物体、场景、颜色、动作、文字等。"
+            "尽量关注细节，比如物品的位置、状态、颜色、人物表情动作。"
+        )
+        description = describe_image(photo_path, prompt=prompt)
+    except Exception as e:
+        description = f"（视觉分析失败：{e}）"
+
+    # ④ LLM 生成拟人化描述
+    try:
+        from openai import OpenAI
+        from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, MODEL
+        if DEEPSEEK_API_KEY:
+            client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+            resp = client.chat.completions.create(
+                model=MODEL,
+                max_tokens=400,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "你是莲心，刚刚用肩载摄像头看了一眼周围。\n"
+                            "用可爱简短的语气说一句话。要求：\n"
+                            "- 控制在 300 字以内，越短越好\n"
+                            "- 保留视觉识别的核心内容\n"
+                            "- 语气活泼好奇，可以加颜文字\n"
+                            "- 称呼用户为'雨心'\n"
+                            "- 直接说看到的内容"
+                        ),
+                    },
+                    {"role": "user", "content": f"画面内容：{description}"},
+                ],
+                timeout=20,
+            )
+            message = resp.choices[0].message.content or ""
+            if len(message) > 300:
+                message = message[:297] + "..."
+        else:
+            message = ""
+    except Exception as e:
+        message = ""
+
+    # ⑤ 发送到 QQ
+    sent_photo = False
+    sent_text = False
+    try:
+        global _qq_bridge_worker
+        if _qq_bridge_worker:
+            _qq_bridge_worker.send_file_to_qq(photo_path)
+            sent_photo = True
+            time.sleep(random.uniform(0.5, 1.5))
+            if message:
+                _qq_bridge_worker.send_to_owner(message)
+                sent_text = True
+    except Exception as e:
+        pass
+
+    parts = []
+    if sent_photo:
+        parts.append("照片已发送")
+    if sent_text:
+        parts.append("描述已发送")
+    if not parts:
+        return f"观察完成，描述：{description[:100]}..."
+    return "观察完成，" + "，".join(parts)
+
 
 def shoulder_pan(angle: int) -> str:
     """控制云台水平旋转。"""
@@ -3187,12 +3317,12 @@ def shoulder_servo(pan: int, tilt: int) -> str:
     return "云台控制失败"
 
 def shoulder_center() -> str:
-    """云台复位到中心。"""
+    """云台复位到中心 (Pan=90°, Tilt=45°)。"""
     def _do(bridge):
         return bridge.center()
     result = _shoulder_exec(_do)
     if isinstance(result, dict) and result.get("pan") == 90:
-        return "云台已复位到中心"
+        return "云台已复位到中心 (Pan=90°, Tilt=45°)"
     if isinstance(result, str):
         return result
     return "云台复位失败"
@@ -3850,6 +3980,7 @@ TOOL_EXECUTORS = {
     "shoulder_center": lambda inp: shoulder_center(),
     "shoulder_status": lambda inp: shoulder_status(),
     "shoulder_temp":   lambda inp: shoulder_temp(),
+    "shoulder_observe": lambda inp: shoulder_observe(),
     # 观察记忆
     "save_observation": lambda inp: _save_observation(
         inp["description"],

@@ -16,6 +16,9 @@ os.chdir(_PROJECT_ROOT)
 # 确保项目根目录在路径中
 sys.path.insert(0, _PROJECT_ROOT)
 
+# 禁用 Anthropic SDK 内部 OpenTelemetry 追踪，避免 protobuf UTF-8 序列化报错
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+
 # 导入迁移函数（必须在切换工作目录后）
 from utils.paths import migrate_legacy_files   # 新增
 

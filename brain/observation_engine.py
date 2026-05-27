@@ -87,7 +87,7 @@ _EXPLORER_TOOLS = [
                     "tags": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "关键词标签列表，如 ['马克杯', '红色', '桌面']",
+                        "description": "关键词标签列表，如 ['水杯', '红色', '桌面']",
                     },
                 },
                 "required": ["description"],

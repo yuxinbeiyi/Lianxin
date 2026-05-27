@@ -70,6 +70,7 @@ _RESOURCE_GROUPS = {
     "start_shoulder_explore": "hardware",
     "start_observation_mode": "hardware",
     "stop_observation_mode": "hardware",
+    "shoulder_observe": "hardware",
 }
 _resource_locks: dict[str, threading.Lock] = {}
 _resource_init_lock = threading.Lock()
