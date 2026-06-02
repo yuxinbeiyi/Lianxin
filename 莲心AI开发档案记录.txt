@@ -1,6 +1,5 @@
 莲心AI  开发档案记录
   |  更新日期：2026-05-27
-
 本文档由 Claude Code 自动生成，面向接手开发的 AI 助手或开发者。
 涵盖莲心AI的功能清单、模块架构、关键代码逻辑及数据存储，可直接用于二次开发接手。
 章节
@@ -29,11 +28,8 @@ GUI模块：主窗口、角色控件、动画状态机配置格式、所有对�
 第十二章
 新增功能模块：OCR图片识别、日记本、按钮音效、音乐盒、备忘本、智能提醒
 为优化 open_app 工具的启动速度和解决 UI 白屏问题，新增了快捷启动应用列表功能。
-
-
 12.8  快捷启动应用列表（2026-05-01 新增）
 gui/quick_launch_dialog.py — QuickLaunchDialog 管理面板（添加/编辑/删除）
-
 涉及文件与职责：
 brain/tools.py — open_app 的快捷启动列表查找逻辑
 config.py — get_quick_launch_apps / save_quick_launch_apps 配置接口
@@ -44,7 +40,6 @@ QQ 桥接现已支持接收和分析 QQ 消息中的图片。当用户在 QQ 中
 workers/qq_bridge_worker.py — _extract_images() 提取 OneBot 图片 URL；_download_image() HTTP 下载到临时文件；_analyze_images() 下载+分析，返回含图片描述的合并文本
 workers/qq_bridge_worker.py — _handle_message() 在限速检查后检测图片并分析；_process_merged_segments() 合并消息也支持图片
 brain/vision.py — describe_image() 视觉API封装；config.py — get_siliconflow_config() 配置接口
-
 12.10  图片暂存与文字合并发送（2026-05-12 新增）
 重构了图片发送流程：Ctrl+V/拖拽粘贴图片不再立即发送，而是在输入栏上方显示缩略图预览。用户可以继续输入文字，按下 Enter 时图片和文字合并发送。
 涉及文件与职责：
@@ -53,7 +48,6 @@ gui/input_panel.py — message_submitted 信号从 pyqtSignal(str) 改为 pyqtSi
 gui/main_window.py — _on_user_message(self, text, images=None) 接收图片列表；_finish_staged_vision() 并发分析后合并上下文
 gui/main_window.py — _on_staged_vision_done/error() 收集各图片分析结果；_ImageVisionWorker 每张图片一个后台线程
 gui/message_bubble.py — ImageMessageBubble.update_text() 支持异步更新分析结果
-
 12.9  视觉理解能力（2026-05-12 新增）
 莲心AI 现在具备视觉理解能力。通过 SiliconFlow API 调用 Qwen3-VL-30B-A3B-Instruct 多模态模型，可以理解图片内容——识别画面中的人物、物体、场景、动作、颜色，同时也能读懂图片中的文字。
 核心能力：
@@ -73,20 +67,14 @@ config.py — _SILICONFLOW_DEFAULTS / get_siliconflow_config() / save_siliconflo
 gui/api_config_dialog.py — 视觉理解标签页（API Key/Base URL/Model）
 gui/message_bubble.py — ImageMessageBubble 支持缩略图+描述文本+展开/收起
 gui/chat_widget.py — add_user_image() 返回 bubble 引用供后续 update_text()
-
 第十三章
 工具箱功能
 第十四章
 QQ聊天功能
 第十五章
 表情包功能
-
-
 附录
 Worker信号汇总表+全部工具路由映射表
-
-
-
 第一章  项目概述
 1.1  项目简介
 莲心AI 是一个运行在 Windows 桌面端的个人AI助手，基于 PyQt5 图形界面，使用 DeepSeek API（OpenAI 兼容）作为语言模型后端，支持文字对话、语音交互、工具调用、桌面自动化等功能。
@@ -110,8 +98,6 @@ Worker信号汇总表+全部工具路由映射表
 utils/paths.py 的 get_user_data_dir() 统一返回该目录，首次运行时自动创建。
 启动时 migrate_legacy_files() 会将旧位置（项目内 data/、memory/）的配置文件自动迁移到新目录。
 注意：对话历史 SQLite 数据库（memory/conversations.db）目前仍在项目目录内，尚未迁移。
-
-
 第二章  目录结构
 莲心AI 主目录结构如下（备份目录不含）：
 莲心AI/
@@ -172,10 +158,7 @@ utils/paths.py 的 get_user_data_dir() 统一返回该目录，首次运行时�
     ├── animation_config.json        ← 动画状态机配置
     ├── GIF/                         ← 各状态动画文件
     └── meme/                        ← 表情包图片资源
-
 │   ├── qq_bridge_worker.py          ← QQ 桥接线程（WebSocket + 风控 + 会话管理）
-
-
 第三章  AI 大脑（brain/agent.py）
 3.1  AgentCore 类概述
 AgentCore 是莲心的核心大脑，封装了 DeepSeek API 调用、Function Calling 循环、对话历史内存管理和 SQLite 持久化。
@@ -221,8 +204,6 @@ response = agent.chat(user_message, on_tool_call=None, on_tool_result=None)
 agent.new_session()           —  开启新会话（内存清空 + SQLite新建session）
 agent.get_history_manager()  —  返回 HistoryManager 实例（供历史对话框使用）
 agent.get_history_summary()  —  返回当前会话轮数文本
-
-
 第四章  工具系统（brain/tools.py）
 4.1  结构说明
 tools.py 包含两部分：
@@ -290,8 +271,6 @@ execute_tool 通过 name → function 的字典映射调用对应函数，所有
 .pdf  提取：pdfplumber 逐页提取，标注页码，无长度限制
 文本文件：读取原始字节，优先 chardet 检测编码（置信度>=0.6），回退 utf-8/gbk/gb2312/gb18030/latin-1
 分块逻辑：_CHUNK_SIZE=15000字符，超长文件自动分块，首块用 read_file，后续块用 read_file_chunk(path, chunk_index)
-
-
 第五章  GUI 模块（gui/）
 5.1  main_window.py  主窗口
 MainWindow 继承 QMainWindow，是整个应用的顶层容器：
@@ -347,8 +326,6 @@ AnimationStateMachine 读取 assets/animation_config.json 配置，管理角色�
 todo_dialog.py    —  待办清单 GUI（显示列表，支持完成/删除，与工具层共享 TodoManager 实例）
 accompany_dialog.py —  陪伴统计（今日/累计陪伴时长显示）
 proactive_dialog.py —  主动聊天设置（开关+频率滑块+24小时活跃时段权重调节）
-
-
 第六章  Worker 线程（workers/）
 所有耗时操作均在 QThread 子线程执行，通过 pyqtSignal 将结果传回主线程，保持 GUI 流畅。
 6.1  agent_worker.py  AI 对话线程
@@ -385,15 +362,12 @@ worker.response_ready.connect(on_proactive_msg)
 run() 中构建上下文：最近1个会话的最后12条消息 + 长期记忆（最多20条）。
 独立调用 DeepSeek API（不使用 AgentCore），System Prompt 风格不同：温柔毒舌，主动发消息，1~3句话，max_tokens=256。
 6.6  listening_worker.py  单次录音线程
-
 run() 调用 brain.vision.describe_image(image_path)，完成后发射 finished，失败发射 error。在 main_window.py 末尾定义，轻量线程，仅封装单张图片的 API 调用。
 信号：finished(str) / error(str)
 worker.finished.connect(lambda desc: ...)   /   worker.error.connect(lambda err: ...)
 worker = _ImageVisionWorker(image_path, parent)
 6.7  _ImageVisionWorker  图片视觉分析线程（2026-05-12 新增）
 用于普通对话模式点击麦克风按钮后的单次语音录制识别，与 voice_worker.py 中的 VoiceWorker 类似但更简单。
-
-
 第七章  语音模块（voice/）
 7.1  listener.py  VoiceListener（STT）
 封装麦克风录音 + 静音检测（VAD）+ faster-whisper 语音识别。
@@ -420,8 +394,6 @@ init_player()：初始化 pygame.init() + pygame.mixer.init()，调用一次即�
 用于待机模式的持续监听，通过阿里云NLS SDK（WebSocket协议）进行实时流式语音识别，延迟更低。
 配置来源：user_config.json 的 aliyun_stt 节点（access_key_id / access_key_secret / app_key）。
 SDK 已内置在项目目录 alibabacloud-nls-python-sdk/ 中，需本地安装：cd alibabacloud-nls-python-sdk && pip install -e .
-
-
 第八章  数据持久化
 8.1  对话历史（memory/history_manager.py + conversations.db）
 使用 SQLite，数据库文件：memory/conversations.db（项目目录内，check_same_thread=False）。
@@ -433,7 +405,6 @@ sessions(
   summary TEXT,          -- 预留（通过迁移添加）
   is_pinned INTEGER      -- 预留（通过迁移添加）
 )
-
 messages(
   id INTEGER PRIMARY KEY,
   session_id INTEGER,    -- 关联 sessions.id
@@ -499,8 +470,6 @@ mark_fired(alarm_id)：记录已响，once 模式自动禁用。
     "app_key": "..."
   }
 }
-
-
 第九章  辅助功能模块
 9.1  主动聊天调度（utils/proactive_chat.py）
 ProactiveChatScheduler 管理莲心主动发起对话的时机，每5分钟由主窗口 QTimer 轮询。
@@ -526,8 +495,6 @@ check_network()：检查网络连接是否可用（启动时调用）。
 记录与莲心对话的累计时长（今日/总计），持久化到 accompany_stats.json。
 9.5  余额查询（utils/balance.py）
 get_balance_info() 调用 DeepSeek 官方 API 查询账户余额，format_balance_message() 格式化为可读文本，由 get_balance 工具调用。
-
-
 第十章  配置系统（config.py）
 10.1  公开接口
 get_api_config() → dict           —  读取 DeepSeek 配置，缺字段用默认值补全
@@ -549,7 +516,6 @@ get_balance_info() 调用 DeepSeek 官方 API 查询账户余额，format_balanc
 • save_camera_config(config)  —  保存摄像头配置
 • get_diary_config() → dict  —  读取日记配置
 • save_diary_config(config)  —  保存日记配置
-
 模块级兼容变量：DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / MODEL / MAX_TOKENS（供旧代码直接导入）
 10.2  人格设定核心规则（_BASE_PROMPT 摘要）
 角色：莲心，聪明毒舌傲娇AI，称用户为"博士"
@@ -567,8 +533,6 @@ ALLOWED_COMMANDS = [
     'cd', 'pwd', 'hostname', 'ipconfig',
     'del', 'rm', 'rd', 'rmdir', 'mkdir', 'New-Item',
 ]
-
-
 第十一章  接手开发指南
 11.1  快速了解项目建议阅读顺序
 1. config.py           —  了解 API 配置结构和人格设定的完整内容
@@ -599,22 +563,16 @@ ALLOWED_COMMANDS = [
 11.6  依赖库安装（完整版）
 # 核心依赖
 pip install openai PyQt5
-
 # 语音模块
 pip install faster-whisper edge-tts sounddevice numpy pygame
-
 # 文件处理
 pip install python-docx pdfplumber openpyxl chardet
-
 # 联网搜索
 pip install duckduckgo-search requests beautifulsoup4 lxml
-
 # 时间/日历
 pip install zhdate chinese_calendar
-
 # 其他
 pip install dateparser
-
 # 阿里云 NLS SDK（本地内置）
 cd alibabacloud-nls-python-sdk && pip install -e .
 11.7  版本备份体系
@@ -636,8 +594,6 @@ cd alibabacloud-nls-python-sdk && pip install -e .
 15 优化了open_app工具的使用
 16 增加excel和docx编辑和美化排版功能
 17 动画状态机  ← 当前最新版本
-
-
 第十二章  新增功能模块
 本章记录 v2.0 动画状态机版本之后陆续开发的新功能，包括 OCR 图片识别、日记本、按钮音效、音乐盒、备忘本、智能提醒等。
 12.1  OCR 图片识别与拍照
@@ -702,14 +658,10 @@ cd alibabacloud-nls-python-sdk && pip install -e .
 config.py  —  _BASE_PROMPT 中包含各工具的使用说明
 assets/sound/  —  存放所有 .mp3 音效文件
 assets/icons/  —  音乐盒、日记本等功能的图标
-
-
 第十三章- 工具箱
 主要涉及以下三个py文件
-
 1.涉及工具箱功能的Python代码主要集中在以下文件里：
 主要UI界面: gui/input_panel.py。我们之前已经在这一个文件里完成了主要功能开发：定义了ToolSelectionDialog类，支持工具的分组显示、搜索、别名匹配和收藏；也通过InputPanel类将工具箱按钮集成到了主界面。
-
 2.工具定义与核心:
 （1）brain/tools.py：这里有所有工具的定义 (TOOL_DEFINITIONS)。我们在 input_panel.py 中也是从这个文件动态读取的工具列表。
 （2）brain/agent.py：这是AI大脑的核心文件，它负责接收你的指令，并调用 brain/tools.py 里的工具。我们在后端的工具调用逻辑修改，比如增加forced_tool参数，也是在这个文件里完成的
@@ -803,7 +755,6 @@ QQ 桥接现已支持接收图片消息。当 QQ 好友或群聊中发送图片�
 配置检查：未配置 SiliconFlow API Key 时，跳过分析并告知用户
 分段消息兼容：_process_merged_segments() 也从第一段消息中提取图片并分析
 失败处理：下载/分析失败时在上下文中注明，不阻塞对话流程
-
 14.7  对话策略
 QQ 桥接的对话策略如下：
 私聊回复：收到任何私聊消息均回复（忽略机器人自己的消息）
@@ -858,7 +809,6 @@ ProactiveWorker	response_ready(str)	主动消息生成完毕
 ProactiveWorker	error_occurred(str)	生成出错
 ModelLoader	finished()	Whisper 模型加载完毕
 QQBridgeWorker	debug_log(str)	QQ 桥接调试日志
-
 A.2  工具路由汇总（execute_tool 映射表）
 工具名	功能说明
 read_file	读取文件第0块（15000字符）
@@ -885,13 +835,7 @@ save_memory	写入长期记忆
 add_todo	添加待办事项
 list_todos	列出未完成待办
 complete_todo	标记待办完成
-	
-	
-	
-
 如需继续开发，请先阅读第三章和第四章了解AI核心逻辑，再根据第十一章接手指南操作。
-
-
 12.12  调皮观察功能（2026-05-13 新增）
 莲心现在可以偶尔"偷看"主人——通过截图或摄像头抓拍，用视觉 API 分析画面后，以调皮调侃的语气发送主动消息。
 触发流程：主动聊天定时器触发 → should_observe() 概率判定（截图 30% / 摄像头 15%）→ 截图或拍照 → 视觉 API 分析画面 → _OBSERVE_SYSTEM 语气生成消息 → 发送到桌面（可选：同时发到 QQ）
@@ -917,7 +861,6 @@ OpenCV 警告处理：设置 cv2.utils.logging.setLogLevel(LOG_LEVEL_ERROR) + OP
 调试按钮 3 秒延迟：点击调试按钮后，按钮禁用并显示「3 秒后…」，3 秒后才执行截屏/拍照。防止误触，给用户时间切换到目标窗口。
 中文花括号引号修复：修复了 proactive_dialog.py 中多处因包含中文花括号引号（如"刷新"）被 Python 误解释为字符串结束符的语法错误。
 12.14  三层架构完成（2026-05-14）
-
 借鉴 EchoBot 项目设计，莲心 AI 完成了三层架构（Decision → Roleplay → Agent）在桌面端的集成。至此桌面端 + QQ 端均走三层路由。
 涉及文件：
   gui/main_window.py — _send_user_text_to_agent() 集成 decide() 路由判断
@@ -925,7 +868,6 @@ OpenCV 警告处理：设置 cv2.utils.logging.setLogLevel(LOG_LEVEL_ERROR) + OP
   brain/decision.py — 规则路由引擎（约30条正则模式），支持 auto/chat_only/force_agent 三种模式
   brain/agent.py — chat() 新增 disable_tools 参数，覆盖实例设置
   workers/qq_bridge_worker.py — QQ 消息走三层路由
-
 12.15  技能系统（2026-05-14）
 莲心 AI 新增技能系统（Skills System），借鉴 EchoBot 的按需加载模式。技能包是存储在 skills/ 目录下的独立知识/工具包，可按需激活，无需将所有工具全量加载到 system prompt。
 核心机制：
@@ -936,41 +878,30 @@ SKILL.md 格式：YAML 前置元数据（name/description/version）+ Markdown �
 动态工具加载：激活后技能的自定义工具自动注册到全局 TOOL_EXECUTORS，停用时自动卸载
 知识注入：已激活技能的知识内容作为 system message 注入，无激活时不增加任何 token 消耗
 重名保护：技能工具与核心工具重名时拒绝加载，防止冲突
-
 新增 LLM 可调用工具（3个）：
 list_skills — 列出所有可用技能及激活状态
 activate_skill(name) — 激活指定技能，加载其工具和知识
 deactivate_skill(name) — 停用指定技能
-
 示例技能包：
 skills/系统信息工具/ — 含自定义 get_system_info 工具（PowerShell 查询 CPU/内存/磁盘/网络），演示工具型技能
 skills/学习助手/ — 纯知识注入（记忆曲线、费曼学习法、番茄工作法），演示知识型技能
-
 12.16  记忆系统重构（2026-05-14）
 修复了长期记忆系统的三个核心缺陷：
-
 缺陷 1：记忆不再全量预加载到 System Prompt
 之前 _build_system_prompt_once() 将 long_term.json 的 60+ 条全量注入 system prompt，token 消耗大且运行时新增记忆不可见。改为运行时按需检索：LLM 通过 search_memory 工具主动查询，不再被动全量加载。纯聊天路径不注入记忆说明，无额外 token 成本。
-
 缺陷 2：新增 search_memory 运行时检索工具
 LLM 可在对话中调用 search_memory(关键词) 搜索 long_term.json，返回所有匹配事实。
-
 缺陷 3：新增 update_memory 和 delete_memory 工具
 update_memory(old_keyword, new_fact) — 搜索匹配旧事实并替换。找不到则追加为新事实。
 delete_memory(keyword) — 搜索并删除所有匹配的事实（不可恢复）。
-
 记忆工具完整闭环：save_memory → search_memory → update_memory → delete_memory
-
 自动日期标记：save_memory 和 update_memory 自动在事实末尾追加【记录于YYYY-MM-DD】，方便 LLM 判断记忆时效性。
-
 12.17  时间感知优化（2026-05-14）
 针对 LLM 依赖启动时静态时间导致的时间不准、过时信息误答等问题，进行了四点优化：
-
 实时时间注入：_function_calling_loop 每次调用时注入当前公历/农历/节假日信息，并提醒涉及时间节日先调 get_current_time。
 时间问题强制路由：decision.py 新增时间/日期/节日类正则模式（现在几点、三月三、端午节等），确保这些不走纯聊模式。
 System Prompt 更新：提示文本改为请以实时信息为准。
 记忆日期标记：save_memory / update_memory 自动追加记录日期，LLM 可结合当前日期判断记忆是否过时（如三月三假期记录于 4 月，现为 5 月，可推断已过）。
-
 12.18  Galgame 模式升级：Live2D 立绘（2026-05-14 新增）
 借鉴 EchoBot 项目的 Web 端 Live2D 实现，将 galgame 模式的静态立绘升级为 Live2D 模型渲染。
 核心架构：
@@ -992,7 +923,6 @@ gui/galgame/tachie_window.py — 双模式切换（自动检测 Live2D）、窗�
 gui/galgame/assets/live2d/live2d.html — PixiJS + Cubism SDK 渲染页
 gui/galgame/expression_manager.py — 不变（Live2D模式表情切换待后续模型就绪后实现）
 gui/main_window.py — _galgame_positioned 记忆位置标记
-
 表情包功能：
  utils/emotion_manager.py    │ 核心引擎：图片扫描、标签解析、情绪推断
 config.py                   │ 基础人格提示词中的表情包机制说明（第 496~520 行）
@@ -1041,8 +971,7 @@ workers/qq_bridge_worker.py │ QQ 端：_parse_qq_emotion + _send_qq_emotion_im
   4. 概率控制
   - emotion_probability 全局设置（默认 0.6，范围 0~1）
   - 每次触发时 random.random() < prob 决定是否发送
-
-  5. 历史强化
+5. 历史强化
   - agent.history 存原始文本（含标签），让 LLM 在后续对话中看到自己的情绪标签，强化输出行为
   - 数据库存干净文本，供 GUI 展示
   效果
@@ -1098,7 +1027,6 @@ todo_dialog.py 文件保留在磁盘上但不再被导入。
 • 番茄钟 | API Key
 • 闹钟&提醒 | 视觉理解
 涉及文件：gui/character_widget.py（_function_popup、_toggle_function_panel、_position_function_popup）
-
 本文档最后更新于 2026-05-23 15:55。
 12.20 Phase 2: 五元组知识图谱记忆（2026-05-22 新增）
 借鉴娜迦 NagaAgent 的 GRAG 系统，为莲心新增五元组知识图谱记忆能力。将对话中提取的实体和关系以 (主体, 主体类型, 关系, 客体, 客体类型) 五元组形式持久化到 SQLite 图数据库。
@@ -1177,12 +1105,8 @@ System Prompt 新增浏览器交互指南章节：
 功能验证：
 • test_browser.py 完整测试通过：导航百度 → 截图 → 填写搜索框 → 点击搜索按钮 → 截图结果页
 涉及文件：brain/browser_controller.py、brain/tools.py、config.py、test_browser.py
-
-
-
 Phase 7: QQ桥接肩部控制 + 上下文压缩优化
 更新日期：2026-05-24
-
 一、QQ桥接肩部外设指令支持
 【指令】模式关键词匹配：在 qq_bridge_worker.py 的 _TOOL_KEYWORDS 中添加了 shoulder_pan、shoulder_tilt、shoulder_servo、shoulder_center、shoulder_status、shoulder_temp 六组关键词，支持 【指令】水平30，竖直45 格式直接执行，不经过模型。
 参数提取：解析中文格式「水平30，竖直45」以及英文格式「pan 30 tilt 45」，支持「垂直」「竖直」两种写法，缺失参数默认 90°。
@@ -1205,13 +1129,9 @@ Phase 7: QQ桥接肩部控制 + 上下文压缩优化
 brain/agent.py — 系统提示词优化 + Ollama 检测
 brain/context_compressor.py — 冷却机制 + Ollama 可用性检测
 brain/tools.py — 新增 shoulder_servo 工具定义与实现
-
 12.26  观察模式（Observation Mode）（2026-05-27 新增）
-
 观察模式使莲心像一只好奇的小宠物——通过肩载摄像头持续观察周围环境，自主转头→拍照→分析→发送到QQ，循环往复。用户消息可打断当前循环，处理完后继续观察。
-
 2026-05-27 更新：移除了垂直舵机（观察模式不再使用垂直转向），复位位置改为水平90°竖直45°。
-
 一、核心参数
 	• 水平舵机范围：20~150°（PAN_MIN/PAN_MAX），避免撞击机械限位
 	• 垂直舵机：观察模式不使用垂直舵机（仅 idel 期间维持当前角度）
@@ -1224,7 +1144,6 @@ Phase 7: QQ桥接肩部控制 + 上下文压缩优化
 	• 闲置超时：30 分钟无用户消息自动退出
 	• 每轮转头：随机 1~8 次，步长 ±15~50°
 	• 预热机制：每轮拍照先拍一张丢弃（清空 ESP32 帧缓冲），0.3s 后再拍正式照片，避免拿到旧帧
-
 二、完整循环流程
 	① 好奇转头（随机 1~8 次，20~150° 范围内，不使用垂直舵机）
 	② 拍照（预热丢弃 + 正式，两连拍确保帧缓冲刷新）
@@ -1235,9 +1154,7 @@ Phase 7: QQ桥接肩部控制 + 上下文压缩优化
 	⑦ 发送图片 + 文字到 QQ（带 1~3 秒打字延迟）
 	⑧ 检查 ESP32 健康状态（free_heap < 20KB 时退出）
 	⑨ 登记本轮完成（CycleRateLimiter）
-
-	连续失败保护：拍照/转头连续 3 次失败自动退出观察模式并发送 QQ 通知，防止无限重试。失败阈值包含照片、舵机控制和健康检查，每轮成功后重置计数。
-
+连续失败保护：拍照/转头连续 3 次失败自动退出观察模式并发送 QQ 通知，防止无限重试。失败阈值包含照片、舵机控制和健康检查，每轮成功后重置计数。
 三、涉及文件
 	• brain/observation_mode.py（新增）— 状态管理器、费用追踪、QQ 限速、循环限频、闲置检测
 	  - ObservationModeState：线程安全状态管理，pending 消息队列，Worker↔QQ Bridge 协调 Events
@@ -1257,7 +1174,6 @@ Phase 7: QQ桥接肩部控制 + 上下文压缩优化
 	  - _on_observation_mode_exit()：退出清理
 	• brain/tools.py（修改）— 新增 start_observation_mode / stop_observation_mode 工具
 	• brain/agent.py（修改）— 资源锁注册（hardware 组），系统提示词注入
-
 四、架构设计
 	（1）双模式 WebSocket
 	HardwareBridge 新增长连接模式（persistent），观察模式期间保持 WebSocket 常开，避免每次操作都重新连接（正常指令模式依然是短连接）。自动重连最多 3 次。
@@ -1269,7 +1185,6 @@ Phase 7: QQ桥接肩部控制 + 上下文压缩优化
 	ObservationModeState 记录最后用户消息时间，每轮循环后检查是否超过 30 分钟闲置。超时后自动 deactivate、复位云台、发送 QQ 通知、发射 mode_exited 信号。
 	（5）费用控制
 	CostTracker 持久化到 ~/.lianxin/observation_cost.json，每日自动重置。每轮观察前检查费用是否超限（默认 ¥5），超限则退出。用户手动重启观察模式后自动设置 user_overrode_today 标志，当日不再因费用退出。
-
 五、关键常量
 	PAN_MIN=20, PAN_MAX=150              # 水平舵机范围
 	TILT_CENTER=45                       # 垂直复位角度（观察模式不使用垂直舵机）
@@ -1279,37 +1194,30 @@ Phase 7: QQ桥接肩部控制 + 上下文压缩优化
 	MESSAGE_MAX_CHARS=300                # 消息长度上限
 	IDLE_TIMEOUT=1800                    # 闲置超时（秒，30 分钟）
 	CONSECUTIVE_FAILURE_MAX=3            # 连续失败阈值
-
 六、2026-05-27 更新
 	（1）移除了观察模式中的垂直舵机操作（TILT_CENTER 仅保留作为复位参考值）
 	（2）云台复位位置从 (90°, 90°) 改为 (90°, 45°)，中心复位指令 center() 和 center_persistent() 均发送 "servo 90 45"
 	（3）拍照预热机制：每轮拍照先拍一张丢弃（唤醒传感器、清空帧缓冲），再拍正式照片，解决 ESP32-CAM 双帧缓冲返回旧帧的问题
 	（4）连续失败保护：拍照/转头连续 3 次失败自动退出，防止无限重试风暴
-
 12.27  【指令】拍照 — shoulder_observe 工具（2026-05-27 新增）
-
 在非观察模式下，用户可通过 QQ 发送「【指令】拍照」让莲心立即拍下当前角度照片，自动完成视觉分析 + LLM 拟人化描述 + 发送到 QQ 的全流程。
-
 功能流程：
 	① 拍照（预热丢弃 + 正式）：先拍一张丢弃（清空 ESP32 帧缓冲），等待 0.3s，再拍第二张作为正式照片
 	② JPEG 压缩：PIL 质量递减压缩至 ≤200KB
 	③ SiliconFlow 视觉 API 分析图片内容（同观察模式）
 	④ DeepSeek LLM 生成 ≤300 字拟人化描述，语气活泼好奇，称呼"雨心"
 	⑤ 发送压缩照片 + 文字描述到 QQ（图片带限速）
-
 2026-05-27 修复 bug：
 	（1）拍照旧帧问题：shoulder_photo() 和 shoulder_observe() 原来只拍一张，ESP32-CAM 双帧缓冲（fb_count=2）在闲置后首次返回可能拿到旧帧。
 	   修复：改为两连拍，第一张丢弃预热，第二张正式使用（与观察模式 _take_photo() 相同的机制）。
 	（2）跨事件循环 WebSocket 操作：之前尝试让非持久化工具共享观察模式的持久化桥接，但创建新事件循环操作另一线程的 WebSocket 连接导致未定义行为。
 	   修复：移除共享桥接方案，每个工具调用独立建立/断开连接。
-
 涉及文件：
 	• brain/tools.py — 新增 shoulder_observe() 函数 + TOOL_DEFINITIONS 工具定义 + TOOL_EXECUTORS 注册
 	  - shoulder_photo() 改为 async 两连拍预热
 	  - shoulder_observe() 全流程（拍照→分析→LLM→发送QQ）
 	• brain/agent.py — _RESOURCE_GROUPS 注册 shoulder_observe 到 hardware 组
 	• workers/qq_bridge_worker.py — _TOOL_KEYWORDS 添加"拍照""看看""观察"等关键词映射
-
 莲心的QQ聊天功能
 分段标记：
 14.1  功能概述
@@ -1608,31 +1516,25 @@ config.py	新增 get_quick_launch_apps() / save_quick_launch_apps() 快捷启动
 问题：print() 在 Windows 终端上输出长字符串时会阻塞数秒，QQ 桥接的 debug_log 信号通过 Qt 队列连接在主线程执行 print()，导致主线程心跳无法触发，看门狗误报为界面冻结。
 14.12  语音消息接收（2026-05-13 新增）
 莲心现在可以接收并理解 QQ 语音消息了。
-
 格式自动检测
 QQ 发送的语音实际为 AMR 格式（文件头 #!AMR），而非之前假设的 SILK。
 通过 detect_format() 读取文件魔数自动检测格式：AMR、SILK、WAV。
-
 处理流程
 AMR 格式 → pydub+ffmpeg 转为 16000Hz WAV → faster-whisper medium 模型转录为文字
 SILK 格式 → pysilk.decode 转为 WAV（24000/16000/8000Hz 三级采样率回退）→ 转录
 转录结果由 opencc 自动从繁体转为简体中文
-
 相关模块：brain/audio_utils.py → convert_voice_to_text()
 模型：faster-whisper medium（从 base→small→medium 三次升级）
 支持 CUDA 加速（自动安装 nvidia-cublas-cu12）
 模型路径：models/whisper-medium/ 或 HuggingFace 缓存
 14.13  语音消息发送（2026-05-13 新增）
 莲心可以发送语音消息回复用户。
-
 处理流程
 文字 → Edge-TTS（zh-CN-XiaoxiaoNeural）→ MP3 → pydub 解码
 → 24000Hz/单声道/16bit WAV → pysilk.encode → SILK 文件 → 发送到 QQ
-
 为防止最后半帧被截断，WAV→SILK 转换时末尾补 100ms 静音。
 TTS 输出自动去除颜文字如 (｀・ω・´)（TTS 会朗读 omega 等英文字符）。
 QQ 设置面板新增【语音回复】复选框，可开关此功能。
-
 相关模块：brain/audio_utils.py → convert_text_to_voice()
 配置项：config.py → voice_reply_enabled（默认 True）
 【关于莲心说收不到用户的语音问题排查】
@@ -1648,8 +1550,7 @@ QQ 设置面板新增【语音回复】复选框，可开关此功能。
   2. QQ NT 边写语音文件边发 WebSocket，莲心读取时文件可能尚未落盘
   修改文件：
   workers/qq_bridge_worker.py 中的 _download_voice() 方法。
-
-  修复内容：
+修复内容：
   ① 本地文件路径检测（核心修复）
   _download_voice() 中新增方式 2：检测 url 是否为本地文件路径（不判断是否 HTTP），若是则用 shutil.copy2() 复制到临时目录返回。原有方式 1（file_id → get_file API）和方式 3（HTTP下载）保持不变。
   ② file:// 前缀兼容
@@ -1663,38 +1564,30 @@ QQ 设置面板新增【语音回复】复选框，可开关此功能。
   - OneBot v11 标准中语音消息的 file_id 字段经常为空，不能依赖，需优先处理 url 兜底
   - QQ NT 的语音文件存储在 Ptt/<年>-<月>/Ori/<hash>.amr，异步写入，读取需等待（500ms~2s）
   - _log() 的 100ms 刷屏限频会吞掉紧挨着 [收到] 日志的 [语音] 日志，排查时需留意
-
 14.14  图片视觉理解（2026-05-13 新增）
 莲心可以接收 QQ 图片并进行视觉分析，理解图片内容。
-
 问题背景
 QQ CDN 的图片下载链接（multimedia.nt.qq.com.cn）有较短有效期，
 过期后 HTTP 下载返回 400 Bad Request。
-
 解决方案
 放弃直接 URL 下载，改为通过 OneBot get_image API 获取图片在 QQ 本地
 数据目录的缓存路径，直接从磁盘读取。
-
 下载策略（按优先级）
 1. file 字段 → get_image API（NapCatQQ 返回本地路径，最可靠）
 2. file_id 字段 → get_file API
 3. URL 字段 → HTTP 下载（三种 Referer header 组合兜底）
-
 视觉分析
 图片压缩至最长边 1024px → base64 编码 → SiliconFlow API
 （Qwen3-VL-30B-A3B-Instruct）→ 返回内容描述。
-
 相关模块：brain/vision.py → describe_image()
 配置项：config.py → get_siliconflow_config()（API Key 在 API 配置对话框设置）
 14.15  模型下载工具（2026-05-13 新增）
 download_whisper_model.py — Whisper 模型下载脚本，基于 requests 流式下载，
 支持断点续传和进度显示。
-
 用法：
   python download_whisper_model.py         # 下载 medium
   python download_whisper_model.py small    # 下载 small
   python download_whisper_model.py large-v3 # 下载 large-v3
-
 下载源：hf-mirror.com（国内镜像）
 目标目录：models/whisper-{size}/
 14.16  观察消息转发到 QQ（2026-05-13 新增）
@@ -1745,15 +1638,13 @@ download_whisper_model.py — Whisper 模型下载脚本，基于 requests 流�
 setup_napcat.py / setup_napcat_local.py  —  NapCatQQ 安装脚本
 memory/history_manager.py  —  新增 search_session_messages() 方法用于跨端关键词搜索
 brain/tools.py  —  新增 search_cross_session 工具定义和执行函数、set_cross_session_context thread-local 上下文
-
 14.22  合并转发消息阅读（2026-05-016 更新）
   │ workers/qq_bridge_worker.py │ 核心实现（+4方法、+3常量、修改5处）    │
   │ brain/audio_utils.py        │ 复用（语音转录 convert_voice_to_text） │
   │ brain/tools.py              │ 复用（文件提取 _extract_full_text）    │
   │ brain/vision.py             │ 复用（图片描述 describe_image）        │
   │ config.py                   │ 复用（SiliconFlow API 配置）           │
-
-  架构设计
+架构设计
   采用三层回退策略处理合并转发消息：
   收到转发消息
       ├── 方式1: get_forward_msg API（NapCatQQ OneBot）
@@ -1804,7 +1695,6 @@ download_whisper_model.py — Whisper 模型下载脚本，基于 requests 流�
   - 文件多路径查找：优先 file_id → API 解析，回退到本地文件名匹配，适配群文件和私聊文件
   - 语音下载三策略：file_id → 本地路径复制（含三级重试等待文件落盘）→ HTTP 下载
   - 长度三层控制：单文件 3000 字、总输出 4000 字符、消息条数 100 条，逐段累加超限即截断
-
 QQ 聊天写日记 / 读日记功能（新增）：
   涉及文件：utils/diary.py、brain/tools.py、workers/qq_bridge_worker.py、gui/main_window.py、config.py
   功能描述：
@@ -1821,13 +1711,9 @@ QQ 聊天写日记 / 读日记功能（新增）：
   涉及文件：gui/settings_dialog.py
   - 全局设置 → 日记本 → 参考消息条数：QSlider（1~50）→ QSpinBox（1~9999）
   - 去除了 50 条上限，改为输入框自由输入
-
-
-
 【肩载设备】
 莲心AI 肩载设备开发档案
 最后更新：2026-05-25
-
 1. 项目概述
 莲心AI肩载设备是为莲心AI桌面助手开发的肩部挂载硬件外设，通过WiFi与莲心AI通信，支持远程拍照、舵机云台控制、温湿度监测、OLED调试显示等功能。采用WebSocket云中继方案，ESP32-CAM可在手机热点网络下与家中PC远程通信。
 2. 通信架构
@@ -1855,7 +1741,6 @@ GPIO13	舵机 PAN	PWM, 50Hz, 500-2400μs
 GPIO14	DHT11 DATA	4.7kΩ上拉到3.3V
 GPIO15	舵机 TILT	PWM, 50Hz, 500-2400μs
 GPIO0	FLASH键	烧录时拉低进入下载模式
-
 摄像头引脚（板上已固定，无需额外接线）
 PWDN=32, XCLK=0, SCCB_SDA=26, SCCB_SCL=27, D7=35, D6=34, D5=39, D4=36, D3=21, D2=19, D1=18, D0=5, VSYNC=25, HREF=23, PCLK=22
 5. 供电方案
@@ -1864,7 +1749,6 @@ PWDN=32, XCLK=0, SCCB_SDA=26, SCCB_SCL=27, D7=35, D6=34, D5=39, D4=36, D3=21, D2
 5V 总线 → ESP32-CAM 5V pin + 舵机 VCC + OLED VCC
 ESP32-CAM 板载 3.3V 稳压 → DHT11 VCC
 所有模块共地（电池负极 → MP1584 IN- → OUT- → 各模块 GND）
-
 注意：MP1584 输出电压需调到 5.3V 左右补偿线损和舵机启动瞬态压降。两个SG90同时堵转电流可达1.5A，5V走线需要加粗。
 6. 项目文件结构
 文件	说明
@@ -1915,6 +1799,3 @@ temp	{"type":"temp","temp":...,"humidity":...}
 日期	引脚	变更	原因
 2026-05-24	GPIO12→SDA	OLED SDA 原接 GPIO4（闪光灯）	闪光灯白灯问题，换 SDA 到 GPIO12
 2026-05-25	GPIO12→GPIO16→GPIO1	OLED SDA 迁至 GPIO1	GPIO12 strapping 冲突, GPIO16 PSRAM 冲突
-			
-
-

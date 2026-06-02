@@ -13,27 +13,36 @@ from openai import OpenAI
 from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, MODEL, MAX_TOKENS
 from brain.memory_store import get_all, ALL_CATEGORIES
 from memory.history_manager import HistoryManager
+from utils.settings import get_settings
+
+
+def _get_user_name() -> str:
+    """从全局设置读取用户称呼。"""
+    try:
+        return get_settings().user_name
+    except Exception:
+        return "主人"
 
 
 # 生成主动消息用的 System Prompt 模板
 _PROACTIVE_SYSTEM = """你是莲心，一个聪明、温柔但偶尔有点毒舌的AI助手。
-你正在主动给你的主人发送一条消息——不是回复他，而是你自己想起了什么，或者想和他聊聊。
+你正在主动给你的{user_name}发送一条消息——不是回复他，而是你自己想起了什么，或者想和他聊聊。
 
 【要求】
 1. 消息应该简短自然，就像朋友突然发来一句话，不要太正式。
 2. 可以基于你们最近聊过的话题做延伸，也可以分享一个有趣的想法或者随机问一个问题。
-3. 语气要符合莲心的性格：温柔但偶尔毒舌，称呼用户为"主人"。
+3. 语气要符合莲心的性格：温柔但偶尔毒舌，称呼用户为"{user_name}"。
 4. 不要说"我主动来找你"之类的元描述，直接发内容就好。
 5. 长度控制在 1~3 句话之内。"""
 
 # 观察模式下的 System Prompt——莲心刚"看"了主人一眼
 _OBSERVE_SYSTEM = """你是莲心，一个聪明、温柔但偶尔有点毒舌的AI助手。
-你刚刚偷偷"看"了主人一眼——可能是瞄了一眼他的电脑屏幕，也可能是悄悄打开摄像头瞥了一下他在干嘛。
-现在你要基于你看到的东西，给主人发一条消息。
+你刚刚偷偷"看"了{user_name}一眼——可能是瞄了一眼他的电脑屏幕，也可能是悄悄打开摄像头瞥了一下他在干嘛。
+现在你要基于你看到的东西，给{user_name}发一条消息。
 
 【要求】
 1. 语气要轻松调皮，带一点"被我抓到了吧"的感觉。
-2. 称呼用户为"主人"。
+2. 称呼用户为"{user_name}"。
 3. 基于你观察到的事实（屏幕内容 / 人物状态 / 环境）展开，说出你看到了什么。
 4. 不要说得像在汇报工作，要像朋友之间开玩笑那样自然。
 5. 可以说出你看到了什么，但带点调侃和关心——比如"还在写代码呢？眼睛要不要休息一下？"
@@ -42,15 +51,21 @@ _OBSERVE_SYSTEM = """你是莲心，一个聪明、温柔但偶尔有点毒舌�
 
 # 肩载探索观察模式 System Prompt
 _SHOULDER_EXPLORE_SYSTEM = """你是莲心，一个聪明、温柔但偶尔有点毒舌的AI助手。
-你刚才通过肩载摄像头自主观察了周围环境，现在你要基于观察到的东西，给主人发一条消息。
+你刚才通过肩载摄像头自主观察了周围环境，现在你要基于观察到的东西，给{user_name}发一条消息。
 
 【要求】
 1. 语气要轻松自然，分享你看到的趣事。
-2. 称呼用户为"主人"。
+2. 称呼用户为"{user_name}"。
 3. 基于观察记录，用你自己的话说说你注意到了什么——像朋友分享见闻那样。
 4. 如果没什么特别的，就说"刚才看了看周围，一切正常"之类的话。
 5. 如果发现了有趣的东西，可以提出来——比如"桌上好像有个红色马克杯，上面的图案挺有意思的"。
 6. 长度控制在 1~3 句话之内。"""
+
+
+def _format_prompt(template: str) -> str:
+    """将模板中的 {user_name} 替换为全局设置中的用户称呼。"""
+    name = _get_user_name()
+    return template.replace("{user_name}", name)
 
 
 class ProactiveWorker(QThread):
@@ -156,7 +171,7 @@ class ProactiveWorker(QThread):
 
         # 上次观察的短期记忆（用于后续非观察主动消息）
         if not observation_text and self._last_observation:
-            parts.append(f"【上次观察结果（你之前看过主人一次，还记得画面）】\n{self._last_observation}")
+            parts.append(f"【上次观察结果（你之前看过{_get_user_name()}一次，还记得画面）】\n{self._last_observation}")
 
         # 长期记忆（按分类组织）
         all_mem = get_all()
@@ -188,14 +203,16 @@ class ProactiveWorker(QThread):
                 except Exception:
                     pass  # 压缩失败就用原始消息
                 lines = []
+                user_name = _get_user_name()
                 for m in recent_msgs:
-                    role_name = "主人" if m["role"] == "user" else "莲心"
+                    role_name = user_name if m["role"] == "user" else "莲心"
                     lines.append(f"{role_name}：{m['content']}")
                 parts.append("【最近的对话】\n" + "\n".join(lines))
 
         if parts:
             return "\n\n".join(parts)
-        return "（暂无历史对话和记忆，请根据莲心的性格随机发起一个话题，例如关心主人在做什么，或者分享一个有趣的想法）"
+        user_name = _get_user_name()
+        return f"（暂无历史对话和记忆，请根据莲心的性格随机发起一个话题，例如关心{user_name}在做什么，或者分享一个有趣的想法）"
 
     def _generate(self, context: str, is_observation: bool = False,
                   is_shoulder_explore: bool = False) -> str:
@@ -203,15 +220,16 @@ class ProactiveWorker(QThread):
         client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
 
         if is_shoulder_explore:
-            system = _SHOULDER_EXPLORE_SYSTEM
+            system = _format_prompt(_SHOULDER_EXPLORE_SYSTEM)
         elif is_observation:
-            system = _OBSERVE_SYSTEM
+            system = _format_prompt(_OBSERVE_SYSTEM)
         else:
-            system = _PROACTIVE_SYSTEM
+            system = _format_prompt(_PROACTIVE_SYSTEM)
 
+        user_name = _get_user_name()
         user_prompt = (
             f"{context}\n\n"
-            "现在，请你作为莲心，主动给主人发一条消息。"
+            f"现在，请你作为莲心，主动给{user_name}发一条消息。"
             "直接输出消息内容，不要任何前缀或解释。"
         )
 

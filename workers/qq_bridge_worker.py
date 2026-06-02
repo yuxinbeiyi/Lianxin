@@ -25,6 +25,7 @@ from brain.agent import AgentCore
 from brain.decision import decide
 from config import get_qq_bridge_config, get_qq_timing_config
 from utils.emotion_manager import parse_emotion_tag, get_random_emotion_image
+from utils.settings import get_settings
 
 
 # ── 风控防护参数 ─────────────────────────────────────────
@@ -325,6 +326,14 @@ class QQBridgeWorker(QThread):
         # ── 群聊上下文旁听缓存（group_id -> [{"name", "text"}]）──
         self._group_context = {}
 
+    @property
+    def _user_display_name(self) -> str:
+        """获取统一用户称呼（全局设置优先，回退到 QQ 配置）。"""
+        try:
+            return get_settings().user_name
+        except Exception:
+            return self._owner_name or "博士"
+
     # ── 线程主循环 ────────────────────────────────────────
 
     def run(self):
@@ -534,7 +543,7 @@ class QQBridgeWorker(QThread):
             if user_id == self._owner_qq:
                 self._daily_counts[user_id] = 0
                 self._log(f"[解除] [{session_key}] 博士解除了今日对话限制")
-                self._send_quick_reply(msg, "好嘞，已解除今天的对话限制，博士随时可以找我聊~")
+                self._send_quick_reply(msg, f"好嘞，已解除今天的对话限制，{self._user_display_name}随时可以找我聊~")
             else:
                 self._log(f"[解除] [{session_key}] 用户尝试解除限制，无权限")
                 self._send_quick_reply(msg, "抱歉，你没有权限")
@@ -552,7 +561,7 @@ class QQBridgeWorker(QThread):
                 if text.strip() in ("醒醒", "【醒醒】"):
                     self._silent_override = True
                     self._log(f"[唤醒] [{session_key}] 博士唤醒了莲心")
-                    self._send_quick_reply(msg, "唔…博士这么晚还没睡呀？")
+                    self._send_quick_reply(msg, f"唔…{self._user_display_name}这么晚还没睡呀？")
                     return
                 else:
                     self._log(f"[静默] [{session_key}] 当前时段 ({hour}:00) 不回复")
@@ -561,7 +570,7 @@ class QQBridgeWorker(QThread):
                 if text.strip() in ("晚安好梦", "【晚安好梦】"):
                     self._silent_override = False
                     self._log(f"[静默] [{session_key}] 博士说晚安，继续静默")
-                    self._send_quick_reply(msg, "晚安，博士~好梦。")
+                    self._send_quick_reply(msg, f"晚安，{self._user_display_name}~好梦。")
                     return
 
         # ── 每日上限检查（按用户隔离） ──────────────────────
@@ -666,7 +675,7 @@ class QQBridgeWorker(QThread):
             # 【指令】主人校验：仅主人可触发（owner_qq 为空时暂不拦截）
             if self._owner_qq and user_id != self._owner_qq:
                 self._log(f"[指令] 非主人({user_id})尝试使用指令，已拒绝")
-                self._send_quick_reply(msg, "只有博士才能对我发指令哦~")
+                self._send_quick_reply(msg, f"只有{self._user_display_name}才能对我发指令哦~")
                 return
 
             # 命令模式：匹配工具关键词 → 直接执行，不走模型
@@ -952,7 +961,7 @@ class QQBridgeWorker(QThread):
                 f"- 你正在QQ群（群号{group_id}）中回复消息，群里的其他成员也能看到你的回复。\n"
                 f"- 对方通过 @你 来与你对话，你的回复首段会自动 @对方。\n"
                 f"- 保持回答简洁得体，因为群聊中其他成员也在看。\n"
-                f"- 注意保护隐私：不要透露博士（你的主人）的个人信息。"
+                f"- 注意保护隐私：不要透露{get_settings().user_name}（你的主人）的个人信息。"
                 f"- 你没有参与回复期间，群友的聊天内容会以「[近期群聊背景]」的形式在顶部展示，让你知道群里发生了什么。"
                 f"{member_display}"
                 f"\n\n【莲心指令 — 重要】\n"
@@ -964,9 +973,10 @@ class QQBridgeWorker(QThread):
             ) if is_group else ""
 
             if is_owner:
+                user_name = get_settings().user_name
                 user_desc = (
                     f"你正在与你的主人「{self._owner_name}」（QQ号{self._owner_qq}）对话。"
-                    f"请像对待主人一样回应她，称呼她为「博士」或「主人」。"
+                    f"请像对待主人一样回应她，称呼她为「{user_name}」。"
                     f"不要在其他QQ好友面前混淆她的身份。"
                     f"{group_note}"
                     f"\n\n【重要：工具调用规则】\n"
@@ -1046,9 +1056,9 @@ class QQBridgeWorker(QThread):
 
     # ── 工具强制调用匹配 ─────────────────────────────────────
 
-    @staticmethod
-    def _format_tool_help() -> str:
+    def _format_tool_help(self) -> str:
         """生成【指令】可用工具的帮助文本。"""
+        user_name = self._user_display_name
         return (
             "===== 【指令】可用工具 =====\n\n"
             "◆ 打开应用\n"
@@ -1115,7 +1125,7 @@ class QQBridgeWorker(QThread):
             "  关键词：提示\n"
             "  示例：【提示】\n\n"
             "━━━━━━━━━━━━━━━━\n"
-            "只有博士才能使用【指令】哦~"
+            f"只有{user_name}才能使用【指令】哦~"
         )
 
     @staticmethod
@@ -1651,7 +1661,7 @@ class QQBridgeWorker(QThread):
 
         if has_cmd:
             if self._owner_qq and user_id != self._owner_qq:
-                self._send_quick_reply(msg, "只有博士才能对我发指令哦~")
+                self._send_quick_reply(msg, f"只有{self._user_display_name}才能对我发指令哦~")
                 self._after_pending_flush()
                 return
             forced = self._match_forced_tool(cmd_text)

@@ -14,7 +14,7 @@ _os.environ.setdefault("LITELLM_LOG", "ERROR")  # 抑制 litellm 导入时的 WA
 import litellm
 litellm.set_verbose = False
 litellm.suppress_debug_info = True  # 关闭 "Give Feedback" stderr 输出
-from config import get_api_config, get_base_prompt, get_local_base_prompt, get_qq_bridge_config, get_qq_timing_config, get_memory_config, get_graph_config
+from config import get_api_config, get_base_prompt, get_local_base_prompt, get_qq_bridge_config, get_qq_timing_config, get_memory_config, get_graph_config, get_user_name
 from brain.tools import TOOL_DEFINITIONS, execute_tool, set_cross_session_context
 from brain.skill_manager import get_active_tool_definitions, get_active_knowledge
 from brain.memory_store import (
@@ -393,10 +393,11 @@ class AgentCore:
         time_block += "\n\n注意：以上时间信息是程序启动时记录的。每次对话前会注入实时时间信息，请以实时信息为准。"
 
         # 肩载外设能力说明
-        peripheral_block = """
+        user_name = get_user_name()
+        peripheral_block = f"""
 
 【你的物理外设 — 肩载摄像头】
-雨心给你装上了"眼睛"——一个肩载摄像头（ESP32-CAM + OV2640），通过 WiFi 连接。
+{user_name}给你装上了"眼睛"——一个肩载摄像头（ESP32-CAM + OV2640），通过 WiFi 连接。
 
 硬件能力：
 1. 摄像头（OV2640）：可以拍照看世界，VGA 分辨率（640×480）
@@ -409,7 +410,7 @@ class AgentCore:
 • 用户问「左边/右边有什么」→ shoulder_pan 转到对应方向 → shoulder_photo → describe_image
 • 需要同时调整水平和垂直角度 → shoulder_servo(pan, tilt) 比分两次调更高效
 • 用户问「温度/湿度/热不热」→ shoulder_temp
-• 主动想看看雨心在做什么 → 拍一张看看
+• 主动想看看{user_name}在做什么 → 拍一张看看
 • 云台复位 → shoulder_center
 • 查看设备状态和 WiFi 信号 → shoulder_status
 

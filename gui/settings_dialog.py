@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QTabWidget, QComboBox, QWidget,
     QTreeWidget, QTreeWidgetItem, QHeaderView, QAbstractItemView,
     QTableWidget, QTableWidgetItem, QFormLayout,
+    QScrollArea,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
@@ -92,13 +93,26 @@ class SettingsDialog(QDialog):
             }
         """)
 
-        # ----- 常规设置选项卡 -----
-        # ----- 常规设置选项卡 -----
+        # ----- 常规设置选项卡（含滚动区域） -----
         general_tab = QWidget()
         general_layout = QVBoxLayout(general_tab)
-        general_layout.setSpacing(16)
+        general_layout.setContentsMargins(0, 0, 0, 0)
 
-        # 表情包发送概率设置（放在字体设置之后、小纸条路径之前）
+        # 滚动区域
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setSpacing(16)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+
+        # ---- 所有控件添加到 scroll_layout ----
+
+        # 表情包发送概率设置
         prob_frame = self._create_frame()
         prob_layout = QVBoxLayout(prob_frame)
         prob_layout.setSpacing(8)
@@ -122,7 +136,34 @@ class SettingsDialog(QDialog):
         prob_hint.setStyleSheet("color: #888888;")
         prob_layout.addWidget(prob_hint)
 
-        general_layout.addWidget(prob_frame)
+        scroll_layout.addWidget(prob_frame)
+
+        # 用户称呼设置
+        name_frame = self._create_frame()
+        name_layout = QVBoxLayout(name_frame)
+        name_layout.setSpacing(8)
+
+        name_title = QLabel("👤 用户称呼")
+        name_title.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
+        name_title.setStyleSheet("color: #444466;")
+        name_layout.addWidget(name_title)
+
+        name_input_layout = QHBoxLayout()
+        self._user_name_edit = QLineEdit()
+        self._user_name_edit.setPlaceholderText("雨心")
+        self._user_name_edit.setFont(QFont("Microsoft YaHei UI", 10))
+        self._user_name_edit.setMaxLength(20)
+        self._user_name_edit.setFixedWidth(200)
+        name_input_layout.addWidget(self._user_name_edit)
+        name_input_layout.addStretch()
+        name_layout.addLayout(name_input_layout)
+
+        name_hint = QLabel("💡 莲心在对话中会使用这个称呼来叫你，默认为「雨心」")
+        name_hint.setFont(QFont("Microsoft YaHei UI", 8))
+        name_hint.setStyleSheet("color: #888888;")
+        name_layout.addWidget(name_hint)
+
+        scroll_layout.addWidget(name_frame)
 
         # 静默模式
         silent_frame = self._create_frame()
@@ -131,7 +172,7 @@ class SettingsDialog(QDialog):
         self._silent_cb.setFont(QFont("Microsoft YaHei UI", 9))
         self._silent_cb.setCursor(Qt.PointingHandCursor)
         silent_layout.addWidget(self._silent_cb)
-        general_layout.addWidget(silent_frame)
+        scroll_layout.addWidget(silent_frame)
 
         # 退出确认
         exit_frame = self._create_frame()
@@ -140,7 +181,7 @@ class SettingsDialog(QDialog):
         self._exit_confirm_cb.setFont(QFont("Microsoft YaHei UI", 9))
         self._exit_confirm_cb.setCursor(Qt.PointingHandCursor)
         exit_layout.addWidget(self._exit_confirm_cb)
-        general_layout.addWidget(exit_frame)
+        scroll_layout.addWidget(exit_frame)
 
         # 字体大小
         font_frame = self._create_frame()
@@ -171,7 +212,7 @@ class SettingsDialog(QDialog):
         font_tip.setStyleSheet("color: #888888;")
         font_layout.addWidget(font_tip)
         self._font_slider.valueChanged.connect(self._on_font_size_changed)
-        general_layout.addWidget(font_frame)
+        scroll_layout.addWidget(font_frame)
 
         # 小纸条路径
         note_frame = self._create_frame()
@@ -193,12 +234,12 @@ class SettingsDialog(QDialog):
         path_layout.addWidget(self._browse_btn)
         note_layout.addLayout(path_layout)
 
-        note_tip = QLabel("💡 小纸条是使用待机模式时给莲心用的txt文件，请选择一个合适的路径创建‘小纸条.txt’")
+        note_tip = QLabel("💡 小纸条是使用待机模式时给莲心用的txt文件，请选择一个合适的路径创建’小纸条.txt’")
         note_tip.setWordWrap(True)
         note_tip.setFont(QFont("Microsoft YaHei UI", 8))
         note_tip.setStyleSheet("color: #888888;")
         note_layout.addWidget(note_tip)
-        general_layout.addWidget(note_frame)
+        scroll_layout.addWidget(note_frame)
 
         # 开机自启动
         autostart_frame = self._create_frame()
@@ -211,7 +252,7 @@ class SettingsDialog(QDialog):
         autostart_tip.setFont(QFont("Microsoft YaHei UI", 8))
         autostart_tip.setStyleSheet("color: #999999;")
         autostart_layout.addWidget(autostart_tip)
-        general_layout.addWidget(autostart_frame)
+        scroll_layout.addWidget(autostart_frame)
 
         # 初识日期
         first_meet_group = QGroupBox("📅 初识日期")
@@ -262,9 +303,11 @@ class SettingsDialog(QDialog):
         date_tip.setFont(QFont("Microsoft YaHei UI", 8))
         date_tip.setStyleSheet("color: #888888;")
         first_meet_layout.addWidget(date_tip)
-        general_layout.addWidget(first_meet_group)
+        scroll_layout.addWidget(first_meet_group)
 
-        general_layout.addStretch()
+        scroll_layout.addStretch()
+        scroll_area.setWidget(scroll_content)
+        general_layout.addWidget(scroll_area)
         tab_widget.addTab(general_tab, "常规")
 
         # ----- 声音设置选项卡 -----
@@ -691,6 +734,8 @@ class SettingsDialog(QDialog):
         self.emotion_prob_slider.setValue(int(self._settings.emotion_probability * 100))
         self.emotion_prob_value.setText(f"{int(self._settings.emotion_probability * 100)}%")
 
+        self._user_name_edit.setText(self._settings.user_name)
+
     def _on_save(self):
         self._settings.silent_mode = self._silent_cb.isChecked()
         self._settings.show_exit_confirmation = self._exit_confirm_cb.isChecked()
@@ -730,6 +775,9 @@ class SettingsDialog(QDialog):
         self._mem_cfg["max_items_per_category"] = self._memory_max_per_cat_spin.value()
         self._mem_cfg["default_save_category"] = self._memory_default_cat_combo.currentData()
         self._save_memory_config()
+
+        # ── 保存用户称呼 ──
+        self._settings.user_name = self._user_name_edit.text()
 
         self.accept()
 

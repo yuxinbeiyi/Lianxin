@@ -270,6 +270,7 @@ class BrowserController:
             "args": [
                 "--no-sandbox",
                 "--disable-blink-features=AutomationControlled",
+                "--disable-features=UseDnsHttpsSvcb",
             ],
             "viewport": {"width": 1280, "height": 720},
             "locale": "zh-CN",

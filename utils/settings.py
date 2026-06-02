@@ -22,6 +22,7 @@ _DEFAULT_SETTINGS = {
     "music_volume": 0.5,
     "music_position": 0.0,          # 新增：播放位置（秒）
     "emotion_probability": 0.6,   # 发表情包概率    默认 60%
+    "user_name": "雨心",           # 用户称呼（莲心对用户的称呼）
 }
 
 
@@ -175,6 +176,18 @@ class SettingsManager:
         val = max(0.0, min(1.0, val))   # 限制在 0~1 之间
         self._settings["emotion_probability"] = val
         self.save()
+
+    # ========== 用户称呼 ==========
+    @property
+    def user_name(self) -> str:
+        return self._settings.get("user_name", "雨心")
+
+    @user_name.setter
+    def user_name(self, val: str):
+        val = val.strip()
+        if val:
+            self._settings["user_name"] = val
+            self.save()
 
 
 # 全局单例
