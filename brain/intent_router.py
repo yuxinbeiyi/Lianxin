@@ -85,6 +85,7 @@ _ROUTER_TEMPLATE = """可用工具和技能：
 {{
   "route": "chat" 或 "agent",
   "needed_tools": ["需要的工具名"],
+  "needed_skills": ["需要的技能名"],
   "tool_choice": "如果用户明确要求某个工具则填工具名，否则null"
 }}
 
@@ -92,6 +93,7 @@ _ROUTER_TEMPLATE = """可用工具和技能：
 - chat: 纯闲聊、打招呼、情感表达、简单问答（不需要任何工具）
 - agent: 需要操作（拍照、搜索记忆、提醒、写文件、打开应用、查天气、查时间、OCR等）
 - needed_tools: 用得到的具体工具名，不确定就全列出来
+- needed_skills: 用得到的具体技能名（如"浏览器自动化"、"肩部外设控制"），不确定就空列表
 - tool_choice: 用户说"打开记事本"→"open_application"，用户说"拍照"→"shoulder_photo"，否则null"""
 
 

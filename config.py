@@ -764,3 +764,26 @@ def save_browser_config(config: dict):
     full = _load_full_config()
     full["browser"] = config
     _save_full_config(full)
+
+
+# ── 网络代理配置 ─────────────────────────────────────────────
+_PROXY_DEFAULTS = {
+    "enabled":      False,
+    "http_proxy":   "http://127.0.0.1:7890",
+    "https_proxy":  "http://127.0.0.1:7890",
+    "no_proxy":     "localhost,127.0.0.1",
+}
+
+
+def get_proxy_config() -> dict:
+    """读取代理配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    proxy = full.get("proxy", {})
+    return {**_PROXY_DEFAULTS, **proxy}
+
+
+def save_proxy_config(config: dict):
+    """保存代理配置（仅更新 proxy 部分）。"""
+    full = _load_full_config()
+    full["proxy"] = config
+    _save_full_config(full)

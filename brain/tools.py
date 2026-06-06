@@ -6,11 +6,9 @@
 """
 
 import json
-import asyncio
 import subprocess
 import threading
 import time
-import random
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -94,6 +92,32 @@ _tool_context = threading.local()
 
 # 日记消息源（由 GUI/QQ 桥接在调用工具前设置，提供当日对话消息）
 _diary_message_source = None  # Callable[[], List[Dict]] 返回 [{"role": ..., "content": ...}, ...]
+
+# ── 代理配置工具函数 ──────────────────────────────────────────
+def _get_proxies() -> dict | None:
+    """读取用户代理配置，返回 requests 兼容的 proxies 字典，未启用或未配置返回 None。"""
+    try:
+        from config import get_proxy_config
+        cfg = get_proxy_config()
+        if not cfg.get("enabled", False):
+            return None
+        http = cfg.get("http_proxy", "").strip()
+        https = cfg.get("https_proxy", "").strip()
+        proxies = {}
+        if http:
+            proxies["http"] = http
+        if https:
+            proxies["https"] = https
+        if not proxies:
+            return None
+        no_proxy = cfg.get("no_proxy", "").strip()
+        if no_proxy:
+            proxies["no_proxy"] = no_proxy
+        return proxies or None
+    except Exception:
+        return None
+
+
 
 def set_cross_session_context(session_id: int, history_mgr):
     """设置当前线程的跨端搜索上下文（供 search_cross_session 工具使用）。"""
@@ -915,124 +939,6 @@ TOOL_DEFINITIONS = [
         }
     },
 
-    {
-        "type": "function",
-        "function": {
-            "name": "read_diary",
-            "description": (
-                    "【强制】当用户要求读日记、回忆某天内容或搜索日记关键词时，必须调用此工具。"
-                    "不要直接输出任何日记内容。工具会返回真实日记文本。"
-                    "参数：date (YYYY-MM-DD) 或 keyword (搜索词) 或 limit (最近几篇)。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "date": {
-                        "type": "string",
-                        "description": "要查询的日期，格式 YYYY-MM-DD，例如 '2026-04-17'。"
-                    },
-                    "keyword": {
-                        "type": "string",
-                        "description": "在日记中搜索的关键词，例如 '开心' 或 '读书'。"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "返回最近几篇日记的数量（仅在不提供 date 和 keyword 时有效），默认 1。"
-                    }
-                },
-                "additionalProperties": False
-            }
-        }
-    },
-
-    {
-        "type": "function",
-        "function": {
-            "name": "write_diary",
-            "description": (
-                "【强制】当用户要求写日记、生成日记、记日记时，必须调用此工具。"
-                "工具会基于今日对话记录自动生成一篇日记并保存到日记本。"
-                "不要直接回复'好的已写好'之类的话，必须调用此工具。"
-                "参数：message_count (可选, 使用最近N条消息, 默认取配置值), force (可选, 当日已有日记时是否覆盖, 默认false)。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "message_count": {
-                        "type": "integer",
-                        "description": "使用最近N条今日消息生成日记，不传则使用全局配置的默认值（30条）"
-                    },
-                    "force": {
-                        "type": "boolean",
-                        "description": "如果今天已有日记是否覆盖重写，默认false（保留已有日记）"
-                    }
-                },
-                "additionalProperties": False
-            }
-        }
-    },
-
-    {
-        "type": "function",
-        "function": {
-            "name": "control_music",
-            "description": "控制莲心音乐盒的播放状态、切换歌曲、循环模式、音量等。当用户要求播放/暂停音乐、下一首/上一首、切换循环模式、增大/减小音量时，调用此工具。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["play", "pause", "next", "prev", "loop", "volume_up", "volume_down"],
-                        "description": "要执行的操作：play（播放音乐），pause（暂停），next（下一首），prev（上一首），loop（切换循环模式），volume_up（增加音量），volume_down（减小音量）"
-                    }
-                },
-                "required": ["action"]
-            }
-        }
-    },
-
-    {
-        "type": "function",
-        "function": {
-            "name": "get_music_playlist",
-            "description": "获取当前音乐播放列表中的所有歌曲名称（按顺序）。",
-            "parameters": {"type": "object", "properties": {}}
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_music_status",
-            "description": "获取当前音乐播放状态：是否在播放，当前歌曲名，当前播放进度（秒）和总时长。",
-            "parameters": {"type": "object", "properties": {}}
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_music_stats",
-            "description": "获取音乐陪伴统计：累计听歌总时长（小时），以及播放次数最多的歌曲名和累计秒数。",
-            "parameters": {"type": "object", "properties": {}}
-        }
-    },
-
-    {
-        "type": "function",
-        "function": {
-            "name": "read_note",
-            "description": "读取备忘本的全部文字内容。当用户要求查看备忘本、看一下备忘本、备忘本里写了什么时调用。不要直接朗读，而是理解内容后与用户聊天。",
-            "parameters": {"type": "object", "properties": {}}
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "organize_note",
-            "description": "调用 AI 智能整理备忘本内容，使它更整洁、有条理。当用户要求整理备忘本、清理备忘本时调用。",
-            "parameters": {"type": "object", "properties": {}}
-        }
-    },
-
     # ==================== 主动聊天开关 ====================
     {
         "type": "function",
@@ -1316,358 +1222,7 @@ TOOL_DEFINITIONS = [
             }
         }
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "shoulder_photo",
-            "description": "用肩载摄像头（ESP32-CAM）拍一张照片并保存为 JPG 文件。返回保存路径。拍完后如需查看内容，可以调用 describe_image 或 ocr_image。",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "shoulder_pan",
-            "description": "控制肩载摄像头的水平旋转角度（Pan），范围 0~180 度。90 度为正前方，0 度为最左，180 度为最右。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "angle": {
-                        "type": "integer",
-                        "description": "水平角度 0~180，90 为正前方"
-                    }
-                },
-                "required": ["angle"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "shoulder_tilt",
-            "description": "控制肩载摄像头的垂直俯仰角度（Tilt），范围 0~180 度。90 度为水平，0 度为最下，180 度为最上。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "angle": {
-                        "type": "integer",
-                        "description": "垂直角度 0~180，90 为水平"
-                    }
-                },
-                "required": ["angle"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "shoulder_center",
-            "description": "将肩载摄像头云台复位到中心位置（Pan=90°, Tilt=45°）。",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "shoulder_status",
-            "description": "获取肩载摄像头（ESP32-CAM）的连接状态和基本信息（含温湿度）。",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "shoulder_temp",
-            "description": "读取 DHT11 温湿度传感器数据，返回当前温度和湿度。",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "shoulder_servo",
-            "description": "同时控制肩载摄像头云台的水平（Pan）和垂直（Tilt）角度。比单独调 shoulder_pan 再 shoulder_tilt 效率更高，两个舵机会同时动作。Pan 范围 0~180（90=正前方），Tilt 范围 0~180（90=水平）。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pan": {
-                        "type": "integer",
-                        "description": "水平角度 0~180，90 为正前方，0 为最左，180 为最右"
-                    },
-                    "tilt": {
-                        "type": "integer",
-                        "description": "垂直角度 0~180，90 为水平，0 为最下，180 为最上"
-                    }
-                },
-                "required": ["pan", "tilt"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "shoulder_observe",
-            "description": "用肩载摄像头观察当前环境：拍照→视觉AI分析→LLM生成描述→发送照片和描述到你的QQ。常用于你想让莲心看看周围环境时调用。",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
-    # ── 观察记忆工具 ─────────────────────────────────────────
-    {
-        "type": "function",
-        "function": {
-            "name": "save_observation",
-            "description": "记录一次观察发现。当你通过肩载摄像头看到值得关注的事物时调用。观察记录会持久保存，用户可以随时追问。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "description": {
-                        "type": "string",
-                        "description": "详细描述你看到了什么",
-                    },
-                    "attention": {
-                        "type": "string",
-                        "description": "什么特别引起了你的注意（可选）",
-                    },
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "关键词标签，如 ['马克杯', '红色', '桌面']",
-                    },
-                },
-                "required": ["description"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_observations",
-            "description": "搜索历史观察记录。按关键词、时间范围查找莲心之前通过肩载摄像头看到的内容。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "keyword": {
-                        "type": "string",
-                        "description": "搜索关键词，匹配描述、关注点和标签",
-                    },
-                    "time_from": {
-                        "type": "string",
-                        "description": "起始时间，格式 YYYY-MM-DD HH:MM",
-                    },
-                    "time_to": {
-                        "type": "string",
-                        "description": "结束时间，格式 YYYY-MM-DD HH:MM",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "最多返回几条，默认 10",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_recent_observations",
-            "description": "获取最近 N 条观察记录。当用户问'你刚才看到了什么''有什么发现'时调用。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "limit": {
-                        "type": "integer",
-                        "description": "返回几条，默认 10",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "start_shoulder_explore",
-            "description": (
-                "启动肩载摄像头（ESP32-CAM）自主探索四周环境。莲心会控制舵机转动、拍照、AI分析画面，"
-                "自动发现有趣目标并记录观察结果。当用户说'看看周围''观察一下四周''扫描环境'时调用此工具。"
-                "注意：需要 ESP32-CAM 已通电并连接 WiFi。返回完整的探索摘要。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    # ── 观察模式工具 ─────────────────────────────────────────
-    {
-        "type": "function",
-        "function": {
-            "name": "start_observation_mode",
-            "description": (
-                "启动【观察模式】——莲心会通过肩载摄像头持续主动观察周围环境。"
-                "莲心会像好奇的小宠物一样不断转头观察、拍照、并把看到的内容发到主人QQ上。"
-                "此模式会持续运行直到收到【观察模式】关闭指令，或30分钟无消息自动退出。"
-                "注意：需要肩载摄像头（ESP32-CAM）已通电在线。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "stop_observation_mode",
-            "description": "退出【观察模式】——莲心会停止主动观察，云台复位到中心位置。",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        },
-    },
-    # ── 人体跟踪工具 ─────────────────────────────────────────────
-    {
-        "type": "function",
-        "function": {
-            "name": "shoulder_human_track",
-            "description": "启动人体跟踪模式：ESP32 摄像头实时推流，本地 MediaPipe Pose 推理人体位置，舵机云台自动跟随。",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "stop_human_tracking",
-            "description": "停止人体跟踪模式，云台复位到中心位置。",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    # ── 浏览器自动化工具 ─────────────────────────────────────────
-    {
-        "type": "function",
-        "function": {
-            "name": "browser_navigate",
-            "description": (
-                "打开指定网址，返回页面结构和可交互元素列表（ARIA 快照）。"
-                "页面元素会标注 [ref=eX] 标记，供后续点击或填表使用。"
-                "适用：打开网页、导航到新页面。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "要打开的网页 URL，如 https://www.baidu.com"
-                    }
-                },
-                "required": ["url"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "browser_snapshot",
-            "description": (
-                "获取当前浏览器页面的最新 ARIA 快照，显示所有可交互元素及其 [ref=eX] 标记。"
-                "在点击按钮、填写表单后页面内容发生变化时，用此工具刷新页面结构。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "browser_click",
-            "description": (
-                "点击页面上指定 ref 标记对应的元素（按钮、链接等）。"
-                "ref 值来自 browser_navigate 或 browser_snapshot 返回的快照中的 [ref=eX]。"
-                "点击后建议调用 browser_snapshot 查看页面变化。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "ref": {
-                        "type": "string",
-                        "description": "要点击的元素 ref 标记，如 e3"
-                    }
-                },
-                "required": ["ref"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "browser_fill",
-            "description": (
-                "向页面上指定 ref 标记的输入框填写文字。"
-                "ref 值来自快照中的 [ref=eX]。"
-                "填写后建议调用 browser_snapshot 查看效果。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "ref": {
-                        "type": "string",
-                        "description": "要填写的输入框 ref 标记，如 e2"
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": "要填入的文字内容"
-                    }
-                },
-                "required": ["ref", "text"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "browser_screenshot",
-            "description": (
-                "截取当前浏览器页面的可见区域，保存为 PNG 图片。"
-                "返回临时文件路径，可用于 describe_image 进行视觉分析。"
-                "适用：用户想看页面长什么样、页面快照不够直观时。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
 ]
-
 
 # ── 工具执行函数 ─────────────────────────────────────────────
 
@@ -2186,14 +1741,13 @@ def run_command(command: str) -> str:
 # ==================== 联网搜索工具函数 ====================
 
 def web_search(query: str, max_results: int = 5) -> str:
-    """联网搜索，优先百度，DuckDuckGo 兜底。"""
+    """联网搜索，优先百度，DuckDuckGo 兜底。智能代理：先直连，不通自动切代理。"""
     import urllib.parse
+    import requests
+    from bs4 import BeautifulSoup
 
-    # ── 后端 1：百度（requests 直连，适合国内网络） ──────
-    try:
-        import requests
-        from bs4 import BeautifulSoup
-
+    def _try_baidu(proxies=None):
+        """尝试百度搜索，返回结果字符串或 None。"""
         url = f"https://www.baidu.com/s?wd={urllib.parse.quote(query)}&rn={max_results}"
         headers = {
             "User-Agent": (
@@ -2203,10 +1757,9 @@ def web_search(query: str, max_results: int = 5) -> str:
             ),
             "Accept-Language": "zh-CN,zh;q=0.9",
         }
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=10, proxies=proxies)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
-
         results = []
         for item in soup.select(".result, .c-container"):
             title_el = item.select_one("h3 a")
@@ -2217,22 +1770,23 @@ def web_search(query: str, max_results: int = 5) -> str:
             abstract_el = item.select_one(".c-abstract, .content-right_8Zs40")
             abstract = abstract_el.get_text(strip=True) if abstract_el else ""
             results.append({"title": title, "href": href, "body": abstract})
+        if not results:
+            return None
+        output_lines = [f"搜索「{query}」的结果："]
+        for i, r in enumerate(results[:max_results], 1):
+            output_lines.append(f"\n{i}. {r['title']}\n   链接：{r['href']}\n   摘要：{r['body']}")
+        return "\n".join(output_lines)
 
-        if results:
-            output_lines = [f"搜索「{query}」的结果："]
-            for i, r in enumerate(results[:max_results], 1):
-                output_lines.append(f"\n{i}. {r['title']}\n   链接：{r['href']}\n   摘要：{r['body']}")
-            return "\n".join(output_lines)
-    except Exception:
-        pass  # 静默回退到 DuckDuckGo
-
-    # ── 后端 2：DuckDuckGo ──────────────────────────────
-    try:
+    def _try_ddg(proxies=None):
+        """尝试 DuckDuckGo 搜索，返回结果字符串或 None。"""
         from duckduckgo_search import DDGS
-        with DDGS() as ddgs:
+        ddgs_kwargs = {}
+        if proxies:
+            ddgs_kwargs["proxies"] = proxies
+        with DDGS(**ddgs_kwargs) as ddgs:
             results = list(ddgs.text(query, max_results=min(max_results, 10)))
         if not results:
-            return f"未找到与「{query}」相关的结果。"
+            return None
         output_lines = [f"搜索「{query}」的结果："]
         for i, r in enumerate(results, 1):
             output_lines.append(
@@ -2241,10 +1795,41 @@ def web_search(query: str, max_results: int = 5) -> str:
                 f"\n   摘要：{r.get('body', '')}"
             )
         return "\n".join(output_lines)
+
+    # ── 后端 1：百度（先直连，不通再走代理） ────────────
+    try:
+        result = _try_baidu()
+        if result:
+            return result
+    except Exception:
+        pass
+    try:
+        proxies = _get_proxies()
+        if proxies:
+            result = _try_baidu(proxies)
+            if result:
+                return result
+    except Exception:
+        pass
+
+    # ── 后端 2：DuckDuckGo（先直连，不通再走代理） ─────
+    try:
+        result = _try_ddg()
+        if result:
+            return result
     except ImportError:
         return "搜索失败：网络不通且 duckduckgo-search 未安装。"
-    except Exception as e:
-        return f"搜索失败：{e}"
+    except Exception:
+        pass
+    try:
+        proxies = _get_proxies()
+        if proxies:
+            result = _try_ddg(proxies)
+            if result:
+                return result
+    except Exception:
+        pass
+    return f"搜索失败：直连和代理均无法完成搜索。"
 
 # ==================== 网页内容提取工具函数 ====================
 
@@ -2286,24 +1871,38 @@ def fetch_webpage(url: str, max_length: int = 3000) -> str:
     session.headers.update(headers)
     session.max_redirects = 5
 
-    # ========== 2. 发起请求 ==========
+    # ========== 2. 发起请求（智能代理：先直连，不通自动切代理） ==========
     try:
         resp = session.get(url, timeout=15)
         resp.raise_for_status()
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        # 直连失败 → 试试代理
+        proxies = _get_proxies()
+        if proxies:
+            session.proxies.update(proxies)
+            try:
+                resp = session.get(url, timeout=30)
+                resp.raise_for_status()
+            except Exception:
+                return "访问失败：直连和代理均无法连接，请检查网络或代理状态。"
+        else:
+            return "网络连接失败，请检查网络或配置代理后重试。"
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 403:
+            return "访问被拒绝（403）。建议：① 在代码中填写 BAIDU_COOKIE（见函数内注释）；② 改用 fetch_webpage_browser 工具。"
+        return f"获取网页失败：HTTP {e.response.status_code}"
+
+    try:
         resp.encoding = resp.apparent_encoding or 'utf-8'
         soup = BeautifulSoup(resp.text, 'lxml')
 
         # ========== 3. 针对不同网站的正文提取策略 ==========
         text = ""
-
-        # ----- 百度百科专用（优先） -----
         if 'baike.baidu.com' in url:
-            # 百度百科正文容器常见 class
             containers = ['.main-content', '.para', '.lemma-summary', '.basic-info', '.lemmaWgt-promotion']
             for selector in containers:
                 elems = soup.select(selector)
                 if elems:
-                    # 用换行分隔各个段落
                     parts = []
                     for e in elems:
                         p_text = e.get_text(separator='\n', strip=True)
@@ -2312,39 +1911,23 @@ def fetch_webpage(url: str, max_length: int = 3000) -> str:
                     if parts:
                         text = '\n\n'.join(parts)
                         break
-            # 如果上述都没提取到，回退到移除脚本样式后全页提取
             if not text:
                 for script in soup(["script", "style", "meta", "link", "noscript"]):
                     script.decompose()
                 text = soup.get_text()
-
         else:
-            # ----- 通用网页：先移除干扰标签 -----
             for script in soup(["script", "style", "meta", "link", "noscript"]):
                 script.decompose()
             text = soup.get_text()
 
-        # 清理空白行
         lines = (line.strip() for line in text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         text = '\n'.join(chunk for chunk in chunks if chunk)
-
         if not text:
             return "未能提取到任何文本内容，可能是网页结构特殊（如需要 JS 渲染）。"
-
-        # 长度限制
         if len(text) > max_length:
             text = text[:max_length] + "\n\n... [内容过长，已截断]"
         return f"网页内容如下：\n\n{text}"
-
-    except requests.exceptions.Timeout:
-        return "请求超时，请稍后再试。"
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 403:
-            return "访问被拒绝（403）。建议：① 在代码中填写 BAIDU_COOKIE（见函数内注释）；② 改用 fetch_webpage_browser 工具。"
-        return f"获取网页失败：HTTP {e.response.status_code}"
-    except requests.exceptions.RequestException as e:
-        return f"获取网页失败：{e}"
     except Exception as e:
         return f"处理网页时出错：{e}"
 
@@ -2369,9 +1952,25 @@ def fetch_webpage_via_api(url: str, max_length: int = 3000) -> str:
     session = requests.Session()
     retries = Retry(total=2, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
     session.mount('https://', HTTPAdapter(max_retries=retries))
-    
+
     try:
         resp = session.get(api_url, headers=headers, timeout=15)
+        resp.raise_for_status()
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        proxies = _get_proxies()
+        if proxies:
+            session.proxies.update(proxies)
+            try:
+                resp = session.get(api_url, headers=headers, timeout=30)
+                resp.raise_for_status()
+            except Exception:
+                return "访问失败：直连和代理均无法连接 Jina Reader 服务。"
+        else:
+            return "网络连接失败，请检查网络或配置代理后重试。"
+    except requests.exceptions.RequestException as e:
+        return f"调用解析服务失败：{e}"
+
+    try:
         if resp.status_code == 200:
             text = resp.text
             if len(text) > max_length:
@@ -2380,10 +1979,8 @@ def fetch_webpage_via_api(url: str, max_length: int = 3000) -> str:
         else:
             snippet = resp.text[:500] if resp.text else "无响应体"
             return f"解析服务返回错误码 {resp.status_code}，响应片段：{snippet}。"
-    except requests.exceptions.Timeout:
-        return "请求超时，Jina Reader 服务响应过慢。建议使用浏览器模式（fetch_webpage_browser）重试，或稍后再试。"
     except Exception as e:
-        return f"调用解析服务失败：{e}"
+        return f"处理解析结果时出错：{e}"
 
 # ==================== 时间工具函数 ====================
 
@@ -2759,17 +2356,22 @@ def fetch_webpage_stealth(url: str, max_length: int = 3000) -> str:
         return "错误：URL 必须以 http:// 或 https:// 开头"
     try:
         from curl_cffi import requests as curl_requests
+        from curl_cffi import CurlError
         headers = {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
             'Accept-Encoding': 'gzip, deflate',
         }
-        resp = curl_requests.get(
-            url,
-            impersonate="chrome120",
-            headers=headers,
-            timeout=30,
-        )
+        # 先直连
+        try:
+            resp = curl_requests.get(url, impersonate="chrome120", headers=headers, timeout=30)
+        except CurlError:
+            # 直连失败 → 走代理
+            proxies = _get_proxies()
+            if proxies:
+                resp = curl_requests.get(url, impersonate="chrome120", headers=headers, timeout=30, proxies=proxies)
+            else:
+                raise
         resp.encoding = resp.encoding or 'utf-8'
         text = resp.text
 
@@ -2809,8 +2411,20 @@ def fetch_webpage_browser(url: str, max_length: int = 3000) -> str:
         return "错误：URL 必须以 http:// 或 https:// 开头"
 
     try:
+        # Playwright 代理配置
+        playwright_proxy = None
+        proxies = _get_proxies()
+        if proxies:
+            proxy_url = proxies.get("https") or proxies.get("http")
+            if proxy_url:
+                playwright_proxy = {"server": proxy_url}
+
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled', '--disable-features=UseDnsHttpsSvcb'])
+            browser = p.chromium.launch(
+                headless=True,
+                args=['--disable-blink-features=AutomationControlled', '--disable-features=UseDnsHttpsSvcb'],
+                proxy=playwright_proxy,
+            )
             context = browser.new_context(
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 viewport={'width': 1920, 'height': 1080}
@@ -3146,460 +2760,6 @@ def capture_from_camera():
     return path if path else "拍照失败"
 
 
-# ════════ 肩载摄像头（ESP32-CAM）工具 ════════
-
-def _shoulder_exec(coro_factory):
-    """统一执行模式：创建 loop → 连接 → 执行 → 断开 → 关闭 loop。
-    coro_factory 接受 bridge 参数，返回要执行的协程。
-    """
-    bridge = _get_shoulder_bridge()
-    if bridge is None:
-        return "肩载设备未连接"
-    loop = asyncio.new_event_loop()
-    try:
-        ok = loop.run_until_complete(bridge.connect())
-        if not ok:
-            return "连接肩载设备失败：ESP32 不在线"
-        result = loop.run_until_complete(coro_factory(bridge))
-        loop.run_until_complete(bridge.disconnect())
-        return result
-    except Exception as e:
-        return f"肩载设备通信错误：{e}"
-    finally:
-        loop.close()
-
-def shoulder_photo() -> str:
-    """拍摄一张照片并保存，返回保存路径。"""
-    save_dir = get_user_data_dir() / "camera_shots"
-    save_dir.mkdir(parents=True, exist_ok=True)
-    path = str(save_dir / f"shoulder_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg")
-
-    async def _do(bridge):
-        # 预热：丢弃第一张，清空 ESP32 帧缓冲，避免拿到旧帧
-        await bridge.photo()
-        await asyncio.sleep(0.3)
-        return await bridge.photo(save_path=path)
-
-    data = _shoulder_exec(_do)
-    if isinstance(data, str):
-        return data  # 错误信息
-    if data and isinstance(data, bytes) and len(data) > 100:
-        return f"拍照成功，已保存到 {path}"
-    return "拍照失败：未收到图片数据"
-
-
-def _compress_jpeg(path: str, max_kb=200) -> str:
-    """JPEG 质量压缩到 ≤max_kb KB，返回压缩后的路径。"""
-    try:
-        from PIL import Image
-        img = Image.open(path)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        stem, ext = os.path.splitext(path)
-        compressed = f"{stem}_c{ext}"
-        quality = 85
-        while quality >= 20:
-            img.save(compressed, "JPEG", quality=quality)
-            if os.path.getsize(compressed) <= max_kb * 1024:
-                break
-            quality -= 5
-        return compressed
-    except Exception:
-        return path
-
-
-def shoulder_observe() -> str:
-    """拍照→视觉分析→LLM描述→发送照片+描述到QQ。一步完成观察。"""
-    save_dir = get_user_data_dir() / "camera_shots"
-    save_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    raw_path = str(save_dir / f"observe_{timestamp}.jpg")
-
-    # ① 拍照（预热丢弃 + 正式）
-    async def _do(bridge):
-        await bridge.photo()  # 预热，清空帧缓冲
-        await asyncio.sleep(0.3)
-        return await bridge.photo(save_path=raw_path)
-    data = _shoulder_exec(_do)
-    if isinstance(data, str):
-        return data  # 错误信息
-    if not data or not isinstance(data, bytes) or len(data) < 100:
-        return "拍照失败：未收到图片数据"
-
-    # ② 压缩
-    photo_path = _compress_jpeg(raw_path)
-
-    # ③ 视觉 API 分析
-    try:
-        from brain.vision import describe_image
-        prompt = (
-            "请详细描述这张画面里的内容。注意观察——"
-            "画面中有什么人物、物体、场景、颜色、动作、文字等。"
-            "尽量关注细节，比如物品的位置、状态、颜色、人物表情动作。"
-        )
-        description = describe_image(photo_path, prompt=prompt)
-    except Exception as e:
-        description = f"（视觉分析失败：{e}）"
-
-    # ④ LLM 生成拟人化描述
-    try:
-        from openai import OpenAI
-        from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, MODEL
-        if DEEPSEEK_API_KEY:
-            client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
-            resp = client.chat.completions.create(
-                model=MODEL,
-                max_tokens=400,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "你是莲心，刚刚用肩载摄像头看了一眼周围。\n"
-                            "用可爱简短的语气说一句话。要求：\n"
-                            "- 控制在 300 字以内，越短越好\n"
-                            "- 保留视觉识别的核心内容\n"
-                            "- 语气活泼好奇，可以加颜文字\n"
-                            "- 称呼用户为'雨心'\n"
-                            "- 直接说看到的内容"
-                        ),
-                    },
-                    {"role": "user", "content": f"画面内容：{description}"},
-                ],
-                timeout=20,
-            )
-            message = resp.choices[0].message.content or ""
-            if len(message) > 300:
-                message = message[:297] + "..."
-        else:
-            message = ""
-    except Exception as e:
-        message = ""
-
-    # ⑤ 发送到 QQ
-    sent_photo = False
-    sent_text = False
-    try:
-        global _qq_bridge_worker
-        if _qq_bridge_worker:
-            _qq_bridge_worker.send_file_to_qq(photo_path)
-            sent_photo = True
-            time.sleep(random.uniform(0.5, 1.5))
-            if message:
-                _qq_bridge_worker.send_to_owner(message)
-                sent_text = True
-    except Exception as e:
-        pass
-
-    parts = []
-    if sent_photo:
-        parts.append("照片已发送")
-    if sent_text:
-        parts.append("描述已发送")
-    if not parts:
-        return f"观察完成，描述：{description[:100]}..."
-    return "观察完成，" + "，".join(parts)
-
-
-def shoulder_pan(angle: int) -> str:
-    """控制云台水平旋转。"""
-    def _do(bridge):
-        return bridge.pan(angle)
-    result = _shoulder_exec(_do)
-    if isinstance(result, dict) and "pan" in result:
-        return f"水平旋转到 {angle} 度完成"
-    if isinstance(result, str):
-        return result
-    return "水平旋转失败"
-
-def shoulder_tilt(angle: int) -> str:
-    """控制云台垂直俯仰。"""
-    def _do(bridge):
-        return bridge.tilt(angle)
-    result = _shoulder_exec(_do)
-    if isinstance(result, dict) and "tilt" in result:
-        return f"垂直旋转到 {angle} 度完成"
-    if isinstance(result, str):
-        return result
-    return "垂直旋转失败"
-
-def shoulder_servo(pan: int, tilt: int) -> str:
-    """同时控制云台水平和垂直角度。"""
-    def _do(bridge):
-        return bridge.servo(pan, tilt)
-    result = _shoulder_exec(_do)
-    if isinstance(result, dict) and "pan" in result and "tilt" in result:
-        return f"云台已转到 水平={pan}° 垂直={tilt}°"
-    if isinstance(result, str):
-        return result
-    return "云台控制失败"
-
-def shoulder_center() -> str:
-    """云台复位到中心 (Pan=90°, Tilt=45°)。"""
-    def _do(bridge):
-        return bridge.center()
-    result = _shoulder_exec(_do)
-    if isinstance(result, dict) and result.get("pan") == 90:
-        return "云台已复位到中心 (Pan=90°, Tilt=45°)"
-    if isinstance(result, str):
-        return result
-    return "云台复位失败"
-
-def shoulder_status() -> str:
-    """查询设备状态。"""
-    def _do(bridge):
-        return bridge.status()
-    result = _shoulder_exec(_do)
-    if isinstance(result, dict):
-        result.pop("type", None)
-        return json.dumps(result, ensure_ascii=False, indent=2)
-    if isinstance(result, str):
-        return result
-    return "获取状态失败"
-
-def shoulder_temp() -> str:
-    """读取 DHT11 温湿度。"""
-    def _do(bridge):
-        return bridge.temp()
-    result = _shoulder_exec(_do)
-    if isinstance(result, dict) and result.get("type") == "temp":
-        return f"当前温度：{result['temp']}°C，湿度：{result['humidity']}%"
-    if isinstance(result, str):
-        return result
-    return "读取温湿度失败：传感器无响应"
-
-
-# ── 观察记忆工具 ─────────────────────────────────────────────
-
-def _save_observation(description: str, attention: str = "", tags: list = None):
-    """记录一次观察发现。"""
-    from brain.observation_store import add
-    record = add(
-        description=description,
-        attention=attention,
-        tags=tags or [],
-    )
-    return (
-        f"已记录观察 #{record['id']}: {description[:100]}"
-        + (f"（关注：{attention}）" if attention else "")
-    )
-
-
-def _search_observations(keyword: str = "", time_from: str = "", time_to: str = "",
-                         limit: int = 10):
-    """搜索历史观察记录。"""
-    from brain.observation_store import search
-    results = search(keyword=keyword, time_from=time_from, time_to=time_to, limit=limit)
-    if not results:
-        return "没有找到匹配的观察记录。"
-    lines = [f"找到 {len(results)} 条观察记录:"]
-    for r in results:
-        lines.append(
-            f"- [{r['timestamp']}] {r['description'][:120]}"
-            + (f" (关注: {r['attention']})" if r.get('attention') else "")
-        )
-    return "\n".join(lines)
-
-
-def _get_recent_observations(limit: int = 10):
-    """获取最近 N 条观察记录。"""
-    from brain.observation_store import recent
-    results = recent(limit=limit)
-    if not results:
-        return "目前还没有观察记录。"
-    lines = [f"最近 {len(results)} 条观察记录:"]
-    for r in results:
-        lines.append(
-            f"- [{r['timestamp']}] {r['description'][:120]}"
-            + (f" (关注: {r['attention']})" if r.get('attention') else "")
-        )
-    return "\n".join(lines)
-
-
-def _start_shoulder_explore():
-    """启动肩载摄像头自主探索，返回探索摘要。"""
-    from brain.observation_engine import ObservationEngine
-    engine = ObservationEngine()
-    result = engine.run_explore()
-
-    summary = result.get("summary", "")
-    observations = result.get("observations", [])
-    chain_id = result.get("chain_id", "")
-
-    if observations:
-        lines = [f"探索完成！{summary}"]
-        lines.append(f"（探索链 {chain_id}，共记录 {len(observations)} 条发现）")
-        for obs in observations:
-            desc = obs["description"][:100]
-            if obs.get("attention"):
-                desc += f"（关注：{obs['attention']}）"
-            lines.append(f"  - {desc}")
-        return "\n".join(lines)
-    else:
-        return f"探索完成。{summary}（无新增记录）"
-
-
-# ════════ 观察模式工具 ════════
-
-def _start_observation_mode() -> str:
-    """启动【观察模式】——莲心持续主动观察环境。"""
-    from brain.observation_mode import get_observation_state
-    state = get_observation_state()
-    if state.is_active:
-        return "【观察模式】已经在运行中了哦，我正看着周围呢(｀・ω・´)"
-
-    state.activate()
-
-    # 如果 QQ 桥接可用，启动后台 Worker
-    from brain import tools as _self
-    qq = _self._qq_bridge_worker
-    if qq and hasattr(qq, '_owner_qq') and qq._owner_qq:
-        from workers.observation_mode_worker import ObservationModeWorker
-        state.set_qq_bridge(qq)
-        worker = ObservationModeWorker(state)
-        worker.pending_messages.connect(qq._on_observation_pending_messages)
-        worker.mode_exited.connect(qq._on_observation_mode_exit)
-        worker.start()
-        qq._obs_worker = worker
-        return "【观察模式】已启动！让我看看周围有什么有趣的东西～(^-^)"
-    else:
-        return "【观察模式】已激活，但未检测到 QQ 桥接，观察结果将仅显示在桌面端。"
-
-
-def _stop_observation_mode() -> str:
-    """退出【观察模式】。停止循环并复位云台。"""
-    from brain.observation_mode import get_observation_state
-    state = get_observation_state()
-    if not state.is_active:
-        return "【观察模式】本来就是关闭的哦(｀・ω・´)"
-    state.deactivate()
-    # 尝试复位云台（工具调用场景，Worker 的 _cleanup 也会复位）
-    try:
-        from brain.tools import shoulder_center
-        result = shoulder_center()
-    except Exception:
-        pass
-    return "【观察模式】已退出，云台已复位～(´-ω-`)"
-
-
-def _start_human_tracking() -> str:
-    """启动人体跟踪模式：帧接收 + Pose 推理 + 舵机跟随。"""
-    from brain.human_tracking import get_track_manager
-    manager = get_track_manager()
-    if manager.is_active:
-        return "人体跟踪已经在运行中啦(｀・ω・´)"
-
-    manager.activate()
-    qq = _qq_bridge_worker
-    if qq and hasattr(qq, '_owner_qq') and qq._owner_qq:
-        from workers.track_worker import TrackWorker
-
-        manager.set_qq_bridge(qq)
-        worker = TrackWorker()
-        worker.mode_exited.connect(qq._on_human_tracking_exit)
-        worker.start()
-        qq._track_worker = worker
-        return "好嘞！莲心人体跟踪模式启动，让我看看周围有没有人～(｀・ω・´)"
-    else:
-        manager.deactivate()
-        return "未检测到 QQ 桥接，人体跟踪需要 QQ 远程控制哦～"
-
-
-def _stop_human_tracking() -> str:
-    """停止人体跟踪模式。"""
-    from brain.human_tracking import get_track_manager
-    manager = get_track_manager()
-    if not manager.is_active:
-        return "人体跟踪没有在运行哦~"
-    manager.deactivate()
-    try:
-        shoulder_center()
-    except Exception:
-        pass
-    return "人体跟踪已停止，云台已回中~"
-
-
-def read_diary(date: str = None, keyword: str = None, limit: int = 1):
-    from utils.diary import get_diary_by_date, search_diaries_by_keyword, get_recent_diaries
-    if date:
-        diary = get_diary_by_date(date)
-        if not diary:
-            return f"没有找到 {date} 的日记。"
-        # 返回简短内容（也可返回全文，由 AI 自行缩减）
-        return f"【{date}】 {diary['content']}"
-    elif keyword:
-        results = search_diaries_by_keyword(keyword, limit=limit)
-        if not results:
-            return f"没有找到包含「{keyword}」的日记。"
-        output = f"找到 {len(results)} 篇包含「{keyword}」的日记：\n"
-        for r in results:
-            output += f"\n- {r['date']}：{r['content'][:100]}...\n"
-        return output
-    else:
-        results = get_recent_diaries(limit=limit)
-        if not results:
-            return "日记本还是空的，还没有写过日记。"
-        output = f"最近 {len(results)} 篇日记：\n"
-        for r in results:
-            output += f"\n- {r['date']}：{r['content'][:100]}...\n"
-        return output
-
-
-def write_diary(message_count: int = None, force: bool = False):
-    """基于今日对话记录生成日记并保存。"""
-    from datetime import datetime
-    from config import get_diary_config
-    from utils.diary import generate_diary_content, save_diary, has_diary_for_date
-
-    if _diary_message_source is None:
-        return "无法获取聊天记录：日记消息源未设置。请从桌面端或QQ端调用此功能。"
-
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    if not force and has_diary_for_date(today_str):
-        return f"今天（{today_str}）已经有一篇日记了。如果你确实想重新生成，请明确告诉我'重新写日记'或'覆盖今天的日记'，我会帮你重写。"
-
-    cfg = get_diary_config()
-    max_msgs = message_count or cfg.get("max_messages", 30)
-    direction = cfg.get("direction", "latest")
-
-    messages = _diary_message_source()
-    if not messages:
-        return "今天还没有任何聊天记录，无法生成日记。等聊了一会儿再试试吧～"
-
-    if direction == "earliest":
-        selected = messages[:max_msgs]
-    else:
-        selected = messages[-max_msgs:] if len(messages) > max_msgs else messages
-
-    if not selected:
-        return "今天还没有任何聊天记录，无法生成日记。"
-
-    # 简化格式：只保留 role 和 content
-    msgs_for_diary = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in selected]
-
-    data = generate_diary_content(msgs_for_diary)
-    if not data:
-        return "日记生成失败，AI 返回的内容无法解析。可能网络不稳定，请稍后再试。"
-
-    try:
-        save_diary(
-            date_str=today_str,
-            content=data.get("content", ""),
-            weather=data.get("weather", "⛅ 多云"),
-            is_red_line=data.get("is_red_line", False),
-            echo_text=data.get("echo_text", ""),
-        )
-    except Exception as e:
-        return f"日记保存失败: {e}"
-
-    weather = data.get("weather", "⛅ 多云")
-    is_red = data.get("is_red_line", False)
-    red_note = " 🔴红线日" if is_red else ""
-    preview = data.get("content", "")[:200]
-    return (
-        f"日记已写好！{today_str} {weather}{red_note}\n\n"
-        f"{preview}…\n\n"
-        f"（完整日记已保存到日记本，可以说【指令】读日记来回顾）"
-    )
 
 
 def set_diary_message_source(source):
@@ -3612,33 +2772,9 @@ def set_music_control_callback(callback):
     global _music_control_callback
     _music_control_callback = callback
 
-def control_music(action: str):
-    if _music_control_callback:
-        return _music_control_callback(action)
-    else:
-        return "未连接到音乐播放器，无法控制。"
-    
 def set_music_info_callback(callback):
     global _music_info_callback
     _music_info_callback = callback
-
-def get_music_playlist():
-    if _music_info_callback:
-        return _music_info_callback("playlist")
-    else:
-        return "音乐播放器未就绪。"
-
-def get_music_status():
-    if _music_info_callback:
-        return _music_info_callback("status")
-    else:
-        return "音乐播放器未就绪。"
-
-def get_music_stats():
-    if _music_info_callback:
-        return _music_info_callback("stats")
-    else:
-        return "音乐统计未就绪。"
 
 def set_proactive_toggle_callback(callback):
     """注册主动聊天开关变更后的回调，供 toggle_proactive_chat 调用。"""
@@ -3653,51 +2789,6 @@ def set_expression_callback(callback):
     """注册 Galgame 立绘表情切换回调，供 set_expression 工具调用。"""
     global _expression_callback
     _expression_callback = callback
-
-def read_note():
-    from utils.note_manager import read_note as _read
-    content = _read()
-    if content.strip():
-        return content
-    else:
-        return "备忘本当前是空的。"
-
-def organize_note():
-    """使用 AI 整理备忘本内容"""
-    from utils.note_manager import read_note, write_note
-    import json
-    from brain.agent import AgentCore
-
-    old_content = read_note()
-    if not old_content.strip():
-        return "备忘本为空，无需整理。"
-
-    # 构建整理 prompt
-    prompt = f"""请整理以下备忘本内容，目标：
-1. 删除重复行
-2. 按主题归类（如果有多个主题）
-3. 保持内容清晰、整洁，使用中文
-4. 输出时只输出整理后的文本，不要添加额外解释。
-
-备忘本内容：
-{old_content}
-"""
-
-    try:
-        # 调用 AI 整理（使用 AgentCore 的 API 调用方法）
-        agent = AgentCore()
-        response = agent._call_api_with_retry([{"role": "user", "content": prompt}])
-        new_content = response.choices[0].message.content.strip()
-        if new_content and new_content != old_content:
-            write_note(new_content)
-            # 刷新备忘本窗口
-            if _note_refresh_callback:
-                _note_refresh_callback()
-            return "已使用 AI 智能整理备忘本，内容已更新。"
-        else:
-            return "整理后内容无变化，未更新。"
-    except Exception as e:
-        return f"AI 整理失败：{e}"
 
 # ==================== 主动聊天开关 ====================
 
@@ -3917,58 +3008,6 @@ def _set_expression(emotion: str) -> str:
     return "Galgame 立绘窗口未就绪。"
 
 
-# ── 浏览器自动化工具函数 ──────────────────────────────────────
-
-def _browser_navigate(url: str) -> str:
-    """打开网页，返回 ARIA 快照。"""
-    try:
-        from brain.browser_controller import get_browser
-        browser = get_browser()
-        return browser.navigate(url)
-    except Exception as e:
-        return f"浏览器导航失败: {e}"
-
-
-def _browser_snapshot() -> str:
-    """获取当前页面 ARIA 快照。"""
-    try:
-        from brain.browser_controller import get_browser
-        browser = get_browser()
-        return browser.snapshot()
-    except Exception as e:
-        return f"获取页面快照失败: {e}"
-
-
-def _browser_click(ref: str) -> str:
-    """点击 ref 标记的元素。"""
-    try:
-        from brain.browser_controller import get_browser
-        browser = get_browser()
-        return browser.click(ref)
-    except Exception as e:
-        return f"点击失败: {e}"
-
-
-def _browser_fill(ref: str, text: str) -> str:
-    """向 ref 输入框填表。"""
-    try:
-        from brain.browser_controller import get_browser
-        browser = get_browser()
-        return browser.fill(ref, text)
-    except Exception as e:
-        return f"填写失败: {e}"
-
-
-def _browser_screenshot() -> str:
-    """截取当前页面并返回文件路径。"""
-    try:
-        from brain.browser_controller import get_browser
-        browser = get_browser()
-        path = browser.screenshot()
-        return f"截图已保存: {path}\n可使用 describe_image 工具查看截图内容。"
-    except Exception as e:
-        return f"截图失败: {e}"
-
 
 # ── 工具调度表 ───────────────────────────────────────────────
 TOOL_EXECUTORS = {
@@ -4006,14 +3045,6 @@ TOOL_EXECUTORS = {
     "describe_image": lambda inp: describe_image(inp["image_path"], inp.get("prompt", "")),
     "send_file_to_qq": lambda inp: send_file_to_qq(inp["path"], inp.get("name", "")),
     "capture_from_camera": lambda inp: capture_from_camera(),
-    "read_diary": lambda inp: read_diary(date=inp.get("date"),keyword=inp.get("keyword"),limit=inp.get("limit", 1)),
-    "write_diary": lambda inp: write_diary(message_count=inp.get("message_count"), force=inp.get("force", False)),
-    "control_music": lambda inp: control_music(inp["action"]),
-    "get_music_playlist": lambda inp: get_music_playlist(),
-    "get_music_status": lambda inp: get_music_status(),
-    "get_music_stats": lambda inp: get_music_stats(),
-    "read_note": lambda inp: read_note(),
-    "organize_note": lambda inp: organize_note(),
     "search_cross_session": lambda inp: search_cross_session(inp["keyword"], inp.get("limit", 5)),
     "toggle_proactive_chat": lambda inp: toggle_proactive_chat(inp["action"]),
     "list_skills":   lambda inp: _list_skills(),
@@ -4027,42 +3058,6 @@ TOOL_EXECUTORS = {
     "query_connected_entities": lambda inp: _query_connected_entities(inp["entity_name"], inp.get("depth", 1)),
     "delete_graph_entity": lambda inp: _delete_graph_entity(inp["entity_name"]),
     "set_expression":  lambda inp: _set_expression(inp["emotion"]),
-    "shoulder_photo":  lambda inp: shoulder_photo(),
-    "shoulder_pan":    lambda inp: shoulder_pan(inp["angle"]),
-    "shoulder_tilt":   lambda inp: shoulder_tilt(inp["angle"]),
-    "shoulder_servo":  lambda inp: shoulder_servo(inp["pan"], inp["tilt"]),
-    "shoulder_center": lambda inp: shoulder_center(),
-    "shoulder_status": lambda inp: shoulder_status(),
-    "shoulder_temp":   lambda inp: shoulder_temp(),
-    "shoulder_observe": lambda inp: shoulder_observe(),
-    # 观察记忆
-    "save_observation": lambda inp: _save_observation(
-        inp["description"],
-        inp.get("attention", ""),
-        inp.get("tags", []),
-    ),
-    "search_observations": lambda inp: _search_observations(
-        keyword=inp.get("keyword", ""),
-        time_from=inp.get("time_from", ""),
-        time_to=inp.get("time_to", ""),
-        limit=inp.get("limit", 10),
-    ),
-    "get_recent_observations": lambda inp: _get_recent_observations(
-        limit=inp.get("limit", 10),
-    ),
-    "start_shoulder_explore": lambda inp: _start_shoulder_explore(),
-    # 观察模式
-    "start_observation_mode": lambda inp: _start_observation_mode(),
-    "stop_observation_mode": lambda inp: _stop_observation_mode(),
-    # 人体跟踪
-    "shoulder_human_track": lambda inp: _start_human_tracking(),
-    "stop_human_tracking": lambda inp: _stop_human_tracking(),
-    # 浏览器自动化
-    "browser_navigate":   lambda inp: _browser_navigate(inp["url"]),
-    "browser_snapshot":   lambda inp: _browser_snapshot(),
-    "browser_click":      lambda inp: _browser_click(inp["ref"]),
-    "browser_fill":       lambda inp: _browser_fill(inp["ref"], inp["text"]),
-    "browser_screenshot": lambda inp: _browser_screenshot(),
     }
 
 def execute_tool(name: str, tool_input: dict) -> str:

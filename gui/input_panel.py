@@ -17,6 +17,7 @@ import os
 import json
 from pathlib import Path
 from brain.tools import TOOL_DEFINITIONS
+from brain.skill_manager import get_active_tool_definitions
 from utils.paths import get_user_data_dir
 
 
@@ -300,7 +301,7 @@ class ToolSelectionDialog(QDialog):
         self._refresh_ui()
 
     def _load_tools(self):
-        """从 TOOL_DEFINITIONS 加载工具"""
+        """从 TOOL_DEFINITIONS 及已激活技能加载工具"""
         self.all_tools = []
         for tool_def in TOOL_DEFINITIONS:
             func_def = tool_def["function"]
@@ -310,7 +311,20 @@ class ToolSelectionDialog(QDialog):
             self.all_tools.append({
                 "name": tool_name,
                 "description": description,
-                "is_favorite": is_favorite
+                "is_favorite": is_favorite,
+                "is_skill_tool": False,
+            })
+        # 加载已激活技能的工具
+        for tool_def in get_active_tool_definitions():
+            func_def = tool_def["function"]
+            tool_name = func_def["name"]
+            description = func_def.get("description", "")
+            is_favorite = tool_name in self.favorites
+            self.all_tools.append({
+                "name": tool_name,
+                "description": description,
+                "is_favorite": is_favorite,
+                "is_skill_tool": True,
             })
         # 排序：收藏的在前，然后按名称排序（用于扁平列表）
         self.all_tools.sort(key=lambda x: (not x["is_favorite"], x["name"]))
@@ -342,7 +356,7 @@ class ToolSelectionDialog(QDialog):
                 continue
             if keyword and not matches_keyword(tool["name"], tool["description"], keyword):
                 continue
-            group_name = get_tool_group(tool["name"])
+            group_name = "📦 技能工具" if tool.get("is_skill_tool") else get_tool_group(tool["name"])
             groups.setdefault(group_name, []).append(tool)
 
         for group_name in sorted(groups.keys()):

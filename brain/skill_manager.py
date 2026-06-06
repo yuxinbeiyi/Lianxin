@@ -15,6 +15,9 @@ from typing import Optional
 import json
 import importlib.util
 import sys
+import logging
+
+logger = logging.getLogger("SkillManager")
 
 # ── 技能注册表 ─────────────────────────────────────────
 # _skill_registry[name] = {
@@ -113,6 +116,45 @@ def get_active_tool_definitions() -> list[dict]:
     return result
 
 
+def get_tool_definitions_by_skills(skill_names: list[str]) -> list[dict]:
+    """获取指定技能列表的工具定义（仅已激活的技能）。"""
+    result = []
+    for name in skill_names:
+        skill = _skill_registry.get(name)
+        if skill and name in _active_skills:
+            result.extend(skill["tool_definitions"])
+    return result
+
+
+def activate_all_skills():
+    """激活所有标记为 auto_activate 的技能。"""
+    activated = 0
+    failed = 0
+    for name, info in _skill_registry.items():
+        if not info.get("auto_activate", True):
+            continue
+        if name in _active_skills:
+            activated += 1
+            continue
+        if info["has_tools"]:
+            err = _load_skill_tools(name, info["path"] / "tools.py")
+            if err:
+                logger.warning("自动激活技能「%s」失败: %s", name, err)
+                failed += 1
+                continue
+        _active_skills.add(name)
+        activated += 1
+
+    if activated:
+        logger.info("已自动激活 %d 个技能（失败 %d 个）", activated, failed)
+        # 技能变更后清除意图路由器的工具列表缓存
+        try:
+            from brain.intent_router import invalidate_tool_cache
+            invalidate_tool_cache()
+        except Exception:
+            pass
+
+
 def list_skill_resources(name: str) -> str:
     """列出技能目录下除 SKILL.md 和 tools.py 外的资源文件。"""
     skill = _skill_registry.get(name)
@@ -165,6 +207,7 @@ def _parse_skill(skill_dir: Path) -> Optional[dict]:
     name = skill_dir.name
     description = ""
     version = "1.0"
+    auto_activate = True  # 默认自动激活
 
     lines = content.splitlines()
     if len(lines) >= 2 and lines[0].strip() == "---":
@@ -178,6 +221,8 @@ def _parse_skill(skill_dir: Path) -> Optional[dict]:
             name = meta.get("name", name)
             description = meta.get("description", "")
             version = meta.get("version", "1.0")
+            auto_activate_str = meta.get("auto_activate", "true")
+            auto_activate = auto_activate_str.lower() in ("true", "yes", "1")
             knowledge_lines = lines[end + 1:]
         else:
             knowledge_lines = lines[1:]
@@ -201,6 +246,7 @@ def _parse_skill(skill_dir: Path) -> Optional[dict]:
         "knowledge": knowledge,
         "tool_definitions": [],
         "has_tools": has_tools,
+        "auto_activate": auto_activate,
     }
 
 

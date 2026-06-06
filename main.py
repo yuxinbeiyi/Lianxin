@@ -80,6 +80,10 @@ def main():
 
     window = MainWindow(autostart_mode=autostart_mode)
 
+    # ── 自动激活标记为 auto_activate 的技能 ────────────────────
+    from brain.skill_manager import activate_all_skills
+    activate_all_skills()
+
     # ── QQ 桥接（由 MainWindow 管理，详见 main_window.py）─────
 
     # ── 第6条：自启动时最小化，不打扰用户 ────────────────────────

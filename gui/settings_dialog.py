@@ -18,7 +18,7 @@ from datetime import datetime
 from utils.settings import get_settings
 from utils.autostart import enable_autostart, disable_autostart, is_autostart_enabled
 from utils.accompany_stats import AccompanyStats
-from config import get_memory_config, save_memory_config
+from config import get_memory_config, save_memory_config, get_proxy_config, save_proxy_config
 from config import get_quick_launch_apps, save_quick_launch_apps
 from brain.memory_store import ALL_CATEGORIES, CATEGORY_DESCRIPTIONS
 from brain.graph_memory import list_all_facts, delete_facts
@@ -526,6 +526,69 @@ class SettingsDialog(QDialog):
         ql_layout.addStretch()
         tab_widget.addTab(ql_tab, "⚡ 快捷启动")
 
+        # ----- 网络设置选项卡 -----
+        net_tab = QWidget()
+        net_layout = QVBoxLayout(net_tab)
+        net_layout.setSpacing(12)
+
+        proxy_frame = self._create_frame()
+        proxy_layout = QVBoxLayout(proxy_frame)
+        proxy_layout.setSpacing(10)
+
+        self._proxy_enabled_cb = QCheckBox("启用智能代理（先直连，不通自动切代理）")
+        self._proxy_enabled_cb.setFont(QFont("Microsoft YaHei UI", 9))
+        self._proxy_enabled_cb.setCursor(Qt.PointingHandCursor)
+        self._proxy_enabled_cb.setToolTip("开启后，莲心的所有网络请求会先尝试直连（国内/外都优先直连），只有直连不通时才会走代理。这样国内网站更快，国外能通的话也更流畅。")
+        proxy_layout.addWidget(self._proxy_enabled_cb)
+
+        # HTTP 代理
+        http_row = QHBoxLayout()
+        http_row.addWidget(QLabel("HTTP 代理地址："))
+        self._proxy_http_edit = QLineEdit()
+        self._proxy_http_edit.setPlaceholderText("http://127.0.0.1:7890")
+        self._proxy_http_edit.setToolTip("你的代理工具提供的 HTTP 代理地址，Clash 默认是 http://127.0.0.1:7890")
+        http_row.addWidget(self._proxy_http_edit, 1)
+        proxy_layout.addLayout(http_row)
+
+        # HTTPS 代理
+        https_row = QHBoxLayout()
+        https_row.addWidget(QLabel("HTTPS 代理地址："))
+        self._proxy_https_edit = QLineEdit()
+        self._proxy_https_edit.setPlaceholderText("http://127.0.0.1:7890")
+        self._proxy_https_edit.setToolTip("HTTPS 代理地址，通常与 HTTP 相同")
+        https_row.addWidget(self._proxy_https_edit, 1)
+        proxy_layout.addLayout(https_row)
+
+        # No Proxy
+        noproxy_row = QHBoxLayout()
+        noproxy_row.addWidget(QLabel("直连白名单："))
+        self._proxy_noproxy_edit = QLineEdit()
+        self._proxy_noproxy_edit.setPlaceholderText("localhost,127.0.0.1")
+        self._proxy_noproxy_edit.setToolTip("不走代理的地址，多个用逗号分隔。支持 *.example.com 通配")
+        noproxy_row.addWidget(self._proxy_noproxy_edit, 1)
+        proxy_layout.addLayout(noproxy_row)
+
+        net_layout.addWidget(proxy_frame)
+
+        # 提示信息
+        tip = QLabel(
+            "💡 Clash 默认代理地址为 http://127.0.0.1:7890。\n"
+            "如果代理工具使用不同端口，请在上方修改。\n"
+            "\n"
+            "🔍 智能代理策略：\n"
+            "· 国内网站（百度等）→ 直连，速度不受影响\n"
+            "· 国外网站（GitHub 等）→ 先直连，能通则通，不通自动切代理\n"
+            "· 代理失败时不再尝试直连，避免反复超时\n"
+            "\n"
+            "开启后可以说「搜索 GitHub」测试一下效果。"
+        )
+        tip.setWordWrap(True)
+        tip.setStyleSheet("color: #888; font-size: 12px; padding: 8px;")
+        net_layout.addWidget(tip)
+
+        net_layout.addStretch()
+        tab_widget.addTab(net_tab, "🌐 网络设置")
+
         layout.addWidget(tab_widget)
 
         # 底部按钮
@@ -736,6 +799,13 @@ class SettingsDialog(QDialog):
 
         self._user_name_edit.setText(self._settings.user_name)
 
+        # 加载代理配置
+        proxy_cfg = get_proxy_config()
+        self._proxy_enabled_cb.setChecked(proxy_cfg.get("enabled", False))
+        self._proxy_http_edit.setText(proxy_cfg.get("http_proxy", ""))
+        self._proxy_https_edit.setText(proxy_cfg.get("https_proxy", ""))
+        self._proxy_noproxy_edit.setText(proxy_cfg.get("no_proxy", ""))
+
     def _on_save(self):
         self._settings.silent_mode = self._silent_cb.isChecked()
         self._settings.show_exit_confirmation = self._exit_confirm_cb.isChecked()
@@ -778,6 +848,14 @@ class SettingsDialog(QDialog):
 
         # ── 保存用户称呼 ──
         self._settings.user_name = self._user_name_edit.text()
+
+        # ── 保存代理配置 ──
+        save_proxy_config({
+            "enabled":     self._proxy_enabled_cb.isChecked(),
+            "http_proxy":  self._proxy_http_edit.text().strip(),
+            "https_proxy": self._proxy_https_edit.text().strip(),
+            "no_proxy":    self._proxy_noproxy_edit.text().strip(),
+        })
 
         self.accept()
 

@@ -280,6 +280,17 @@ class BrowserController:
         if channel:
             launch_kwargs["channel"] = channel
 
+        # 从代理配置读取 Playwright 代理设置
+        try:
+            from brain.tools import _get_proxies
+            proxies = _get_proxies()
+            if proxies:
+                proxy_url = proxies.get("https") or proxies.get("http")
+                if proxy_url:
+                    launch_kwargs["proxy"] = {"server": proxy_url}
+        except Exception:
+            pass
+
         self._context = self._playwright.chromium.launch_persistent_context(**launch_kwargs)
         if self._context.pages:
             self._page = self._context.pages[0]
