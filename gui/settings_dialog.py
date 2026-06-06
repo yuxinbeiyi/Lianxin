@@ -14,11 +14,13 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 from datetime import datetime
+import os
 
 from utils.settings import get_settings
 from utils.autostart import enable_autostart, disable_autostart, is_autostart_enabled
 from utils.accompany_stats import AccompanyStats
 from config import get_memory_config, save_memory_config, get_proxy_config, save_proxy_config
+from config import get_tts_config, save_tts_config
 from config import get_quick_launch_apps, save_quick_launch_apps
 from brain.memory_store import ALL_CATEGORIES, CATEGORY_DESCRIPTIONS
 from brain.graph_memory import list_all_facts, delete_facts
@@ -589,6 +591,124 @@ class SettingsDialog(QDialog):
         net_layout.addStretch()
         tab_widget.addTab(net_tab, "🌐 网络设置")
 
+        # ----- TTS 语音合成设置选项卡 -----
+        tts_tab = QWidget()
+        tts_layout = QVBoxLayout(tts_tab)
+        tts_layout.setSpacing(12)
+
+        # 引擎选择
+        engine_frame = self._create_frame()
+        engine_vbox = QVBoxLayout(engine_frame)
+        engine_vbox.setSpacing(6)
+        engine_title = QLabel("TTS 引擎")
+        engine_title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        engine_vbox.addWidget(engine_title)
+
+        self._tts_engine_combo = QComboBox()
+        self._tts_engine_combo.addItems([
+            "auto — 优先 GPT-SoVITS（不可用则回退 Edge-TTS）",
+            "edge_tts — 仅使用 Edge-TTS（云端标准发音）",
+        ])
+        engine_vbox.addWidget(self._tts_engine_combo)
+        engine_desc = QLabel(
+            "GPT-SoVITS 需要安装并配置路径后方可使用。\n"
+            "Edge-TTS 无需安装，配置后即可使用。"
+        )
+        engine_desc.setWordWrap(True)
+        engine_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        engine_vbox.addWidget(engine_desc)
+        tts_layout.addWidget(engine_frame)
+
+        # GPT-SoVITS 路径
+        gs_frame = self._create_frame()
+        gs_vbox = QVBoxLayout(gs_frame)
+        gs_vbox.setSpacing(6)
+        gs_title = QLabel("GPT-SoVITS 安装路径")
+        gs_title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        gs_vbox.addWidget(gs_title)
+
+        gs_row = QHBoxLayout()
+        self._tts_gs_path_edit = QLineEdit()
+        self._tts_gs_path_edit.setPlaceholderText("例如: C:\\GPT-SoVITS-v2pro")
+        gs_row.addWidget(self._tts_gs_path_edit)
+        gs_browse_btn = QPushButton("浏览…")
+        gs_browse_btn.setFixedWidth(80)
+        gs_browse_btn.clicked.connect(self._browse_gs_path)
+        gs_row.addWidget(gs_browse_btn)
+        gs_vbox.addLayout(gs_row)
+
+        # GPT-SoVITS 状态指示
+        self._tts_gs_status = QLabel()
+        self._tts_gs_status.setStyleSheet("color: #888; font-size: 11px; padding: 2px 0;")
+        gs_vbox.addWidget(self._tts_gs_status)
+        tts_layout.addWidget(gs_frame)
+
+        # 默认情绪
+        mood_frame = self._create_frame()
+        mood_vbox = QVBoxLayout(mood_frame)
+        mood_vbox.setSpacing(6)
+        mood_title = QLabel("默认语音情绪")
+        mood_title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        mood_vbox.addWidget(mood_title)
+
+        self._tts_mood_combo = QComboBox()
+        mood_items = [
+            ("auto", "自动匹配（根据文本内容自动选择）"),
+            ("casual", "日常温柔"),
+            ("tsundere", "傲娇"),
+            ("romantic", "深情"),
+            ("long", "长句稳定"),
+        ]
+        for val, label in mood_items:
+            self._tts_mood_combo.addItem(label, val)
+        mood_vbox.addWidget(self._tts_mood_combo)
+        tts_layout.addWidget(mood_frame)
+
+        # 语速
+        speed_frame = self._create_frame()
+        speed_vbox = QVBoxLayout(speed_frame)
+        speed_vbox.setSpacing(6)
+        speed_title = QLabel("语速（仅 GPT-SoVITS 生效）")
+        speed_title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        speed_vbox.addWidget(speed_title)
+
+        speed_row = QHBoxLayout()
+        self._tts_speed_slider = QSlider(Qt.Horizontal)
+        self._tts_speed_slider.setRange(50, 200)
+        self._tts_speed_slider.setValue(100)
+        self._tts_speed_value = QLabel("1.0x")
+        self._tts_speed_value.setFixedWidth(45)
+        self._tts_speed_slider.valueChanged.connect(self._on_tts_speed_changed)
+        speed_row.addWidget(self._tts_speed_slider)
+        speed_row.addWidget(self._tts_speed_value)
+        speed_vbox.addLayout(speed_row)
+        tts_layout.addWidget(speed_frame)
+
+        # 试听按钮
+        test_frame = self._create_frame()
+        test_hbox = QHBoxLayout(test_frame)
+        test_hbox.addWidget(QLabel("测试语音合成："))
+        self._tts_test_btn = QPushButton("🔊 试听")
+        self._tts_test_btn.setFixedWidth(120)
+        self._tts_test_btn.clicked.connect(self._on_tts_test)
+        test_hbox.addWidget(self._tts_test_btn)
+        test_hbox.addStretch()
+        tts_layout.addWidget(test_frame)
+
+        # 提示信息
+        tts_tip = QLabel(
+            "💡 GPT-SoVITS 支持声音克隆和情绪表达。\n"
+            "· 在 skills/语音合成/ref_wavs/ 下放置参考音频即可激活声音克隆\n"
+            "· 未配置时自动使用 Edge-TTS 标准发音，语音功能不受影响\n"
+            "· 参考音频格式：WAV 文件，5-15 秒，24000Hz 采样率"
+        )
+        tts_tip.setWordWrap(True)
+        tts_tip.setStyleSheet("color: #888; font-size: 12px; padding: 8px;")
+        tts_layout.addWidget(tts_tip)
+
+        tts_layout.addStretch()
+        tab_widget.addTab(tts_tab, "🎙️ 语音合成")
+
         layout.addWidget(tab_widget)
 
         # 底部按钮
@@ -806,6 +926,19 @@ class SettingsDialog(QDialog):
         self._proxy_https_edit.setText(proxy_cfg.get("https_proxy", ""))
         self._proxy_noproxy_edit.setText(proxy_cfg.get("no_proxy", ""))
 
+        # 加载 TTS 配置
+        tts_cfg = get_tts_config()
+        engine = tts_cfg.get("engine", "auto")
+        self._tts_engine_combo.setCurrentIndex(0 if engine == "auto" else 1)
+        self._tts_gs_path_edit.setText(tts_cfg.get("gpt_sovits_path", ""))
+        mood_idx = self._tts_mood_combo.findData(tts_cfg.get("default_mood", "auto"))
+        if mood_idx >= 0:
+            self._tts_mood_combo.setCurrentIndex(mood_idx)
+        speed = tts_cfg.get("speed", 1.0)
+        self._tts_speed_slider.setValue(int(speed * 100))
+        self._tts_speed_value.setText(f"{speed:.1f}x")
+        self._update_gs_status()
+
     def _on_save(self):
         self._settings.silent_mode = self._silent_cb.isChecked()
         self._settings.show_exit_confirmation = self._exit_confirm_cb.isChecked()
@@ -857,6 +990,19 @@ class SettingsDialog(QDialog):
             "no_proxy":    self._proxy_noproxy_edit.text().strip(),
         })
 
+        # ── 保存 TTS 配置 ──
+        save_tts_config({
+            "engine": "auto" if self._tts_engine_combo.currentIndex() == 0 else "edge_tts",
+            "gpt_sovits_path": self._tts_gs_path_edit.text().strip(),
+            "default_mood": self._tts_mood_combo.currentData(),
+            "speed": self._tts_speed_slider.value() / 100.0,
+            "temperature": 0.7,
+            "top_k": 5,
+            "top_p": 0.9,
+            "sample_steps": 32,
+            "edge_tts_voice": "zh-CN-XiaoxiaoNeural",
+        })
+
         self.accept()
 
     def _on_emotion_prob_changed(self, value: int):
@@ -906,3 +1052,90 @@ class SettingsDialog(QDialog):
             del self._ql_apps[row]
             save_quick_launch_apps(self._ql_apps)
             self._refresh_ql_table()
+
+    # ── TTS 语音合成事件处理 ──────────────────────────────
+
+    def _browse_gs_path(self):
+        """浏览并选择 GPT-SoVITS 安装目录。"""
+        current = self._tts_gs_path_edit.text().strip()
+        dir_path = QFileDialog.getExistingDirectory(
+            self, "选择 GPT-SoVITS 安装目录", current or "C:\\"
+        )
+        if dir_path:
+            self._tts_gs_path_edit.setText(dir_path)
+            self._update_gs_status()
+
+    def _update_gs_status(self):
+        """检测并显示 GPT-SoVITS 状态。"""
+        path = self._tts_gs_path_edit.text().strip()
+        if not path:
+            self._tts_gs_status.setText("未配置 GPT-SoVITS 路径，将使用 Edge-TTS 标准发音")
+            self._tts_gs_status.setStyleSheet("color: #888; font-size: 11px;")
+            return
+        if not os.path.isdir(path):
+            self._tts_gs_status.setText("路径不存在")
+            self._tts_gs_status.setStyleSheet("color: #E74C3C; font-size: 11px;")
+            return
+        # 检查 GPT_SoVITS 模块
+        inference_dir = os.path.join(path, "GPT_SoVITS")
+        if os.path.isdir(inference_dir):
+            self._tts_gs_status.setText("GPT-SoVITS 目录已识别 ✓（具体可用性取决于 GPU 和模型配置）")
+            self._tts_gs_status.setStyleSheet("color: #27AE60; font-size: 11px;")
+        else:
+            self._tts_gs_status.setText("已选择目录但未检测到 GPT_SoVITS 模块，请确认路径正确")
+            self._tts_gs_status.setStyleSheet("color: #F39C12; font-size: 11px;")
+
+    def _on_tts_speed_changed(self, value: int):
+        """语速滑块变化时更新显示。"""
+        speed = value / 100.0
+        self._tts_speed_value.setText(f"{speed:.1f}x")
+
+    def _on_tts_test(self):
+        """试听语音合成效果。"""
+        test_text = "你好，我是莲心。很高兴见到你。"
+        self._tts_test_btn.setEnabled(False)
+        self._tts_test_btn.setText("合成中…")
+        import tempfile, os, threading
+
+        def _test():
+            try:
+                from brain.tts_engine import TtsEngine
+                engine = TtsEngine()
+
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+                wav_path = tmp.name
+                tmp.close()
+
+                try:
+                    mood = self._tts_mood_combo.currentData()
+                    success = engine.synthesize(test_text, wav_path,
+                                                mood=mood if mood != "auto" else None)
+                    if not success:
+                        self._tts_test_btn.setText("合成失败")
+                        return
+
+                    import pygame
+                    if not pygame.mixer.get_init():
+                        pygame.init()
+                        pygame.mixer.init()
+                    sound = pygame.mixer.Sound(wav_path)
+                    channel = pygame.mixer.find_channel()
+                    if channel:
+                        channel.play(sound)
+                    else:
+                        sound.play()
+                    # 等待播放
+                    while pygame.mixer.get_busy():
+                        pygame.time.wait(50)
+                finally:
+                    try:
+                        os.unlink(wav_path)
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"[TTS 试听失败] {e}")
+            finally:
+                self._tts_test_btn.setText("🔊 试听")
+                self._tts_test_btn.setEnabled(True)
+
+        threading.Thread(target=_test, daemon=True).start()

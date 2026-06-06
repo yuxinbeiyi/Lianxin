@@ -787,3 +787,33 @@ def save_proxy_config(config: dict):
     full = _load_full_config()
     full["proxy"] = config
     _save_full_config(full)
+
+
+# ── TTS 语音合成配置 ────────────────────────────────────────────
+_TTS_DEFAULTS = {
+    "engine": "auto",                # "auto" | "edge_tts" | "gpt_sovits"
+    "gpt_sovits_path": "",           # GPT-SoVITS 安装目录路径
+    "default_mood": "auto",          # "auto" | "casual" | "tsundere" | "romantic" | "long"
+    "speed": 1.0,                    # 语速 0.5-2.0
+    "temperature": 0.7,              # GPT-SoVITS 温度（0.1-1.0）
+    "top_k": 5,
+    "top_p": 0.9,
+    "sample_steps": 32,              # 推理步数
+    "edge_tts_voice": "zh-CN-XiaoxiaoNeural",  # Edge-TTS 回退音色
+}
+
+
+def get_tts_config() -> dict:
+    """读取 TTS 合成配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    tts = full.get("tts", {})
+    result = _TTS_DEFAULTS.copy()
+    result.update(tts)
+    return result
+
+
+def save_tts_config(config: dict):
+    """保存 TTS 合成配置（仅更新 tts 部分）。"""
+    full = _load_full_config()
+    full["tts"] = config
+    _save_full_config(full)

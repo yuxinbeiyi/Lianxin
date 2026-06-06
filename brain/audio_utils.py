@@ -188,11 +188,26 @@ def transcribe(wav_path: str, language: str = "zh") -> str:
 # Edge-TTS（文字 → 语音 WAV）
 # ══════════════════════════════════════════════════════════
 
-def tts_to_wav(text: str, wav_path: str, voice: str = "zh-CN-XiaoxiaoNeural"):
+def tts_to_wav(text: str, wav_path: str, voice: str = "zh-CN-XiaoxiaoNeural",
+               mood: str = None):
     """文字 → TTS 语音文件（WAV 24000Hz 单声道 16bit）。
 
-    Edge-TTS 输出 MP3 → pydub 解码转 WAV → 写入 wav_path。
+    优先使用 TtsEngine（GPT-SoVITS + 声音克隆），
+    不可用时回退到 Edge-TTS（云端标准发音）。
+    mood 参数用于选择 GPT-SoVITS 的情绪音色。
     """
+    # 尝试 TtsEngine（GPT-SoVITS 优先）
+    try:
+        from brain.tts_engine import TtsEngine
+        engine = TtsEngine()
+        if engine.gpt_sovits_available:
+            success = engine.synthesize(text, wav_path, mood=mood)
+            if success:
+                return
+    except Exception:
+        pass
+
+    # 回退：原 Edge-TTS 逻辑
     import asyncio
     import edge_tts
     from pydub import AudioSegment

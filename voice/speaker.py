@@ -121,6 +121,21 @@ class VoiceSpeaker:
     # ── 内部方法 ─────────────────────────────────────────────
 
     def _synthesize(self, text: str) -> str | None:
+        # 优先使用 TtsEngine（GPT-SoVITS）
+        try:
+            from brain.tts_engine import TtsEngine
+            engine = TtsEngine()
+            if engine.gpt_sovits_available:
+                tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                tmp_path = tmp.name
+                tmp.close()
+                success = engine.synthesize_to_mp3(text, tmp_path)
+                if success:
+                    return tmp_path
+        except Exception:
+            pass
+
+        # 回退：原 Edge-TTS 逻辑
         try:
             tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
             tmp_path = tmp.name
