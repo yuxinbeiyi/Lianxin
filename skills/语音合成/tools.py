@@ -16,6 +16,10 @@ import os
 import tempfile
 import threading
 import time
+import logging
+import re
+
+logger = logging.getLogger("voice_tools")
 
 TOOL_DEFINITIONS = [
     {
@@ -82,10 +86,87 @@ TOOL_DEFINITIONS = [
 _session_mood = "auto"
 
 
+# ── 句子分割 + 流式合成 ──────────────────────────────────
+
+
+def _split_into_sentences(text: str):
+    """将文本按句末标点或换行分割为句子列表。"""
+    if not text:
+        return []
+    parts = re.split(r'(?<=[。！？.!?])\s*|\n+', text)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _play_blocking(wav_path: str):
+    """同步播放 WAV 文件，播放完成才返回。"""
+    try:
+        import pygame
+        if not pygame.mixer.get_init():
+            pygame.init()
+            pygame.mixer.init()
+        sound = pygame.mixer.Sound(wav_path)
+        channel = sound.play()
+        if channel is not None:
+            while channel.get_busy():
+                time.sleep(0.05)
+    except Exception as e:
+        logger.warning(f"播放失败: {e}")
+
+
+def _synthesize_stream(sentences, mood):
+    """后台线程：逐句合成 + 流水线播放。第 N 句播放时合成第 N+1 句。"""
+    import queue as _queue
+    from brain.tts_engine import TtsEngine
+
+    synth_queue = _queue.Queue(maxsize=1)
+    engine = TtsEngine()
+    temp_files = []
+
+    def producer():
+        for i, sentence in enumerate(sentences):
+            if not sentence.strip():
+                continue
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_s{i}.wav")
+            tmp_path = tmp.name
+            tmp.close()
+            temp_files.append(tmp_path)
+
+            try:
+                ok = engine.synthesize(sentence, tmp_path, mood=mood)
+                if ok:
+                    synth_queue.put(("audio", tmp_path))
+                else:
+                    synth_queue.put(("error", None))
+            except Exception as e:
+                logger.warning(f"句子{i+1}合成失败: {e}")
+                synth_queue.put(("error", None))
+        synth_queue.put(("done", None))
+
+    prod = threading.Thread(target=producer, daemon=True)
+    prod.start()
+
+    # Consumer：依次播放，每句音频就绪后立即播放
+    while True:
+        msg_type, data = synth_queue.get()
+        if msg_type == "done":
+            break
+        elif msg_type == "audio":
+            _play_blocking(data)
+
+    prod.join()
+
+    # 清理临时文件
+    for f in temp_files:
+        try:
+            os.unlink(f)
+        except Exception:
+            pass
+
+
 # ── 工具实现 ──────────────────────────────────────────────
 
 def _speak_voice(text: str, mood: str = "auto") -> str:
-    """合成语音并发送/播放。"""
+    """合成语音并发送/播放。多句文本自动启用流式合成。"""
     global _session_mood
 
     if not text or not text.strip():
@@ -96,31 +177,40 @@ def _speak_voice(text: str, mood: str = "auto") -> str:
     if effective_mood == "auto":
         effective_mood = None  # 让引擎自动匹配
 
-    # 生成语音文件
-    wav_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-    wav_path = wav_temp.name
-    wav_temp.close()
+    # 分割句子，判断是否启用流式
+    sentences = _split_into_sentences(text)
 
-    try:
-        from brain.tts_engine import TtsEngine
-        engine = TtsEngine()
+    if len(sentences) <= 1:
+        # ── 单句：快速路径（现有逻辑） ─────────────────
+        wav_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        wav_path = wav_temp.name
+        wav_temp.close()
 
-        success = engine.synthesize(text, wav_path, mood=effective_mood)
-        if not success:
-            return f"语音合成失败，请稍后再试。"
-
-        engine_name = engine.engine_name
-
-        # 桌面端播放（不通过 QQ 发送——QQ 端有自动语音回复机制，避免双音频）
-        return _play_desktop(wav_path, engine_name)
-
-    except Exception as e:
-        return f"语音合成失败: {e}"
-    finally:
         try:
-            os.unlink(wav_path)
-        except Exception:
-            pass
+            from brain.tts_engine import TtsEngine
+            engine = TtsEngine()
+
+            success = engine.synthesize(text, wav_path, mood=effective_mood)
+            if not success:
+                return "语音合成失败，请稍后再试。"
+
+            engine_name = engine.engine_name
+            return _play_desktop(wav_path, engine_name)
+        except Exception as e:
+            return f"语音合成失败: {e}"
+        finally:
+            try:
+                os.unlink(wav_path)
+            except Exception:
+                pass
+    else:
+        # ── 多句：流式合成，后台流水线播放 ─────────────
+        threading.Thread(
+            target=_synthesize_stream,
+            args=(sentences, effective_mood),
+            daemon=True,
+        ).start()
+        return f"语音合成中（共{len(sentences)}句），将逐句播放，请稍候..."
 
 
 def _set_voice_mood(mood: str) -> str:
