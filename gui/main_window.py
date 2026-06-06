@@ -1783,19 +1783,30 @@ class MainWindow(QMainWindow):
         
         # 检测「完毕」关键词
         if "完毕" in content:
-            parts = content.split("完毕", 1)
-            query = parts[0].strip()
-            
+            # 取最后一个「完毕」，避免前面的空"完毕"吞掉后面的有效内容
+            # 例："完毕。\n今天是几月几号完毕？" → query = "今天是几月几号"
+            last_idx = content.rfind("完毕")
+            query = content[:last_idx].replace("完毕", "")
+
+            # 行级去重：Aliyun STT 的 on_sentence_end 可能对同一句话触发两次，
+            # 导致内容重复写入小纸条。用 dict.fromkeys 保持顺序去重。
+            lines = query.split("\n")
+            deduped_lines = list(dict.fromkeys(lines))
+            query = "\n".join(deduped_lines).strip()
+
             if query:
                 self._is_waiting_for_response = True
                 if hasattr(self, '_note_timeout_timer') and self._note_timeout_timer:
                     self._note_timeout_timer.stop()
-                
-                
+
                 self._note_file.write_text("", encoding="utf-8")
                 self._on_user_message(query)
             else:
+                # 纯"完毕"不含有效内容，清空本次累积继续监听
                 self._note_file.write_text("", encoding="utf-8")
+                self._is_waiting_for_response = False
+                if hasattr(self, '_note_timeout_timer') and self._note_timeout_timer:
+                    self._note_timeout_timer.stop()
                 self._chat_widget.add_system_tip("没有识别到内容，请重新说话")
         else:
             if hasattr(self, '_note_timeout_timer') and not self._note_timeout_timer.isActive():
@@ -1806,17 +1817,18 @@ class MainWindow(QMainWindow):
         """用户 30 秒内没说「发送」，自动清空重新监听"""
         if self._standby_state != "STANDBY":
             return
-        
+
         if self._note_file:
             self._note_file.write_text("", encoding="utf-8")
-        
+
+        self._is_waiting_for_response = False
         self._chat_widget.add_system_tip("⏰ 超时未收到「完毕」，已清空，请重新说话")
         
     def _restart_listening(self):
         """回复完成后，重新启动监听"""
         if self._standby_state != "STANDBY":
             return
-        #QTimer.singleShot(1000, self._actually_restart_listening)
+        QTimer.singleShot(1000, self._actually_restart_listening)
 
 
     def _actually_restart_listening(self):
