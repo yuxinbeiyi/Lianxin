@@ -28,6 +28,7 @@ class GestureDetector:
             min_tracking_confidence=0.5,
         )
         self._hl = MPHandLandmarker.create_from_options(opts)
+        self._closed = False
 
         # 手腕历史位置（用于招手检测）
         self._wrist_history = deque(maxlen=15)  # 最近15帧的手腕x坐标
@@ -89,4 +90,17 @@ class GestureDetector:
         return False
 
     def close(self):
-        self._hl.close()
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._hl.close()
+        except Exception:
+            pass
+        self._hl = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass

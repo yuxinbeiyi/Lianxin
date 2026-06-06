@@ -1550,6 +1550,23 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    # ── 人体跟踪工具 ─────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "shoulder_human_track",
+            "description": "启动人体跟踪模式：ESP32 摄像头实时推流，本地 MediaPipe Pose 推理人体位置，舵机云台自动跟随。",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "stop_human_tracking",
+            "description": "停止人体跟踪模式，云台复位到中心位置。",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
     # ── 浏览器自动化工具 ─────────────────────────────────────────
     {
         "type": "function",
@@ -3464,6 +3481,43 @@ def _stop_observation_mode() -> str:
     return "【观察模式】已退出，云台已复位～(´-ω-`)"
 
 
+def _start_human_tracking() -> str:
+    """启动人体跟踪模式：帧接收 + Pose 推理 + 舵机跟随。"""
+    from brain.human_tracking import get_track_manager
+    manager = get_track_manager()
+    if manager.is_active:
+        return "人体跟踪已经在运行中啦(｀・ω・´)"
+
+    manager.activate()
+    qq = _qq_bridge_worker
+    if qq and hasattr(qq, '_owner_qq') and qq._owner_qq:
+        from workers.track_worker import TrackWorker
+
+        manager.set_qq_bridge(qq)
+        worker = TrackWorker()
+        worker.mode_exited.connect(qq._on_human_tracking_exit)
+        worker.start()
+        qq._track_worker = worker
+        return "好嘞！莲心人体跟踪模式启动，让我看看周围有没有人～(｀・ω・´)"
+    else:
+        manager.deactivate()
+        return "未检测到 QQ 桥接，人体跟踪需要 QQ 远程控制哦～"
+
+
+def _stop_human_tracking() -> str:
+    """停止人体跟踪模式。"""
+    from brain.human_tracking import get_track_manager
+    manager = get_track_manager()
+    if not manager.is_active:
+        return "人体跟踪没有在运行哦~"
+    manager.deactivate()
+    try:
+        shoulder_center()
+    except Exception:
+        pass
+    return "人体跟踪已停止，云台已回中~"
+
+
 def read_diary(date: str = None, keyword: str = None, limit: int = 1):
     from utils.diary import get_diary_by_date, search_diaries_by_keyword, get_recent_diaries
     if date:
@@ -4000,6 +4054,9 @@ TOOL_EXECUTORS = {
     # 观察模式
     "start_observation_mode": lambda inp: _start_observation_mode(),
     "stop_observation_mode": lambda inp: _stop_observation_mode(),
+    # 人体跟踪
+    "shoulder_human_track": lambda inp: _start_human_tracking(),
+    "stop_human_tracking": lambda inp: _stop_human_tracking(),
     # 浏览器自动化
     "browser_navigate":   lambda inp: _browser_navigate(inp["url"]),
     "browser_snapshot":   lambda inp: _browser_snapshot(),

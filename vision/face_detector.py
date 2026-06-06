@@ -39,6 +39,7 @@ class FaceDetector:
         )
         self._fl = MPFaceLandmarker.create_from_options(fl_opts)
 
+        self._closed = False
         self._smile_history = []  # 微笑历史帧
         self._frame_count = 0
 
@@ -117,5 +118,22 @@ class FaceDetector:
         return score
 
     def close(self):
-        self._fd.close()
-        self._fl.close()
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._fd.close()
+        except Exception:
+            pass
+        try:
+            self._fl.close()
+        except Exception:
+            pass
+        self._fd = None
+        self._fl = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass

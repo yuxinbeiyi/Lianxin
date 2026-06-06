@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sys
+import threading
 from pathlib import Path
 
 try:
@@ -28,6 +29,7 @@ class HardwareBridge:
         self.relay_url = RELAY_URL
         self.ws = None
         self._connected = False
+        self._send_lock = threading.Lock()
         # 长连接模式状态
         self._persistent = False
         self._reconnect_max = 3
@@ -280,6 +282,18 @@ class HardwareBridge:
             except json.JSONDecodeError:
                 pass
         return None
+
+    # ── 跟踪模式：只发不收（ESP32 在推流，不能 drain/read 响应） ──
+
+    async def send_cmd_tracking(self, cmd: str):
+        """跟踪模式下发送命令，不读取响应（ESP32 正在持续推流）。"""
+        if not self.ws or not self._connected:
+            return
+        try:
+            with self._send_lock:
+                await self.ws.send(cmd)
+        except Exception:
+            pass
 
 
 async def test():

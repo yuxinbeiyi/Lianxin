@@ -73,6 +73,8 @@ _TOOL_KEYWORDS = {
     "shoulder_temp":      ["肩膀温度", "肩膀湿度", "外设温度", "外设湿度"],
     "shoulder_servo":     ["水平", "竖直", "垂直", "pan", "tilt"],
     "shoulder_observe":  ["拍照", "看看", "观察", "拍张照", "看一看", "照张相"],
+    "shoulder_human_track": ["人体跟踪", "跟踪人", "跟随人", "启动跟踪", "开始跟踪"],
+    "stop_human_tracking": ["停止跟踪", "关闭跟踪", "结束跟踪", "退出跟踪"],
 }
 
 
@@ -294,6 +296,7 @@ class QQBridgeWorker(QThread):
 
         # ── 观察模式引用 ─────────────────────────────────
         self._obs_worker = None       # ObservationModeWorker 实例
+        self._track_worker = None     # TrackWorker 实例
 
         # ── 分段接收状态（用户 → 莲心，由"。。"触发） ────
         self._pending_buffer = {}     # session_key -> {"fragments": [str], "original_msg": dict, "user_id": str}
@@ -503,6 +506,11 @@ class QQBridgeWorker(QThread):
             self._handle_observation_cmd(clean_text, msg)
             return
 
+        # ── 【跟踪】指令处理（必须以【跟踪】开头） ──────────
+        if clean_text.startswith("【跟踪】"):
+            self._handle_tracking_cmd(clean_text, msg)
+            return
+
         # ── 普通消息 + 观察模式激活 → 排队等待 ──────────────
         if self._is_observation_active():
             from brain.observation_mode import get_observation_state
@@ -521,6 +529,14 @@ class QQBridgeWorker(QThread):
             })
             self._log(f"[观察模式] [{session_key}] 消息已排队: {clean_text[:40]}…")
             self._send_quick_reply(msg, "等等哦～我先看完这一圈再回你(｀・ω・´)")
+            return
+
+        # ── 人体跟踪模式拦截 ─────────────────────────────
+        if self._is_human_tracking_active():
+            from brain.human_tracking import get_track_manager
+            manager = get_track_manager()
+            manager.refresh_cmd_time()
+            self._send_quick_reply(msg, "人体跟踪中～等一下再聊哦(｀・ω・´)")
             return
 
         # ── 分段接收检测（用户用"。。"分段发送） ──────────────
@@ -1519,6 +1535,36 @@ class QQBridgeWorker(QThread):
         """观察模式退出回调。"""
         self._obs_worker = None
         self._log(f"[观察模式] 已退出: {reason}")
+
+    # ── 人体跟踪模式 ────────────────────────────────────────
+
+    def _handle_tracking_cmd(self, text: str, msg: dict):
+        """处理【跟踪】指令。"""
+        cmd = text[len("【跟踪】"):].strip()
+
+        if cmd in ("停止", "关闭", "退出", "结束"):
+            from brain.tools import _stop_human_tracking
+            result = _stop_human_tracking()
+            self._send_quick_reply(msg, result)
+        elif cmd in ("人", "开始", "启动", "") or cmd.startswith("人"):
+            from brain.tools import _start_human_tracking
+            result = _start_human_tracking()
+            self._send_quick_reply(msg, result)
+        else:
+            self._send_quick_reply(
+                msg,
+                "【跟踪】后面可以接「人」开始人体跟踪，或「停止」结束哦~"
+            )
+
+    def _is_human_tracking_active(self) -> bool:
+        """人体跟踪是否正在运行。"""
+        from brain.human_tracking import get_track_manager
+        return get_track_manager().is_active
+
+    def _on_human_tracking_exit(self, reason: str):
+        """人体跟踪退出回调。"""
+        self._track_worker = None
+        self._log(f"[人体跟踪] 已退出: {reason}")
 
     # ── 分段接收（用户用"。。"分段发送消息） ────────────────
 
