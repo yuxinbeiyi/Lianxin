@@ -568,7 +568,7 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "web_search",
             "description": (
-                "使用 SearXNG 元搜索引擎进行联网搜索，获取实时信息。"
+                "使用 DuckDuckGo 搜索引擎进行联网搜索，获取实时信息。"
                 "当用户询问新闻、天气、实时事件、最新资讯、需要查找资料或无法用本地知识回答的问题时，调用此工具。"
                 "返回结果包含标题、链接和摘要。"
             ),
@@ -1743,191 +1743,99 @@ def run_command(command: str) -> str:
 
 # ==================== 联网搜索工具函数 ====================
 
-# 已知的 SearXNG 公共实例（按稳定性排序）
-_SEARXNG_INSTANCES = [
-    "https://searx.bndkt.io",
-    "https://search.sapti.me",
-    "https://searx.be",
-    "https://search.mdosch.de",
-    "https://search.einfachzocken.eu",
-    "https://search.canine.tools",
-    "https://search.freestater.org",
-    "https://searx.numerique.gouv.fr",
-]
-
-
 def web_search(query: str, max_results: int = 5) -> str:
-    """联网搜索，SearXNG 元搜索引擎优先，Playwright 浏览器兜底。"""
+    """联网搜索，优先百度，DuckDuckGo 兜底。智能代理：先直连，不通自动切代理。"""
     import urllib.parse
-
-    def _try_searxng_instance(instance_url: str):
-        """向单个 SearXNG 实例发起搜索，返回结果字符串或 None。"""
-        import requests
-        url = f"{instance_url.rstrip('/')}/search"
-        params = {
-            "q": query,
-            "format": "json",
-            "language": "zh-CN",
-            "categories": "general",
-            "pageno": 1,
-        }
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/130.0.0.0 Safari/537.36"
-            ),
-            "Accept": "application/json",
-        }
-        try:
-            proxies = _get_proxies()
-            resp = requests.get(
-                url, params=params, headers=headers,
-                timeout=6, proxies=proxies,
-            )
-            if resp.status_code == 429:
-                logger.info(f"SearXNG 实例 {instance_url} 请求过多")
-                return None
-            resp.raise_for_status()
-            data = resp.json()
-            results = data.get("results", [])
-            if not results:
-                return None
-            output_lines = [f"搜索「{query}」的结果："]
-            for i, r in enumerate(results[:max_results], 1):
-                title = r.get("title", "").strip()
-                href = r.get("url", "")
-                content = r.get("content", "").strip()
-                if not title and not content:
-                    continue
-                output_lines.append(f"\n{i}. {title}\n   链接：{href}\n   摘要：{content}")
-            if len(output_lines) <= 1:
-                return None
-            logger.info(f"搜索成功（SearXNG: {instance_url}）")
-            return "\n".join(output_lines)
-        except Exception as e:
-            logger.debug(f"SearXNG 实例 {instance_url} 失败: {e}")
-            return None
-
-    def _try_searxng():
-        """并行尝试所有 SearXNG 实例，谁先响应用谁。"""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        instances = []
-        # 先检查用户是否配置了自定义实例
-        try:
-            from config import get_searxng_config
-            cfg = get_searxng_config()
-            custom_url = cfg.get("instance_url", "").strip()
-            if custom_url:
-                instances.append(custom_url)
-        except Exception:
-            pass
-        instances.extend(_SEARXNG_INSTANCES)
-
-        if not instances:
-            return None
-
-        pool = ThreadPoolExecutor(max_workers=min(len(instances), 8))
-        future_map = {pool.submit(_try_searxng_instance, url): url for url in instances}
-        try:
-            for future in as_completed(future_map, timeout=12):
-                try:
-                    result = future.result()
-                    if result:
-                        for f in future_map:
-                            f.cancel()
-                        return result
-                except Exception:
-                    continue
-        except TimeoutError:
-            pass  # 12 秒内无任何实例响应，放弃 SearXNG
-        finally:
-            pool.shutdown(wait=False, cancel_futures=True)
-        return None
+    import requests
+    from bs4 import BeautifulSoup
 
     def _try_baidu(proxies=None):
-        """尝试 Baidu 搜索（中文搜索结果质量好）。"""
-        import requests
-        from bs4 import BeautifulSoup
-        url = f"https://www.baidu.com/s?wd={urllib.parse.quote(query)}&rn={min(max_results, 10)}"
+        """尝试百度搜索，返回结果字符串或 None。"""
+        url = f"https://www.baidu.com/s?wd={urllib.parse.quote(query)}&rn={max_results}"
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/130.0.0.0 Safari/537.36"
+                "Chrome/122.0.0.0 Safari/537.36"
             ),
             "Accept-Language": "zh-CN,zh;q=0.9",
         }
-        try:
-            resp = requests.get(url, headers=headers, timeout=8, proxies=proxies)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
-            results = []
-            for item in soup.select(".result, .c-container"):
-                title_el = item.select_one("h3 a")
-                if not title_el:
-                    continue
-                title = title_el.get_text(strip=True)
-                href = title_el.get("href", "")
-                abstract_el = item.select_one(".c-abstract, .content-right_8Zs40")
-                abstract = abstract_el.get_text(strip=True) if abstract_el else ""
-                results.append({"title": title, "href": href, "body": abstract})
-            if not results:
-                return None
-            logger.info("搜索成功（Baidu 抓取）")
-            output_lines = [f"搜索「{query}」的结果："]
-            for i, r in enumerate(results[:max_results], 1):
-                output_lines.append(f"\n{i}. {r['title']}\n   链接：{r['href']}\n   摘要：{r['body']}")
-            return "\n".join(output_lines)
-        except Exception as e:
-            logger.debug(f"Baidu 抓取失败: {e}")
+        resp = requests.get(url, headers=headers, timeout=10, proxies=proxies)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        results = []
+        for item in soup.select(".result, .c-container"):
+            title_el = item.select_one("h3 a")
+            if not title_el:
+                continue
+            title = title_el.get_text(strip=True)
+            href = title_el.get("href", "")
+            abstract_el = item.select_one(".c-abstract, .content-right_8Zs40")
+            abstract = abstract_el.get_text(strip=True) if abstract_el else ""
+            results.append({"title": title, "href": href, "body": abstract})
+        if not results:
             return None
+        output_lines = [f"搜索「{query}」的结果："]
+        for i, r in enumerate(results[:max_results], 1):
+            output_lines.append(f"\n{i}. {r['title']}\n   链接：{r['href']}\n   摘要：{r['body']}")
+        return "\n".join(output_lines)
+
+    def _try_ddg(proxies=None):
+        """尝试 DuckDuckGo 搜索，返回结果字符串或 None。"""
+        from duckduckgo_search import DDGS
+        ddgs_kwargs = {}
+        if proxies:
+            ddgs_kwargs["proxies"] = proxies
+        with DDGS(**ddgs_kwargs) as ddgs:
+            results = list(ddgs.text(query, max_results=min(max_results, 10)))
+        if not results:
+            return None
+        output_lines = [f"搜索「{query}」的结果："]
+        for i, r in enumerate(results, 1):
+            output_lines.append(
+                f"\n{i}. {r.get('title', '无标题')}"
+                f"\n   链接：{r.get('href', '')}"
+                f"\n   摘要：{r.get('body', '')}"
+            )
+        return "\n".join(output_lines)
+
+    def _try_bing(proxies=None):
+        """尝试 Bing 搜索，返回结果字符串或 None。"""
+        url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}&count={min(max_results, 10)}"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        }
+        resp = requests.get(url, headers=headers, timeout=10, proxies=proxies)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        results = []
+        for item in soup.select(".b_algo"):
+            title_el = item.select_one("h2 a")
+            if not title_el:
+                continue
+            title = title_el.get_text(strip=True)
+            href = title_el.get("href", "")
+            abstract_el = item.select_one(".b_caption p")
+            abstract = abstract_el.get_text(strip=True) if abstract_el else ""
+            results.append({"title": title, "href": href, "body": abstract})
+        if not results:
+            return None
+        output_lines = [f"搜索「{query}」的结果："]
+        for i, r in enumerate(results[:max_results], 1):
+            output_lines.append(f"\n{i}. {r['title']}\n   链接：{r['href']}\n   摘要：{r['body']}")
+        return "\n".join(output_lines)
 
     def _try_browser_search():
-        """Playwright 浏览器搜索（所有搜索引擎均不可用时的最终兜底）。"""
+        """使用 Playwright 浏览器搜索（能渲染 JS，最可靠）。"""
         try:
-            import requests
-            from bs4 import BeautifulSoup
-
-            url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}&count={min(max_results, 10)}"
-            headers = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/122.0.0.0 Safari/537.36"
-                ),
-                "Accept-Language": "zh-CN,zh;q=0.9",
-            }
-            proxies = _get_proxies()
-
-            # 先尝试 requests 抓取
-            try:
-                resp = requests.get(url, headers=headers, timeout=10, proxies=proxies)
-                resp.raise_for_status()
-                soup = BeautifulSoup(resp.text, "html.parser")
-                results = []
-                for item in soup.select(".b_algo"):
-                    title_el = item.select_one("h2 a")
-                    if not title_el:
-                        continue
-                    title = title_el.get_text(strip=True)
-                    href = title_el.get("href", "")
-                    snippet_el = item.select_one(".b_caption p")
-                    snippet = snippet_el.get_text(strip=True) if snippet_el else ""
-                    results.append({"title": title, "href": href, "body": snippet})
-                if results:
-                    logger.info("搜索成功（Bing requests 抓取）")
-                    output_lines = [f"搜索「{query}」的结果："]
-                    for i, r in enumerate(results[:max_results], 1):
-                        output_lines.append(f"\n{i}. {r['title']}\n   链接：{r['href']}\n   摘要：{r['body']}")
-                    return "\n".join(output_lines)
-            except Exception:
-                pass
-
-            # requests 失败，走 Playwright 浏览器
             from brain.browser_controller import get_browser
             browser = get_browser()
+            url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}&count={min(max_results, 10)}"
             page = browser._ensure_page()
             page.goto(url, timeout=30000, wait_until="domcontentloaded")
             page.wait_for_timeout(2000)
@@ -1946,21 +1854,15 @@ def web_search(query: str, max_results: int = 5) -> str:
             results = page.evaluate(js_code)
             if not results:
                 return None
-            logger.info("搜索成功（Playwright 浏览器）")
             output_lines = [f"搜索「{query}」的结果："]
             for i, r in enumerate(results, 1):
                 output_lines.append(f"\n{i}. {r['title']}\n   链接：{r.get('href', '')}\n   摘要：{r.get('body', '')}")
             return "\n".join(output_lines)
         except Exception as e:
-            logger.warning(f"浏览器兜底搜索失败: {e}")
+            logger.warning(f"浏览器搜索失败: {e}")
             return None
 
-    # ── 后端 1：SearXNG ──────────────────────────────────
-    result = _try_searxng()
-    if result:
-        return result
-
-    # ── 后端 2：Baidu（适合中文查询，先直连再代理） ────
+    # ── 后端 1：百度（先直连，不通再走代理） ────────────
     try:
         result = _try_baidu()
         if result:
@@ -1976,12 +1878,49 @@ def web_search(query: str, max_results: int = 5) -> str:
     except Exception:
         pass
 
-    # ── 后端 3：Playwright 浏览器兜底 ────────────────────
-    result = _try_browser_search()
-    if result:
-        return result
+    # ── 后端 2：DuckDuckGo（先直连，不通再走代理） ─────
+    try:
+        result = _try_ddg()
+        if result:
+            return result
+    except ImportError:
+        return "搜索失败：网络不通且 duckduckgo-search 未安装。"
+    except Exception:
+        pass
+    try:
+        proxies = _get_proxies()
+        if proxies:
+            result = _try_ddg(proxies)
+            if result:
+                return result
+    except Exception:
+        pass
 
-    return f"搜索失败：所有搜索引擎均不可用。"
+    # ── 后端 3：Bing（先直连，不通再走代理） ────────────
+    try:
+        result = _try_bing()
+        if result:
+            return result
+    except Exception:
+        pass
+    try:
+        proxies = _get_proxies()
+        if proxies:
+            result = _try_bing(proxies)
+            if result:
+                return result
+    except Exception:
+        pass
+
+    # ── 后端 4：Playwright 浏览器搜索（最可靠） ─────────
+    try:
+        result = _try_browser_search()
+        if result:
+            return result
+    except Exception:
+        pass
+
+    return f"搜索失败：直连和代理均无法完成搜索。"
 
 # ==================== 网页内容提取工具函数 ====================
 
