@@ -28,6 +28,7 @@ class AnimationStateMachine(QObject):
         self.timer.timeout.connect(self._on_timer)
         self._pending_event = None
         self._movie_cache = {}
+        self._current_anim_file = ""  # 当前 label 上显示的动画文件路径
         self._preload_all_movies()
         self._goto_state(self.config["modes"][self.current_mode]["initial"])
 
@@ -69,9 +70,9 @@ class AnimationStateMachine(QObject):
                 self._goto_state(state_def["on_event"][event])
 
     def _goto_state(self, state_name: str):
+        if self.current_state == state_name:
+            return  # 已在目标状态，跳过
         self.timer.stop()
-        if self.current_movie:
-            self.current_movie.stop()
         # 检查状态是否存在
         try:
             state_def = self.config["modes"][self.current_mode]["states"][state_name]
@@ -84,12 +85,22 @@ class AnimationStateMachine(QObject):
         if new_movie is None:
             print(f"错误: 未预加载动画 {self.current_mode}/{state_name}")
             return
-        self.current_movie = new_movie
         self.current_state = state_name
         anim_file = state_def["animation"]
         print(f"[动画] 模式: {self.current_mode}, 状态: {state_name}, 文件: {anim_file}")
-        self.label.setMovie(self.current_movie)
-        self.current_movie.start()
+
+        # 避免重复 setMovie：如果 label 上已是同一文件，只重启动画
+        if anim_file == self._current_anim_file and self.current_movie:
+            self.current_movie.stop()
+            self.current_movie.start()
+        else:
+            if self.current_movie:
+                self.current_movie.stop()
+            self.current_movie = new_movie
+            self._current_anim_file = anim_file
+            self.label.setMovie(self.current_movie)
+            self.current_movie.start()
+
         self.state_changed.emit(state_name)
         if "duration" in state_def:
             self.timer.start(int(state_def["duration"] * 1000))
