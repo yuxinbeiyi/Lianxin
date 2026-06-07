@@ -13,6 +13,9 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 import sys
+import logging
+
+logger = logging.getLogger("brain.tools")
 
 from utils.paths import get_user_data_dir
 
