@@ -1783,7 +1783,7 @@ def web_search(query: str, max_results: int = 5) -> str:
             proxies = _get_proxies()
             resp = requests.get(
                 url, params=params, headers=headers,
-                timeout=10, proxies=proxies,
+                timeout=6, proxies=proxies,
             )
             if resp.status_code == 429:
                 logger.info(f"SearXNG 实例 {instance_url} 请求过多")
@@ -1810,24 +1810,40 @@ def web_search(query: str, max_results: int = 5) -> str:
             return None
 
     def _try_searxng():
-        """依次尝试所有 SearXNG 实例。"""
+        """并行尝试所有 SearXNG 实例，谁先响应用谁。"""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        instances = []
         # 先检查用户是否配置了自定义实例
         try:
             from config import get_searxng_config
             cfg = get_searxng_config()
             custom_url = cfg.get("instance_url", "").strip()
             if custom_url:
-                result = _try_searxng_instance(custom_url)
-                if result:
-                    return result
+                instances.append(custom_url)
         except Exception:
             pass
+        instances.extend(_SEARXNG_INSTANCES)
 
-        # 轮流尝试公共实例
-        for instance in _SEARXNG_INSTANCES:
-            result = _try_searxng_instance(instance)
-            if result:
-                return result
+        if not instances:
+            return None
+
+        pool = ThreadPoolExecutor(max_workers=min(len(instances), 8))
+        future_map = {pool.submit(_try_searxng_instance, url): url for url in instances}
+        try:
+            for future in as_completed(future_map, timeout=12):
+                try:
+                    result = future.result()
+                    if result:
+                        for f in future_map:
+                            f.cancel()
+                        return result
+                except Exception:
+                    continue
+        except TimeoutError:
+            pass  # 12 秒内无任何实例响应，放弃 SearXNG
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
         return None
 
     def _try_browser_search():
