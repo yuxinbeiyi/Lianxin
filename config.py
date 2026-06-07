@@ -789,25 +789,25 @@ def save_proxy_config(config: dict):
     _save_full_config(full)
 
 
-# ── Bing Search API 配置 ────────────────────────────────────────────
-_BING_API_DEFAULTS = {
-    "api_key": "",
+# ── SearXNG 搜索配置 ────────────────────────────────────────────
+_SEARXNG_DEFAULTS = {
+    "instance_url": "",  # 自定义 SearXNG 实例 URL，留空则自动尝试公共实例
 }
 
 
-def get_bing_api_config() -> dict:
-    """读取 Bing Search API 配置，缺失字段用默认值补全。"""
+def get_searxng_config() -> dict:
+    """读取 SearXNG 搜索配置，缺失字段用默认值补全。"""
     full = _load_full_config()
-    bing = full.get("bing_api", {})
-    result = _BING_API_DEFAULTS.copy()
-    result.update(bing)
+    searxng = full.get("searxng", {})
+    result = _SEARXNG_DEFAULTS.copy()
+    result.update(searxng)
     return result
 
 
-def save_bing_api_config(config: dict):
-    """保存 Bing Search API 配置（仅更新 bing_api 部分）。"""
+def save_searxng_config(config: dict):
+    """保存 SearXNG 搜索配置（仅更新 searxng 部分）。"""
     full = _load_full_config()
-    full["bing_api"] = config
+    full["searxng"] = config
     _save_full_config(full)
 
 

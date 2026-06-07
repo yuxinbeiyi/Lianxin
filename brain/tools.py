@@ -565,7 +565,7 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "web_search",
             "description": (
-                "使用 Bing Search API 进行联网搜索，获取实时信息。"
+                "使用 SearXNG 元搜索引擎进行联网搜索，获取实时信息。"
                 "当用户询问新闻、天气、实时事件、最新资讯、需要查找资料或无法用本地知识回答的问题时，调用此工具。"
                 "返回结果包含标题、链接和摘要。"
             ),
@@ -1740,45 +1740,94 @@ def run_command(command: str) -> str:
 
 # ==================== 联网搜索工具函数 ====================
 
+# 已知的 SearXNG 公共实例（按稳定性排序）
+_SEARXNG_INSTANCES = [
+    "https://searx.bndkt.io",
+    "https://search.sapti.me",
+    "https://searx.be",
+    "https://search.mdosch.de",
+    "https://search.einfachzocken.eu",
+    "https://search.canine.tools",
+    "https://search.freestater.org",
+    "https://searx.numerique.gouv.fr",
+]
+
+
 def web_search(query: str, max_results: int = 5) -> str:
-    """联网搜索，Azure Bing Search API v7 优先，Playwright 浏览器兜底。"""
+    """联网搜索，SearXNG 元搜索引擎优先，Playwright 浏览器兜底。"""
     import urllib.parse
 
-    def _try_bing_api():
-        """尝试 Bing Search API v7，返回结果字符串或 None。"""
-        from config import get_bing_api_config
-        cfg = get_bing_api_config()
-        api_key = cfg.get("api_key", "").strip()
-        if not api_key:
-            logger.info("Bing API Key 未配置，跳过")
-            return None
-
+    def _try_searxng_instance(instance_url: str):
+        """向单个 SearXNG 实例发起搜索，返回结果字符串或 None。"""
         import requests
-        url = "https://api.bing.microsoft.com/v7.0/search"
-        headers = {"Ocp-Apim-Subscription-Key": api_key}
+        url = f"{instance_url.rstrip('/')}/search"
         params = {
             "q": query,
-            "count": min(max_results, 50),
-            "mkt": "zh-CN",
-            "textFormat": "Raw",
+            "format": "json",
+            "language": "zh-CN",
+            "categories": "general",
+            "pageno": 1,
         }
-        resp = requests.get(url, headers=headers, params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        web_results = data.get("webPages", {}).get("value", [])
-        if not web_results:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/130.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json",
+        }
+        try:
+            proxies = _get_proxies()
+            resp = requests.get(
+                url, params=params, headers=headers,
+                timeout=10, proxies=proxies,
+            )
+            if resp.status_code == 429:
+                logger.info(f"SearXNG 实例 {instance_url} 请求过多")
+                return None
+            resp.raise_for_status()
+            data = resp.json()
+            results = data.get("results", [])
+            if not results:
+                return None
+            output_lines = [f"搜索「{query}」的结果："]
+            for i, r in enumerate(results[:max_results], 1):
+                title = r.get("title", "").strip()
+                href = r.get("url", "")
+                content = r.get("content", "").strip()
+                if not title and not content:
+                    continue
+                output_lines.append(f"\n{i}. {title}\n   链接：{href}\n   摘要：{content}")
+            if len(output_lines) <= 1:
+                return None
+            return "\n".join(output_lines)
+        except Exception as e:
+            logger.debug(f"SearXNG 实例 {instance_url} 失败: {e}")
             return None
 
-        output_lines = [f"搜索「{query}」的结果："]
-        for i, r in enumerate(web_results[:max_results], 1):
-            title = r.get("name", "").strip()
-            href = r.get("url", "")
-            snippet = r.get("snippet", "").strip()
-            output_lines.append(f"\n{i}. {title}\n   链接：{href}\n   摘要：{snippet}")
-        return "\n".join(output_lines)
+    def _try_searxng():
+        """依次尝试所有 SearXNG 实例。"""
+        # 先检查用户是否配置了自定义实例
+        try:
+            from config import get_searxng_config
+            cfg = get_searxng_config()
+            custom_url = cfg.get("instance_url", "").strip()
+            if custom_url:
+                result = _try_searxng_instance(custom_url)
+                if result:
+                    return result
+        except Exception:
+            pass
+
+        # 轮流尝试公共实例
+        for instance in _SEARXNG_INSTANCES:
+            result = _try_searxng_instance(instance)
+            if result:
+                return result
+        return None
 
     def _try_browser_search():
-        """使用 Playwright 浏览器搜索（Bing API 不可用时的兜底）。"""
+        """Playwright 浏览器搜索（SearXNG 不可用时的兜底）。"""
         try:
             import requests
             from bs4 import BeautifulSoup
@@ -1846,8 +1895,8 @@ def web_search(query: str, max_results: int = 5) -> str:
             logger.warning(f"浏览器兜底搜索失败: {e}")
             return None
 
-    # ── 后端 1：Bing Search API ──────────────────────────
-    result = _try_bing_api()
+    # ── 后端 1：SearXNG ──────────────────────────────────
+    result = _try_searxng()
     if result:
         return result
 
@@ -1856,7 +1905,7 @@ def web_search(query: str, max_results: int = 5) -> str:
     if result:
         return result
 
-    return f"搜索失败：Bing API 不可用且浏览器搜索也未能完成。"
+    return f"搜索失败：SearXNG 不可用且浏览器搜索也未能完成。"
 
 # ==================== 网页内容提取工具函数 ====================
 
