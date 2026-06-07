@@ -1803,6 +1803,7 @@ def web_search(query: str, max_results: int = 5) -> str:
                 output_lines.append(f"\n{i}. {title}\n   链接：{href}\n   摘要：{content}")
             if len(output_lines) <= 1:
                 return None
+            logger.info(f"搜索成功（SearXNG: {instance_url}）")
             return "\n".join(output_lines)
         except Exception as e:
             logger.debug(f"SearXNG 实例 {instance_url} 失败: {e}")
@@ -1862,6 +1863,7 @@ def web_search(query: str, max_results: int = 5) -> str:
                     snippet = snippet_el.get_text(strip=True) if snippet_el else ""
                     results.append({"title": title, "href": href, "body": snippet})
                 if results:
+                    logger.info("搜索成功（Bing requests 抓取）")
                     output_lines = [f"搜索「{query}」的结果："]
                     for i, r in enumerate(results[:max_results], 1):
                         output_lines.append(f"\n{i}. {r['title']}\n   链接：{r['href']}\n   摘要：{r['body']}")
@@ -1890,6 +1892,7 @@ def web_search(query: str, max_results: int = 5) -> str:
             results = page.evaluate(js_code)
             if not results:
                 return None
+            logger.info("搜索成功（Playwright 浏览器）")
             output_lines = [f"搜索「{query}」的结果："]
             for i, r in enumerate(results, 1):
                 output_lines.append(f"\n{i}. {r['title']}\n   链接：{r.get('href', '')}\n   摘要：{r.get('body', '')}")
