@@ -254,8 +254,8 @@ def clean_tts_text(text: str) -> str:
     text = re.sub(r'。{2,}', '……', text)
     text = re.sub(r'，{2,}', '，', text)
 
-    # 12. 括号停顿
-    text = re.sub(r'\)(?![。！？,，])', '）。 ', text)
+    # 12. 移除括号及括号内的全部内容（角色扮演描写等不出声）
+    text = re.sub(r'[（(][^）)]*?[）)]', '', text)
 
     # 13. 换行 → 句号
     text = re.sub(r'\n+', '。 ', text)

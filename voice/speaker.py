@@ -95,8 +95,8 @@ class VoiceSpeaker:
         text = re.sub(r'，{2,}', '，', text)
         text = re.sub(r'~{2,}', ' ', text)
 
-        # 12. 为括号内容增加停顿：右括号后不跟标点则加句号
-        text = re.sub(r'\)(?![。！？,，])', '）。 ', text)
+        # 12. 移除括号及括号内的全部内容（角色扮演描写等不出声）
+        text = re.sub(r'[（(][^）)]*?[）)]', '', text)
 
         # 13. 将换行符转换为句号
         text = re.sub(r'\n+', '。 ', text)
