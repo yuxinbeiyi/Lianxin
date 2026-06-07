@@ -22,6 +22,12 @@ EMOTION_FOLDER_MAP = {
     "开玩笑": "开玩笑",          # 如果你希望 LLM 能输出「开玩笑」
     "思考认真": "思考认真",      # 如果你希望 LLM 能输出「思考认真」
     "调用工具": "调用工具",      # 如果你希望 LLM 能输出「调用工具」
+
+    # 负面情绪映射（无独立文件夹时回退到同类文件夹）
+    "无聊": "默认",              # 暂无专用表情包，用默认替代
+    "疲惫": "默认",
+    "懒惰": "默认",
+    "发脾气": "生气不满",        # 发脾气 → 生气不满文件夹
 }
 
 def _scan_emotion_folder(emotion: str) -> list:
@@ -128,6 +134,26 @@ def infer_emotion_from_text(text: str) -> Optional[str]:
     angry_kw = ["生气", "不满", "烦", "郁闷", "可恶", "讨厌", "气死", "受不了"]
     if any(kw in text for kw in angry_kw):
         return "生气不满"
+
+    # ── 无聊/厌倦 ──
+    bored_kw = ["无聊", "没意思", "乏味", "好闲", "闷死了", "无趣"]
+    if any(kw in text for kw in bored_kw):
+        return "无聊"
+
+    # ── 疲惫/状态差 ──
+    tired_kw = ["累了", "好累", "疲惫", "困了", "没精神", "不想动", "状态不好", "没劲"]
+    if any(kw in text for kw in tired_kw):
+        return "疲惫"
+
+    # ── 懒惰/不想干 ──
+    lazy_kw = ["懒得", "懒", "不想干", "不想做", "好懒", "摆烂"]
+    if any(kw in text for kw in lazy_kw):
+        return "懒惰"
+
+    # ── 发脾气（比"生气"程度更重） ──
+    tantrum_kw = ["烦死了", "别烦我", "滚", "够了", "忍不了", "火大", "别惹我"]
+    if any(kw in text for kw in tantrum_kw):
+        return "发脾气"
 
     # ── 开心/高兴（放在靠后避免被中性词"好"误配） ──
     happy_kw = ["开心", "高兴", "哈哈", "嘻嘻", "好呀", "太好", "真棒",

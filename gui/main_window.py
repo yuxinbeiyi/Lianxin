@@ -191,8 +191,20 @@ class MainWindow(QMainWindow):
         self._todo_reminder_timer.start(30 * 60 * 1000)  # 30分钟
         self._check_overdue_todos()  # 启动时立即检查一次
 
+        # ── 初始化情感系统（涟漪） ─────────────────────────────
+        try:
+            from brain.emotional import get_manager as _get_emotion_mgr
+            _get_emotion_mgr()  # 触发加载 + 时间衰减
+            # 每 5 分钟更新一次时间衰减（孤独漂移）
+            self._emotion_decay_timer = QTimer(self)
+            self._emotion_decay_timer.timeout.connect(self._on_emotion_decay_tick)
+            self._emotion_decay_timer.start(300_000)  # 5 分钟
+        except Exception:
+            pass
+
         self._show_greeting()
         self._preload_whisper()   # 后台预载 Whisper 模型
+        self._preload_tts()       # 后台预热 TTS 引擎
 
 
         # ── 主动聊天定时器（每 5 分钟轮询一次）──────────────
@@ -587,6 +599,7 @@ class MainWindow(QMainWindow):
         self._char_widget.get_api_config_button().clicked.connect(self._show_api_config)
         self._char_widget.get_alarm_button().clicked.connect(self._on_alarm_clicked)
         self._char_widget.get_camera_button().clicked.connect(self._on_camera_capture)
+        self._char_widget.get_emotion_button().clicked.connect(self._on_open_emotion_debug)
         top_layout.addWidget(self._char_widget)
 
         self._chat_widget = ChatWidget()
@@ -692,6 +705,21 @@ class MainWindow(QMainWindow):
 
     def _on_model_failed(self, err: str):
         self._chat_widget.add_system_tip(f"语音识别模型加载失败：{err}")
+
+    def _preload_tts(self):
+        """后台线程预热 TTS 引擎（GPT-SoVITS worker），缩短首次语音回复延迟。"""
+        from config import get_tts_config
+        cfg = get_tts_config()
+        if not cfg.get("tts_warmup", True):
+            return
+        def _warmup():
+            try:
+                from brain.tts_engine import TtsEngine
+                engine = TtsEngine()
+                engine.warmup()
+            except Exception:
+                pass
+        threading.Thread(target=_warmup, daemon=True).start()
 
     # ── 文字对话 ─────────────────────────────────────────────
     def _on_user_message(self, text: str, images: list = None):
@@ -1226,6 +1254,13 @@ class MainWindow(QMainWindow):
         dlg.date_saved.connect(self._on_first_meet_date_saved)
         dlg.exec_()
 
+    def _on_open_emotion_debug(self):
+        """打开涟漪情感系统调试面板。"""
+        play_sound("ButtonAll.mp3")
+        from gui.emotional_debug_dialog import EmotionalDebugDialog
+        dlg = EmotionalDebugDialog(self)
+        dlg.exec_()
+
     def _on_first_meet_date_saved(self):
         self._accompany_stats.reload()
         self._chat_widget.add_system_tip("📅 初识日期已更新，陪伴统计已同步。")
@@ -1567,6 +1602,8 @@ class MainWindow(QMainWindow):
     def _on_proactive_response(self, text: str):
         """主动聊天回复"""
         self._proactive_scheduler.notify_fired()
+        if not text:
+            return
 
         # 桌面主动消息
         if self._proactive_scheduler.desktop_enabled:
@@ -1602,6 +1639,14 @@ class MainWindow(QMainWindow):
             return
         delay_ms = cfg.get("delay_minutes", 5) * 60 * 1000
         self._heartbeat_check_timer.start(delay_ms)
+
+    def _on_emotion_decay_tick(self):
+        """情感衰减计时器触发，更新孤独漂移等时间衰减。"""
+        try:
+            from brain.emotional import get_manager as _get_emotion_mgr
+            _get_emotion_mgr().update_decay_only()
+        except Exception:
+            pass
 
     def _on_heartbeat_check(self):
         """心跳自检触发：检查活跃时段后启动 Worker。"""

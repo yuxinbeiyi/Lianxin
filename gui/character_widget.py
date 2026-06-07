@@ -323,6 +323,7 @@ class CharacterWidget(QWidget):
         self._btn_api_config = self._create_button("🔑 API Key", color="#FF9500")
         self._btn_alarm      = self._create_button("⏰ 闹钟&提醒")
         self._btn_camera     = self._create_button("视觉理解")
+        self._btn_emotion    = self._create_button("🧪 情感状态", color="#8E44AD")
 
         grid.addWidget(self._btn_accompany, 0, 0)
         grid.addWidget(self._btn_settings, 0, 1)
@@ -330,6 +331,7 @@ class CharacterWidget(QWidget):
         grid.addWidget(self._btn_api_config, 1, 1)
         grid.addWidget(self._btn_alarm, 2, 0)
         grid.addWidget(self._btn_camera, 2, 1)
+        grid.addWidget(self._btn_emotion, 3, 0, 1, 2)
         popup_layout.addLayout(grid)
         popup_layout.addStretch()
 
@@ -573,6 +575,9 @@ class CharacterWidget(QWidget):
 
     def get_camera_button(self):
         return self._btn_camera
+
+    def get_emotion_button(self):
+        return self._btn_emotion
 
     def _update_status_label(self, state: str):
         text, color = STATE_CONFIG.get(state, ("● 待机中", "#6C7BFF"))

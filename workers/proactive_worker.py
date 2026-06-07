@@ -92,6 +92,15 @@ class ProactiveWorker(QThread):
         self._camera_wait = camera_wait
 
     def run(self):
+        # ── 情感系统：检查是否允许主动聊天 ────────────────────
+        try:
+            from brain.emotional import get_manager as _get_emotion_mgr
+            if not _get_emotion_mgr().proactive_allowed:
+                self.response_ready.emit("")
+                return
+        except Exception:
+            pass
+
         try:
             obs_path = None
             obs_text = self._observation_desc

@@ -684,6 +684,23 @@ class SettingsDialog(QDialog):
         speed_vbox.addLayout(speed_row)
         tts_layout.addWidget(speed_frame)
 
+        # ── 启动预热选项 ──
+        warmup_frame = self._create_frame()
+        warmup_vbox = QVBoxLayout(warmup_frame)
+        warmup_vbox.setSpacing(6)
+        self._tts_warmup_cb = QCheckBox("启动时预热语音引擎")
+        self._tts_warmup_cb.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        warmup_vbox.addWidget(self._tts_warmup_cb)
+        warmup_desc = QLabel(
+            "开启后，莲心启动时会在后台自动加载 GPT-SoVITS 模型。\n"
+            "可大幅缩短首次语音回复的等待时间（约 5-15 秒）。\n"
+            "仅在 GPT-SoVITS 可用时生效，关闭可节省 GPU 显存。"
+        )
+        warmup_desc.setWordWrap(True)
+        warmup_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        warmup_vbox.addWidget(warmup_desc)
+        tts_layout.addWidget(warmup_frame)
+
         # 试听按钮
         test_frame = self._create_frame()
         test_hbox = QHBoxLayout(test_frame)
@@ -705,6 +722,18 @@ class SettingsDialog(QDialog):
         tts_tip.setWordWrap(True)
         tts_tip.setStyleSheet("color: #888; font-size: 12px; padding: 8px;")
         tts_layout.addWidget(tts_tip)
+
+        # ── 情感系统调试入口 ──────────────────────────────────
+        debug_row = QHBoxLayout()
+        debug_row.addStretch()
+        self._emotion_debug_btn = QPushButton("🧪 情感系统调试")
+        self._emotion_debug_btn.setFixedSize(140, 24)
+        self._emotion_debug_btn.setStyleSheet(
+            "font-size: 11px; color: #888; border: 1px solid #ddd;"
+        )
+        self._emotion_debug_btn.clicked.connect(self._on_open_emotion_debug)
+        debug_row.addWidget(self._emotion_debug_btn)
+        tts_layout.addLayout(debug_row)
 
         tts_layout.addStretch()
         tab_widget.addTab(tts_tab, "🎙️ 语音合成")
@@ -937,6 +966,7 @@ class SettingsDialog(QDialog):
         speed = tts_cfg.get("speed", 1.0)
         self._tts_speed_slider.setValue(int(speed * 100))
         self._tts_speed_value.setText(f"{speed:.1f}x")
+        self._tts_warmup_cb.setChecked(tts_cfg.get("tts_warmup", True))
         self._update_gs_status()
 
     def _on_save(self):
@@ -1001,6 +1031,7 @@ class SettingsDialog(QDialog):
             "top_p": 0.9,
             "sample_steps": 32,
             "edge_tts_voice": "zh-CN-XiaoxiaoNeural",
+            "tts_warmup": self._tts_warmup_cb.isChecked(),
         })
 
         self.accept()
@@ -1139,3 +1170,10 @@ class SettingsDialog(QDialog):
                 self._tts_test_btn.setEnabled(True)
 
         threading.Thread(target=_test, daemon=True).start()
+
+    def _on_open_emotion_debug(self):
+        """打开情感系统调试面板。"""
+        from gui.emotional_debug_dialog import EmotionalDebugDialog
+        dlg = EmotionalDebugDialog(self)
+        dlg.exec_()
+        dlg.exec_()

@@ -545,7 +545,18 @@ class TtsEngine:
             except Exception:
                 pass
 
-    # ── 静态方法 ──────────────────────────────────────────
+    def warmup(self):
+        """预热 GPT-SoVITS 引擎：提前启动 worker，加载模型到 GPU。
+        在后台线程调用，不阻塞 UI。仅当配置了预热且 GPT-SoVITS 可用时生效。"""
+        if not _is_gpt_sovits_available():
+            logger.info("warmup：GPT-SoVITS 不可用，跳过预热")
+            return
+        try:
+            logger.info("warmup：预热 GPT-SoVITS worker…")
+            _ensure_worker()
+            logger.info("warmup：GPT-SoVITS worker 已就绪")
+        except Exception as e:
+            logger.warning(f"warmup：预热失败 {e}")
 
     @staticmethod
     def list_ref_styles() -> list:

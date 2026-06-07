@@ -3152,7 +3152,18 @@ TOOL_EXECUTORS = {
     }
 
 def execute_tool(name: str, tool_input: dict) -> str:
-    """根据工具名称调用对应的执行函数。"""
+    """根据工具名称调用对应的执行函数。调用前检查防御模式。"""
+    # ── 情感系统防御模式检查 ────────────────────────────────
+    try:
+        from brain.emotional import get_manager as _get_emotion_mgr
+        _allowed, _reason = _get_emotion_mgr().check_tool_allowed(name)
+        if not _allowed:
+            # 仍然执行工具但不输出结果，而是返回拒绝消息
+            # 这样 LLM 能看到"拒绝"结果，不会以为自己成功了
+            return f"[拒绝] {_reason}"
+    except Exception:
+        pass
+
     executor = TOOL_EXECUTORS.get(name)
     if not executor:
         return f"未知工具: {name}"

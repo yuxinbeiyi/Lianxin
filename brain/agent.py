@@ -258,6 +258,23 @@ class AgentCore:
         self._last_emotion = emotion  # 供 GUI 读取，用于选图
         self._last_raw_response = response_text  # 保留以备他用
 
+        # ── 情感系统：分析本轮交互 ────────────────────────────
+        if not effective_disable:
+            try:
+                from brain.emotional import get_manager as _get_emotion_mgr
+                # 统计本轮工具调用次数
+                _tool_count = 0
+                for _m in reversed(self.history):
+                    if _m.get("role") == "assistant" and "tool_calls" in _m:
+                        _tool_count += len(_m["tool_calls"])
+                    elif _m.get("role") == "user":
+                        break
+                _get_emotion_mgr().analyze_and_update(
+                    [user_message], tool_call_count=_tool_count
+                )
+            except Exception:
+                pass
+
         # 重要：history 存原始文本（含标签），让 LLM 在后续对话中看到自己的情绪标签，强化行为
         self.history.append({"role": "assistant", "content": response_text})
         # 数据库存干净文本（供 GUI 展示和会话恢复时读取）
@@ -742,6 +759,16 @@ class AgentCore:
         if not self._use_local:
             realtime += "\n注意：涉及时间、日期、节气、节日相关的问题时，必须先调用 get_current_time 工具获取最新信息，不要依赖记忆或猜测。"
         messages.append({"role": "system", "content": realtime})
+
+        # ── 注入情感状态（涟漪系统） ──────────────────────────
+        if not self._use_local:
+            try:
+                from brain.emotional import get_manager as _get_emotion_mgr
+                _emotion_snippet = _get_emotion_mgr().build_prompt_snippet()
+                if _emotion_snippet:
+                    messages.append({"role": "system", "content": _emotion_snippet})
+            except Exception:
+                pass
 
         # 注入跨端记忆上下文（有则加，无则忽略；本地模式跳过）
         if not self._use_local:
