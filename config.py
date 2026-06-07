@@ -789,6 +789,28 @@ def save_proxy_config(config: dict):
     _save_full_config(full)
 
 
+# ── Bing Search API 配置 ────────────────────────────────────────────
+_BING_API_DEFAULTS = {
+    "api_key": "",
+}
+
+
+def get_bing_api_config() -> dict:
+    """读取 Bing Search API 配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    bing = full.get("bing_api", {})
+    result = _BING_API_DEFAULTS.copy()
+    result.update(bing)
+    return result
+
+
+def save_bing_api_config(config: dict):
+    """保存 Bing Search API 配置（仅更新 bing_api 部分）。"""
+    full = _load_full_config()
+    full["bing_api"] = config
+    _save_full_config(full)
+
+
 # ── TTS 语音合成配置 ────────────────────────────────────────────
 _TTS_DEFAULTS = {
     "engine": "auto",                # "auto" | "edge_tts" | "gpt_sovits"
