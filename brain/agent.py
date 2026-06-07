@@ -276,7 +276,20 @@ class AgentCore:
         ).strip()
         display_response = re.sub(r'\n\s*\n', '\n', display_response).strip()
 
-        return display_response  # 返回干净文本，不含标签
+        # 防御性过滤：移除所有 emoji 表情符号（显示文本也不展示）
+        display_response = re.sub(
+            r'[\U0001F000-\U0001FFFF]'
+            r'|[\U00002702-\U000027B0]'
+            r'|[\U000024C2-\U0001F251]'
+            r'|[\U0001F600-\U0001F64F]'
+            r'|[\U0001F300-\U0001F5FF]'
+            r'|[\U0001F680-\U0001F6FF]'
+            r'|[\U0001F1E0-\U0001F1FF]'
+            r'|[\U00002700-\U000027BF]',
+            '', display_response
+        ).strip()
+
+        return display_response  # 返回干净文本，不含标签和 emoji
 
     def _trigger_auto_extraction(self):
         """在后台线程中自动提取记忆（不阻塞对话）。本地模型跳过（不擅长 JSON 格式化输出）。"""

@@ -26,10 +26,9 @@ class VoiceSpeaker:
             pygame.mixer.init()
             self._ready = True
 
-    # ── 文本清洗方法（保持不变）─────────────────────────────────
+    # ── 文本清洗方法 ─────────────────────────────────
     def _clean_text_for_tts(self, text: str) -> str:
-        """安全清洗：移除 Markdown 语法、预定义表情符号、希腊字母 ω，
-        并为描述性括号内容增加停顿（句号），将换行转换为句号。"""
+        """安全清洗：移除 Markdown、emoji、特殊符号，使 TTS 不读乱码。"""
         if not text:
             return ""
 
@@ -46,36 +45,73 @@ class VoiceSpeaker:
         text = re.sub(r'`([^`]+)`', r'\1', text)
         # 5. 移除标题标记（行首的 #）
         text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-        
-        # 6. 移除常见会导致 TTS 乱读的表情符号（仅移除明确列表中的）
-        common_emojis = [
-            '✨', '🌟', '⭐', '💡', '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎',
-            '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇', '🙂', '🙃', '😉',
-            '😌', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛', '😝', '😜', '🤪', '🤨',
-            '🧐', '🤓', '😎', '🤩', '🥳', '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '☹️',
-            '😣', '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠', '😡', '🤬', '🤯', '😳',
-            '🥵', '🥶', '😱', '😨', '😰', '😥', '😓', '🤗', '🤔', '🤭', '🤫', '🤥', '😶',
-            '😐', '😑', '😬', '🙄', '😯', '😦', '😧', '😮', '😲', '🥱', '😴', '🤤', '😪',
-            '😵', '🤐', '🥴', '🤢', '🤮', '🤧', '😷', '🤒', '🤕', '🤑', '🤠', '😈', '👿',
-            '👹', '👺', '🤡', '💩', '👻', '💀', '☠️', '👽', '👾', '🤖', '🎃', '😺', '😸',
-            '😹', '😻', '😼', '😽', '🙀', '😿', '😾', '🙈', '🙉', '🙊'
-        ]
-        for emoji in common_emojis:
-            text = text.replace(emoji, '')
-        
-        # 7. 删除希腊字母 ω 和 Ω（不读出）
-        text = text.replace('ω', '').replace('Ω', '')
-        
-        # 8. 为括号描述性内容增加停顿：将右括号（后面不跟标点）替换为“）。”
-        text = re.sub(r'\)(?![。！？])', '）。 ', text)
-        
-        # 9. 将换行符转换为句号（增加停顿）
+        # 6. 移除代码块标记
+        text = re.sub(r'```[\s\S]*?```', '', text)
+        text = re.sub(r'~~~[\s\S]*?~~~', '', text)
+
+        # 7. 移除所有 emoji（Unicode 表情符号区段）
+        # 涵盖 Emoticons、Dingbats、Misc Symbols、Supplemental 等
+        text = re.sub(
+            r'[\U0001F000-\U0001FFFF]'       # 杂项符号和表情符号
+            r'|[\U00002702-\U000027B0]'       # 丁贝符
+            r'|[\U000024C2-\U0001F251]'       # 各种杂项符号
+            r'|[\U0001F600-\U0001F64F]'       # 表情符号
+            r'|[\U0001F300-\U0001F5FF]'       # 杂项符号和图案
+            r'|[\U0001F680-\U0001F6FF]'       # 交通和地图符号
+            r'|[\U0001F1E0-\U0001F1FF]'       # 区域标志
+            r'|[\U00002700-\U000027BF]'       # 装饰性丁贝符
+            r'|[\U0000FE00-\U0000FE0F]'       # 变异选择器（表情符号颜色）
+            r'|[\U0000200D\U0000FE0F]'        # 零宽连接器
+            r'|[❤️⭐✨💡🔥🎶🎵💤💢💦💨💫🌟]',  # 常见单个 emoji 补充
+            '', text
+        )
+        # 8. 移除颜文字（括号包围的特殊符号组合，如 (｀・ω・´)）
+        text = re.sub(r'[\(（\[［][\s\-＝=]*[｀´・ω∀∂⊙◎●○■□△▲▼☆★♪♫♬αβγδεθλμπσφψ]+[\s\-＝=]*[\)）\]］]', '', text)
+
+        # 9. 删除 TTS 会逐字朗读的符号
+        # 横线/短横 → 空格
+        text = text.replace('——', '，')
+        text = text.replace('–', '，')
+        text = text.replace('—', '，')
+        text = re.sub(r'(?<=[^\d])-(?=[^\d])', ' ', text)  # 非数字间的单独-号
+        # 其他符号 → 移除或空格
+        text = text.replace('_', ' ')
+        text = text.replace('~', ' ')
+        text = text.replace('|', ' ')
+        text = re.sub(r'\\+', ' ', text)  # 反斜线
+        text = text.replace('^', ' ')
+        text = text.replace('@', ' at ')
+        text = text.replace('&', ' and ')
+        text = text.replace('+', ' plus ')
+        text = text.replace('=', ' equals ')
+        text = text.replace('#', ' ')
+        text = text.replace('/', ' ')
+        text = re.sub(r'\$\$?', ' ', text)  # 美元符号
+        text = re.sub(r'%', ' percent ', text)
+
+        # 10. 移除 URL
+        text = re.sub(r'https?://[^\s,，。！？、\)）】]+', '', text)
+
+        # 11. 规范化重复标点
+        text = re.sub(r'！{2,}', '！', text)
+        text = re.sub(r'？{2,}', '？', text)
+        text = re.sub(r'。{2,}', '……', text)
+        text = re.sub(r'，{2,}', '，', text)
+        text = re.sub(r'~{2,}', ' ', text)
+
+        # 12. 为括号内容增加停顿：右括号后不跟标点则加句号
+        text = re.sub(r'\)(?![。！？,，])', '）。 ', text)
+
+        # 13. 将换行符转换为句号
         text = re.sub(r'\n+', '。 ', text)
-        
-        # 10. 将连续多个空白字符压缩为一个空格
+
+        # 14. 将连续多个空白字符压缩为一个空格
         text = re.sub(r'\s+', ' ', text).strip()
-        
-        # 11. 如果清洗后为空，返回一个空格（避免无声）
+
+        # 15. 移除残留的 emoji 变异选择器/零宽字符
+        text = text.replace('‍', '').replace('﻿', '').replace('​', '')
+
+        # 16. 如果清洗后为空，返回一个空格（避免无声）
         if not text:
             return " "
         return text

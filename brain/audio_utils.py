@@ -188,6 +188,91 @@ def transcribe(wav_path: str, language: str = "zh") -> str:
 # Edge-TTS（文字 → 语音 WAV）
 # ══════════════════════════════════════════════════════════
 
+def clean_tts_text(text: str) -> str:
+    """清洗 TTS 文本：移除 Markdown、emoji、特殊符号，防止 TTS 乱读。"""
+    import re
+    if not text:
+        return ""
+
+    # 1. Markdown 链接 [text](url) -> text
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    # 2. 图片
+    text = re.sub(r'!\[([^\]]*)\]\([^\)]+\)', '', text)
+    # 3. 加粗斜体等
+    text = re.sub(r'\*\*([^\*]+)\*\*', r'\1', text)
+    text = re.sub(r'\*([^\*]+)\*', r'\1', text)
+    text = re.sub(r'__([^_]+)__', r'\1', text)
+    text = re.sub(r'~~([^~]+)~~', r'\1', text)
+    # 4. 行内代码
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    # 5. 标题标记
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # 6. 代码块
+    text = re.sub(r'```[\s\S]*?```', '', text)
+    text = re.sub(r'~~~[\s\S]*?~~~', '', text)
+
+    # 7. 移除所有 emoji
+    text = re.sub(
+        r'[\U0001F000-\U0001FFFF]'
+        r'|[\U00002702-\U000027B0]'
+        r'|[\U000024C2-\U0001F251]'
+        r'|[\U0001F600-\U0001F64F]'
+        r'|[\U0001F300-\U0001F5FF]'
+        r'|[\U0001F680-\U0001F6FF]'
+        r'|[\U0001F1E0-\U0001F1FF]'
+        r'|[\U00002700-\U000027BF]'
+        r'|[\U0000FE00-\U0000FE0F]'
+        r'|[❤️⭐✨💡🔥🎶🎵💤💢💦💨💫🌟]',
+        '', text
+    )
+    text = text.replace('‍', '').replace('﻿', '').replace('​', '')
+
+    # 8. 颜文字
+    text = re.sub(r'[\(（\[［][\s\-＝=]*[｀´・ω∀∂⊙◎●○■□△▲▼☆★♪♫♬αβγδεθλμπσφψ]+[\s\-＝=]*[\)）\]］]', '', text)
+
+    # 9. 符号替换
+    text = text.replace('——', '，')
+    text = text.replace('–', '，')
+    text = text.replace('—', '，')
+    text = re.sub(r'(?<=[^\d])-(?=[^\d])', ' ', text)
+    text = text.replace('_', ' ')
+    text = text.replace('~', ' ')
+    text = text.replace('|', ' ')
+    text = re.sub(r'\\+', ' ', text)
+    text = text.replace('^', ' ')
+    text = text.replace('@', ' at ')
+    text = text.replace('&', ' and ')
+    text = text.replace('+', ' plus ')
+    text = text.replace('=', ' equals ')
+    text = text.replace('#', ' ')
+    text = text.replace('/', ' ')
+    text = re.sub(r'\$\$?', ' ', text)
+    text = re.sub(r'%', ' percent ', text)
+
+    # 10. 移除 URL
+    text = re.sub(r'https?://[^\s,，。！？、\)）】]+', '', text)
+
+    # 11. 规范化重复标点
+    text = re.sub(r'！{2,}', '！', text)
+    text = re.sub(r'？{2,}', '？', text)
+    text = re.sub(r'。{2,}', '……', text)
+    text = re.sub(r'，{2,}', '，', text)
+
+    # 12. 括号停顿
+    text = re.sub(r'\)(?![。！？,，])', '）。 ', text)
+
+    # 13. 换行 → 句号
+    text = re.sub(r'\n+', '。 ', text)
+
+    # 14. 压缩空白
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    # 15. 空保护
+    if not text:
+        return " "
+    return text
+
+
 def tts_to_wav(text: str, wav_path: str, voice: str = "zh-CN-XiaoxiaoNeural",
                mood: str = None):
     """文字 → TTS 语音文件（WAV 24000Hz 单声道 16bit）。
@@ -196,6 +281,9 @@ def tts_to_wav(text: str, wav_path: str, voice: str = "zh-CN-XiaoxiaoNeural",
     不可用时回退到 Edge-TTS（云端标准发音）。
     mood 参数用于选择 GPT-SoVITS 的情绪音色。
     """
+    # 先清洗文本，防止 TTS 读符号/emoji
+    text = clean_tts_text(text)
+
     # 尝试 TtsEngine（GPT-SoVITS 优先）
     try:
         from brain.tts_engine import TtsEngine
