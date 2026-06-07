@@ -268,7 +268,6 @@ class BrowserController:
             "user_data_dir": str(_USER_DATA_DIR),
             "headless": self._headless,
             "args": [
-                "--no-sandbox",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-features=UseDnsHttpsSvcb",
             ],

@@ -13,7 +13,7 @@ auto_activate: true
 ## 能力说明
 
 - **声音克隆**：通过参考音频定义莲心的专属声线，让每次语音回复都有统一的"人设声音"
-- **情绪选择**：支持 casual（日常温柔）、tsundere（傲娇）、romantic（深情）、long（长句）四种情绪音色
+- **情绪选择**：支持 casual（日常温柔）、tsundere（傲娇）、romantic（深情）、long（长句）、angry（生气）五种情绪音色
 - **自动情绪匹配**：不指定情绪时根据文本内容自动匹配最合适的情绪
 - **无缝回退**：GPT-SoVITS 不可用时自动使用 Edge-TTS，语音功能不受影响
 
@@ -23,6 +23,7 @@ auto_activate: true
 |------|------|
 | 用户说"用语音跟我说句话" | `speak_voice(text="...", mood="casual")` |
 | 用户说"用傲娇的语气说" | `speak_voice(text="...", mood="tsundere")` |
+| 用户说"用生气的语气说" | `speak_voice(text="...", mood="angry")` |
 | 用户问"有哪些语音风格" | `list_voice_styles()` |
 | 用户说"把语音风格设为深情" | `set_voice_mood(mood="romantic")` |
 | 长文本朗读 | `speak_voice(text="长文本...", mood="long")` |

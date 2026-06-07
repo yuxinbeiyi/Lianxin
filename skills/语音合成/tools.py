@@ -30,7 +30,7 @@ TOOL_DEFINITIONS = [
                 "将文字合成为语音并发送/播放。当用户要求用语音说话、念某段文字、"
                 "发送语音消息时调用此工具。支持情绪音色选择："
                 "casual（日常温柔）、tsundere（傲娇强势）、romantic（深情）、"
-                "long（长句稳定）、auto（根据文本自动匹配）。"
+                "long（长句稳定）、angry（生气愤怒）、auto（根据文本自动匹配）。"
             ),
             "parameters": {
                 "type": "object",
@@ -41,7 +41,7 @@ TOOL_DEFINITIONS = [
                     },
                     "mood": {
                         "type": "string",
-                        "enum": ["auto", "casual", "tsundere", "romantic", "long"],
+                        "enum": ["auto", "casual", "tsundere", "romantic", "long", "angry"],
                         "description": "语音情绪/音色风格。auto=自动匹配。默认 auto。"
                     }
                 },
@@ -56,14 +56,14 @@ TOOL_DEFINITIONS = [
             "description": (
                 "设置当前会话的默认语音情绪/音色风格。设置后后续的语音合成都会使用此风格，"
                 "除非当前会话内再次修改。可选：auto（自动匹配）、casual（日常温柔）、"
-                "tsundere（傲娇强势）、romantic（深情）、long（长句稳定）。"
+                "tsundere（傲娇强势）、romantic（深情）、long（长句稳定）、angry（生气愤怒）。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "mood": {
                         "type": "string",
-                        "enum": ["auto", "casual", "tsundere", "romantic", "long"],
+                        "enum": ["auto", "casual", "tsundere", "romantic", "long", "angry"],
                         "description": "要设置的默认语音情绪风格"
                     }
                 },
@@ -84,6 +84,8 @@ TOOL_DEFINITIONS = [
 
 # ── 每会话状态（模块级变量，重启后重置为 auto） ─────────
 _session_mood = "auto"
+_last_spoken_text = ""  # 缓存最后被朗读的文字，供 main_window 同步到消息框
+_stop_event = threading.Event()  # 停止信号，用户发新消息时触发
 
 
 # ── 句子分割 + 流式合成 ──────────────────────────────────
@@ -98,7 +100,7 @@ def _split_into_sentences(text: str):
 
 
 def _play_blocking(wav_path: str):
-    """同步播放 WAV 文件，播放完成才返回。"""
+    """同步播放 WAV 文件，播放完成才返回。支持停止信号中断。"""
     try:
         import pygame
         if not pygame.mixer.get_init():
@@ -108,13 +110,16 @@ def _play_blocking(wav_path: str):
         channel = sound.play()
         if channel is not None:
             while channel.get_busy():
+                if _stop_event.is_set():
+                    channel.stop()
+                    break
                 time.sleep(0.05)
     except Exception as e:
         logger.warning(f"播放失败: {e}")
 
 
 def _synthesize_stream(sentences, mood):
-    """后台线程：逐句合成 + 流水线播放。第 N 句播放时合成第 N+1 句。"""
+    """后台线程：逐句合成 + 流水线播放。支持停止信号中断。"""
     import queue as _queue
     from brain.tts_engine import TtsEngine
 
@@ -124,6 +129,8 @@ def _synthesize_stream(sentences, mood):
 
     def producer():
         for i, sentence in enumerate(sentences):
+            if _stop_event.is_set():
+                break
             if not sentence.strip():
                 continue
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_s{i}.wav")
@@ -134,12 +141,28 @@ def _synthesize_stream(sentences, mood):
             try:
                 ok = engine.synthesize(sentence, tmp_path, mood=mood)
                 if ok:
-                    synth_queue.put(("audio", tmp_path))
+                    # 带超时的 put，避免停止信号下发后 producer 阻塞
+                    while not _stop_event.is_set():
+                        try:
+                            synth_queue.put(("audio", tmp_path), timeout=0.3)
+                            break
+                        except _queue.Full:
+                            continue
                 else:
-                    synth_queue.put(("error", None))
+                    while not _stop_event.is_set():
+                        try:
+                            synth_queue.put(("error", None), timeout=0.3)
+                            break
+                        except _queue.Full:
+                            continue
             except Exception as e:
                 logger.warning(f"句子{i+1}合成失败: {e}")
-                synth_queue.put(("error", None))
+                while not _stop_event.is_set():
+                    try:
+                        synth_queue.put(("error", None), timeout=0.3)
+                        break
+                    except _queue.Full:
+                        continue
         synth_queue.put(("done", None))
 
     prod = threading.Thread(target=producer, daemon=True)
@@ -147,10 +170,17 @@ def _synthesize_stream(sentences, mood):
 
     # Consumer：依次播放，每句音频就绪后立即播放
     while True:
-        msg_type, data = synth_queue.get()
+        try:
+            msg_type, data = synth_queue.get(timeout=0.5)
+        except _queue.Empty:
+            if _stop_event.is_set():
+                break
+            continue
         if msg_type == "done":
             break
         elif msg_type == "audio":
+            if _stop_event.is_set():
+                break
             _play_blocking(data)
 
     prod.join()
@@ -167,10 +197,14 @@ def _synthesize_stream(sentences, mood):
 
 def _speak_voice(text: str, mood: str = "auto") -> str:
     """合成语音并发送/播放。多句文本自动启用流式合成。"""
-    global _session_mood
+    global _session_mood, _last_spoken_text
 
     if not text or not text.strip():
         return "语音文本为空"
+
+    # 清除之前可能的停止信号，开始新回合的语音合成
+    _stop_event.clear()
+    _last_spoken_text = text  # 缓存被朗读的文字，供主界面同步消息框内容
 
     # 选择最终情绪
     effective_mood = mood if mood != "auto" else _session_mood
@@ -216,7 +250,7 @@ def _speak_voice(text: str, mood: str = "auto") -> str:
 def _set_voice_mood(mood: str) -> str:
     """设置会话默认情绪。"""
     global _session_mood
-    valid = ["auto", "casual", "tsundere", "romantic", "long"]
+    valid = ["auto", "casual", "tsundere", "romantic", "long", "angry"]
     if mood not in valid:
         return f"无效的语音风格：{mood}。可选：{'、'.join(valid)}"
     _session_mood = mood
@@ -226,6 +260,7 @@ def _set_voice_mood(mood: str) -> str:
         "tsundere": "傲娇",
         "romantic": "深情",
         "long": "长句稳定",
+        "angry": "生气",
     }.get(mood, mood)
     return f"语音风格已设为：{label}（{mood}）"
 
@@ -341,6 +376,17 @@ def _wait_playback():
             break
         time.sleep(interval)
         waited += interval
+
+
+def stop_voice_playback():
+    """停止当前正在播放的语音。供 main_window 在用户发新消息时调用。"""
+    _stop_event.set()
+    try:
+        import pygame
+        if pygame.mixer.get_init():
+            pygame.mixer.stop()
+    except Exception:
+        pass
 
 
 TOOL_EXECUTORS = {

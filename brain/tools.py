@@ -1796,6 +1796,69 @@ def web_search(query: str, max_results: int = 5) -> str:
             )
         return "\n".join(output_lines)
 
+    def _try_bing(proxies=None):
+        """尝试 Bing 搜索，返回结果字符串或 None。"""
+        url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}&count={min(max_results, 10)}"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        }
+        resp = requests.get(url, headers=headers, timeout=10, proxies=proxies)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        results = []
+        for item in soup.select(".b_algo"):
+            title_el = item.select_one("h2 a")
+            if not title_el:
+                continue
+            title = title_el.get_text(strip=True)
+            href = title_el.get("href", "")
+            abstract_el = item.select_one(".b_caption p")
+            abstract = abstract_el.get_text(strip=True) if abstract_el else ""
+            results.append({"title": title, "href": href, "body": abstract})
+        if not results:
+            return None
+        output_lines = [f"搜索「{query}」的结果："]
+        for i, r in enumerate(results[:max_results], 1):
+            output_lines.append(f"\n{i}. {r['title']}\n   链接：{r['href']}\n   摘要：{r['body']}")
+        return "\n".join(output_lines)
+
+    def _try_browser_search():
+        """使用 Playwright 浏览器搜索（能渲染 JS，最可靠）。"""
+        try:
+            from brain.browser_controller import get_browser
+            browser = get_browser()
+            url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}&count={min(max_results, 10)}"
+            page = browser._ensure_page()
+            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
+            js_code = f"""() => {{
+                const items = document.querySelectorAll('.b_algo');
+                return Array.from(items).slice(0, {min(max_results, 10)}).map(item => {{
+                    const titleEl = item.querySelector('h2 a');
+                    const snippetEl = item.querySelector('.b_caption p');
+                    return {{
+                        title: titleEl?.textContent?.trim?.() || '',
+                        href: titleEl?.href || '',
+                        body: snippetEl?.textContent?.trim?.() || ''
+                    }};
+                }});
+            }}"""
+            results = page.evaluate(js_code)
+            if not results:
+                return None
+            output_lines = [f"搜索「{query}」的结果："]
+            for i, r in enumerate(results, 1):
+                output_lines.append(f"\n{i}. {r['title']}\n   链接：{r.get('href', '')}\n   摘要：{r.get('body', '')}")
+            return "\n".join(output_lines)
+        except Exception as e:
+            logger.warning(f"浏览器搜索失败: {e}")
+            return None
+
     # ── 后端 1：百度（先直连，不通再走代理） ────────────
     try:
         result = _try_baidu()
@@ -1829,6 +1892,31 @@ def web_search(query: str, max_results: int = 5) -> str:
                 return result
     except Exception:
         pass
+
+    # ── 后端 3：Bing（先直连，不通再走代理） ────────────
+    try:
+        result = _try_bing()
+        if result:
+            return result
+    except Exception:
+        pass
+    try:
+        proxies = _get_proxies()
+        if proxies:
+            result = _try_bing(proxies)
+            if result:
+                return result
+    except Exception:
+        pass
+
+    # ── 后端 4：Playwright 浏览器搜索（最可靠） ─────────
+    try:
+        result = _try_browser_search()
+        if result:
+            return result
+    except Exception:
+        pass
+
     return f"搜索失败：直连和代理均无法完成搜索。"
 
 # ==================== 网页内容提取工具函数 ====================

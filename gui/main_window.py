@@ -125,6 +125,7 @@ class MainWindow(QMainWindow):
         self._proactive_worker:  ProactiveWorker  | None = None
         self._ocr_worker = None
         self._is_recording = False
+        self._speak_voice_used = False  # 标记本回合是否已调用了 speak_voice 工具
 
         # ── QQ 桥接 ──────────────────────────────────────────
         self._qq_bridge = None
@@ -694,6 +695,13 @@ class MainWindow(QMainWindow):
 
     # ── 文字对话 ─────────────────────────────────────────────
     def _on_user_message(self, text: str, images: list = None):
+        # 用户发消息 → 立即停止语音播放、重置语音标记
+        try:
+            from skills.语音合成.tools import stop_voice_playback
+            stop_voice_playback()
+        except Exception:
+            pass
+        self._speak_voice_used = False
         if images is None:
             images = []
         selected_tool = self._input_panel.get_selected_tool()
@@ -781,6 +789,8 @@ class MainWindow(QMainWindow):
 
 
     def _on_tool_called(self, tool_name: str):
+        if tool_name == "speak_voice":
+            self._speak_voice_used = True  # 标记已语音播报，后面不再重复播放
         self._chat_widget.show_thinking(tool_name)
         # 标记需要播放抱胸动画，等思考结束后再播放
         self._pending_arms_cross = random.random() < 0.03
@@ -810,6 +820,15 @@ class MainWindow(QMainWindow):
 
         # text 已经是 agent 剥离标签后的干净文本
         display_text = text
+
+        # 如果本回合 speak_voice 工具已播放语音，强制消息框内容与之匹配
+        if self._speak_voice_used:
+            try:
+                from skills.语音合成.tools import _last_spoken_text
+                if _last_spoken_text:
+                    display_text = _last_spoken_text
+            except Exception:
+                pass
 
         # 播放音效
         play_sound("lianxinSend.mp3")
@@ -842,6 +861,9 @@ class MainWindow(QMainWindow):
         if self.isMinimized():
             self.flash_taskbar(flash_count=0)
         if self._global_settings.silent_mode:
+            self._restart_listening()
+        elif self._speak_voice_used:
+            self._speak_voice_used = False  # 已由 speak_voice 工具播放，不再重复
             self._restart_listening()
         else:
             self._speaker_worker = SpeakerWorker(self._speaker, display_text, self)
@@ -1904,6 +1926,13 @@ class MainWindow(QMainWindow):
 
     def _send_user_text_to_agent(self, text: str, skip_bubble: bool = False):
         """内部方法：将文字作为用户消息发送给 AI，并可选择跳过添加用户气泡"""
+        # 停止任何正在播放的语音
+        try:
+            from skills.语音合成.tools import stop_voice_playback
+            stop_voice_playback()
+        except Exception:
+            pass
+        self._speak_voice_used = False
         from brain.tools import set_diary_message_source
         set_diary_message_source(self._get_today_messages)
         from brain.intent_router import get_router
