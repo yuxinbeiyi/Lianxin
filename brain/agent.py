@@ -223,6 +223,13 @@ class AgentCore:
                            用于三层架构中的角色扮演层（Roleplay）。
                            覆盖实例化时的 disable_tools 设置。
         """
+        # 清除上次探索留存的观察数据，防止脏数据导致"探索被截断"误报
+        try:
+            from brain.observation_store import clear_latest_chain
+            clear_latest_chain()
+        except Exception:
+            pass
+
         # 原有代码...
         self.history.append({"role": "user", "content": user_message})
         if not self._session_titled:

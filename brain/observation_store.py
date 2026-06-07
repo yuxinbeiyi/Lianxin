@@ -92,3 +92,12 @@ def get_latest_chain_id() -> Optional[str]:
     if data["records"]:
         return data["records"][-1].get("chain_id")
     return None
+
+
+def clear_latest_chain():
+    """清除最新 chain 的引用，防止跨轮对话的脏数据。"""
+    # 方案：给最新一条记录打上 cleared 标记
+    data = _load()
+    if data["records"]:
+        data["records"][-1]["chain_id"] = f"_{data['records'][-1].get('chain_id', '')}"
+        _save(data)

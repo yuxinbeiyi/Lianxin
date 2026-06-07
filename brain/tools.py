@@ -1846,8 +1846,46 @@ def web_search(query: str, max_results: int = 5) -> str:
             pool.shutdown(wait=False, cancel_futures=True)
         return None
 
+    def _try_baidu(proxies=None):
+        """尝试 Baidu 搜索（中文搜索结果质量好）。"""
+        import requests
+        from bs4 import BeautifulSoup
+        url = f"https://www.baidu.com/s?wd={urllib.parse.quote(query)}&rn={min(max_results, 10)}"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/130.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        }
+        try:
+            resp = requests.get(url, headers=headers, timeout=8, proxies=proxies)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            results = []
+            for item in soup.select(".result, .c-container"):
+                title_el = item.select_one("h3 a")
+                if not title_el:
+                    continue
+                title = title_el.get_text(strip=True)
+                href = title_el.get("href", "")
+                abstract_el = item.select_one(".c-abstract, .content-right_8Zs40")
+                abstract = abstract_el.get_text(strip=True) if abstract_el else ""
+                results.append({"title": title, "href": href, "body": abstract})
+            if not results:
+                return None
+            logger.info("搜索成功（Baidu 抓取）")
+            output_lines = [f"搜索「{query}」的结果："]
+            for i, r in enumerate(results[:max_results], 1):
+                output_lines.append(f"\n{i}. {r['title']}\n   链接：{r['href']}\n   摘要：{r['body']}")
+            return "\n".join(output_lines)
+        except Exception as e:
+            logger.debug(f"Baidu 抓取失败: {e}")
+            return None
+
     def _try_browser_search():
-        """Playwright 浏览器搜索（SearXNG 不可用时的兜底）。"""
+        """Playwright 浏览器搜索（所有搜索引擎均不可用时的最终兜底）。"""
         try:
             import requests
             from bs4 import BeautifulSoup
@@ -1922,12 +1960,28 @@ def web_search(query: str, max_results: int = 5) -> str:
     if result:
         return result
 
-    # ── 后端 2：Playwright 浏览器兜底 ────────────────────
+    # ── 后端 2：Baidu（适合中文查询，先直连再代理） ────
+    try:
+        result = _try_baidu()
+        if result:
+            return result
+    except Exception:
+        pass
+    try:
+        proxies = _get_proxies()
+        if proxies:
+            result = _try_baidu(proxies)
+            if result:
+                return result
+    except Exception:
+        pass
+
+    # ── 后端 3：Playwright 浏览器兜底 ────────────────────
     result = _try_browser_search()
     if result:
         return result
 
-    return f"搜索失败：SearXNG 不可用且浏览器搜索也未能完成。"
+    return f"搜索失败：所有搜索引擎均不可用。"
 
 # ==================== 网页内容提取工具函数 ====================
 
