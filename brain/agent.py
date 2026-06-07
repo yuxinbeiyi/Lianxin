@@ -277,15 +277,14 @@ class AgentCore:
         display_response = re.sub(r'\n\s*\n', '\n', display_response).strip()
 
         # 防御性过滤：移除所有 emoji 表情符号（显示文本也不展示）
+        # 注意：范围不能覆盖 CJK 汉字区域（U+3400–U+9FFF）！
         display_response = re.sub(
-            r'[\U0001F000-\U0001FFFF]'
-            r'|[\U00002702-\U000027B0]'
-            r'|[\U000024C2-\U0001F251]'
-            r'|[\U0001F600-\U0001F64F]'
-            r'|[\U0001F300-\U0001F5FF]'
-            r'|[\U0001F680-\U0001F6FF]'
-            r'|[\U0001F1E0-\U0001F1FF]'
-            r'|[\U00002700-\U000027BF]',
+            r'[\U0001F300-\U0001F9FF]'       # 杂项表情符号和补充表情符号
+            r'|[\U0001FA70-\U0001FAFF]'       # 表情符号扩展 A
+            r'|[\U00002702-\U000027B0]'       # 丁贝符
+            r'|[\U0001F1E0-\U0001F1FF]'       # 区域标志（国旗）
+            r'|[\U0000FE00-\U0000FE0F]'       # 变异选择器
+            r'|[❤️⭐✨💡🔥🎶🎵💤💢💦💨💫🌟]',  # 常见单个
             '', display_response
         ).strip()
 
