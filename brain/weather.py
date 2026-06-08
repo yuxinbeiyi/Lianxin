@@ -1,10 +1,14 @@
 """
 天气感知模块：通过和风天气 API 查询实时天气和天气预报。
 支持城市搜索、实时天气、逐天预报、逐小时预报、出行建议。
+
+v2.1 — 优化：重试机制、缓存 TTL、并行请求、统一错误处理
 """
 
 import json
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -24,10 +28,31 @@ def _api_url(path: str) -> str:
         host = "devapi.qweather.com"
     return f"https://{host}{path}"
 
-# ── LocationID 缓存（避免重复查询） ─────────────────────────
-_location_cache: dict[str, str] = {}
 
-# ── 城市现象与图标映射 ──────────────────────────────────────
+# ── API 请求（带重试） ────────────────────────────────────
+def _api_request(url: str, params: dict, max_retries: int = 2) -> dict:
+    """带指数退避重试的 API 请求。"""
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+            return resp.json()
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries:
+                delay = 0.5 * (2 ** attempt)
+                logger.warning("API 请求失败，%.1fs 后重试 (%d/%d): %s",
+                               delay, attempt + 1, max_retries, e)
+                time.sleep(delay)
+    raise last_error
+
+
+# ── LocationID 缓存（带 TTL） ─────────────────────────────
+_location_cache: dict[str, tuple[str, float]] = {}
+_CACHE_TTL = 86400  # 24 小时
+
+
+# ── 天气现象与图标映射 ──────────────────────────────────────
 _WEATHER_ICONS = {
     "晴": "☀️", "多云": "⛅", "阴": "☁️",
     "小雨": "🌦", "中雨": "🌧", "大雨": "🌧", "暴雨": "🌊",
@@ -38,12 +63,13 @@ _WEATHER_ICONS = {
     "大风": "💨", "强风": "💨",
 }
 
+
 # ══════════════════════════════════════════════════════════
 # 公开接口
 # ══════════════════════════════════════════════════════════
 
 def get_location_id(city_name: str, api_key: str = None) -> Optional[str]:
-    """通过城市名称查询和风天气 LocationID。结果会被缓存。"""
+    """通过城市名称查询和风天气 LocationID。结果带 TTL 缓存。"""
     if not api_key:
         api_key = _get_api_key()
         if not api_key:
@@ -51,22 +77,24 @@ def get_location_id(city_name: str, api_key: str = None) -> Optional[str]:
 
     key = city_name.strip()
     if key in _location_cache:
-        return _location_cache[key]
+        loc_id, ts = _location_cache[key]
+        if time.time() - ts < _CACHE_TTL:
+            return loc_id
+        else:
+            del _location_cache[key]
 
     try:
-        resp = requests.get(
+        data = _api_request(
             _api_url("/geo/v2/city/lookup"),
-            params={"location": key, "key": api_key},
-            timeout=10,
+            {"location": key, "key": api_key},
         )
-        data = resp.json()
         if data.get("code") != "200" or not data.get("location"):
             logger.warning("城市查询失败: %s → %s", key, data.get("code"))
             return None
 
         loc = data["location"][0]
         loc_id = loc["id"]
-        _location_cache[key] = loc_id
+        _location_cache[key] = (loc_id, time.time())
         return loc_id
     except Exception as e:
         logger.error("城市查询异常: %s", e)
@@ -74,19 +102,17 @@ def get_location_id(city_name: str, api_key: str = None) -> Optional[str]:
 
 
 def get_current_weather(location_id: str, api_key: str = None) -> Optional[dict]:
-    """获取指定位置的实时天气数据。"""
+    """获取指定位置的实时天气数据（带重试）。"""
     if not api_key:
         api_key = _get_api_key()
         if not api_key:
             return None
 
     try:
-        resp = requests.get(
+        data = _api_request(
             _api_url("/v7/weather/now"),
-            params={"location": location_id, "key": api_key},
-            timeout=10,
+            {"location": location_id, "key": api_key},
         )
-        data = resp.json()
         if data.get("code") != "200":
             logger.warning("实时天气查询失败: %s", data.get("code"))
             return None
@@ -97,19 +123,17 @@ def get_current_weather(location_id: str, api_key: str = None) -> Optional[dict]
 
 
 def get_forecast_3d(location_id: str, api_key: str = None) -> Optional[list]:
-    """获取未来 3 天的逐天预报。返回 daily 列表。"""
+    """获取未来 3 天的逐天预报（带重试）。返回 daily 列表。"""
     if not api_key:
         api_key = _get_api_key()
         if not api_key:
             return None
 
     try:
-        resp = requests.get(
+        data = _api_request(
             _api_url("/v7/weather/3d"),
-            params={"location": location_id, "key": api_key},
-            timeout=10,
+            {"location": location_id, "key": api_key},
         )
-        data = resp.json()
         if data.get("code") != "200":
             logger.warning("3天预报查询失败: %s", data.get("code"))
             return None
@@ -120,19 +144,17 @@ def get_forecast_3d(location_id: str, api_key: str = None) -> Optional[list]:
 
 
 def get_hourly_24h(location_id: str, api_key: str = None) -> Optional[list]:
-    """获取未来 24 小时的逐小时预报。返回 hourly 列表。"""
+    """获取未来 24 小时的逐小时预报（带重试）。返回 hourly 列表。"""
     if not api_key:
         api_key = _get_api_key()
         if not api_key:
             return None
 
     try:
-        resp = requests.get(
+        data = _api_request(
             _api_url("/v7/weather/24h"),
-            params={"location": location_id, "key": api_key},
-            timeout=10,
+            {"location": location_id, "key": api_key},
         )
-        data = resp.json()
         if data.get("code") != "200":
             logger.warning("24小时预报查询失败: %s", data.get("code"))
             return None
@@ -143,7 +165,7 @@ def get_hourly_24h(location_id: str, api_key: str = None) -> Optional[list]:
 
 
 def get_full_weather(city_name: str, api_key: str = None) -> str:
-    """一站式获取城市完整天气信息，返回格式化文本。"""
+    """一站式获取城市完整天气信息（实时 + 3天预报并行请求），返回格式化文本。"""
     if not api_key:
         api_key = _get_api_key()
         if not api_key:
@@ -153,9 +175,21 @@ def get_full_weather(city_name: str, api_key: str = None) -> str:
     if not loc_id:
         return f"错误：未找到城市「{city_name}」，请检查城市名称是否正确。"
 
-    # 并行获取实时 + 3天预报
-    now_data = get_current_weather(loc_id, api_key)
-    daily_data = get_forecast_3d(loc_id, api_key)
+    # 并行获取实时天气 + 3天预报
+    now_data = None
+    daily_data = None
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_now = executor.submit(get_current_weather, loc_id, api_key)
+        future_daily = executor.submit(get_forecast_3d, loc_id, api_key)
+        for future in as_completed([future_now, future_daily]):
+            try:
+                result = future.result()
+                if future == future_now:
+                    now_data = result
+                else:
+                    daily_data = result
+            except Exception as e:
+                logger.error("并行天气查询异常: %s", e)
 
     return _format_full_weather(city_name, now_data, daily_data)
 
@@ -250,8 +284,8 @@ def get_user_city_from_memory() -> Optional[str]:
                     city = content.split(prefix, 1)[-1].strip()
                     return city
             return content
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("从记忆读取城市失败: %s", e)
     return None
 
 
@@ -346,7 +380,6 @@ def _format_hourly_weather(city: str, hourly_data: list) -> str:
     for h in hourly_data:
         time_str = h.get("fxTime", "")
         try:
-            # 和风返回 ISO 格式: 2026-06-08T14:00+08:00
             dt = datetime.fromisoformat(time_str)
             label = f"{dt.hour:02d}:00"
         except Exception:
@@ -357,7 +390,7 @@ def _format_hourly_weather(city: str, hourly_data: list) -> str:
         wind_dir = h.get("windDir", "")
         wind_scale = h.get("windScale", "")
         precip = h.get("precip", "0")
-        pop = h.get("pop", "")  # 降雨概率
+        pop = h.get("pop", "")
         pop_str = f"  🌧 {pop}%" if pop else ""
         lines.append(f"  {label}  {icon}{text}  {temp}°C  {wind_dir}{wind_scale}级{pop_str}")
 

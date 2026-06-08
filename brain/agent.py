@@ -861,11 +861,17 @@ class AgentCore:
             except Exception:
                 pass
 
-        max_iterations = 10
+        max_iterations = 18
         iteration = 0
 
         while iteration < max_iterations:
             iteration += 1
+            # 接近上限时，给 LLM 软提示让它自己收尾（Claude Code 风格）
+            if iteration >= max_iterations - 2:
+                messages.append({
+                    "role": "system",
+                    "content": """你已经多次调用工具，已经获得足够信息了。基于目前已有的工具调用结果，请直接给出最终回答，不需要再调用工具了。""",
+                })
             # 确定 tool_choice
             tool_choice = "auto"
             if forced_tool and forced_tool in [t["function"]["name"] for t in all_tools]:
@@ -902,22 +908,17 @@ class AgentCore:
                 )
                 if forced_tool:
                     forced_tool = None
+ # 每轮工具执行完后，提示 LLM 可以自主决定是否继续
+                messages.append({
+                    "role": "system",
+                    "content": """工具调用结果已返回。你可以自主选择：
+1. 如果问题已经解决，信息足够 → 直接给出最终回答，结束任务
+2. 如果还需要更多信息才能回答 → 继续调用工具获取请自主判断何时结束，不需要每次都继续调用工具。""",
+                })
+
             else:
                 return f"（意外停止: {choice.finish_reason}）"
 
-        # 检查是否有观察记录产生
-        try:
-            from brain.observation_store import get_latest_chain_id, get_chain
-            chain_id = get_latest_chain_id()
-            if chain_id:
-                records = get_chain(chain_id)
-                if records:
-                    lines = [f"探索被截断（达到最大调用次数），但已记录 {len(records)} 条观察："]
-                    for r in records[-5:]:
-                        lines.append(f"- {r['description'][:120]}")
-                    return "\n".join(lines)
-        except Exception:
-            pass
         return "（达到最大工具调用次数，请重试）"
         
 
