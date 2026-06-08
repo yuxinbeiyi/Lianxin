@@ -28,7 +28,7 @@ except ImportError:
     exit(1)
 
 
-def compress_gif(path: Path, scale: float = 0.5, max_colors: int = 128):
+def compress_gif(path: Path, scale: float = 0.75, max_colors: int = 200):
     """压缩 GIF：缩小分辨率 + 减少颜色数，保持动画帧。"""
     print(f"  压缩中: {path.name} ({path.stat().st_size / 1024 / 1024:.1f} MB)", end="")
 
@@ -58,7 +58,9 @@ def compress_gif(path: Path, scale: float = 0.5, max_colors: int = 128):
         for f in frames:
             resized = f.resize(new_size, Image.LANCZOS)
             # 转调色板模式减少颜色
-            if resized.mode in ("RGB", "RGBA"):
+            if resized.mode == "RGBA":
+                resized = resized.quantize(colors=max_colors, method=2)
+            elif resized.mode == "RGB":
                 resized = resized.quantize(colors=max_colors, method=Image.MEDIANCUT)
             compressed.append(resized)
 

@@ -48,9 +48,8 @@ class AnimationStateMachine(QObject):
                     continue
                 movie = QMovie(str(full_path))
                 movie.setCacheMode(QMovie.CacheAll)
-                movie.start()
-                movie.stop()
                 self._movie_cache[(mode_name, state_name)] = movie
+
 
     def set_mode(self, mode: str):
         if mode not in self.config["modes"]:
@@ -92,14 +91,17 @@ class AnimationStateMachine(QObject):
         # 避免重复 setMovie：如果 label 上已是同一文件，只重启动画
         if anim_file == self._current_anim_file and self.current_movie:
             self.current_movie.stop()
-            self.current_movie.start()
+            QTimer.singleShot(0, self.current_movie.start)
         else:
             if self.current_movie:
                 self.current_movie.stop()
             self.current_movie = new_movie
             self._current_anim_file = anim_file
             self.label.setMovie(self.current_movie)
-            self.current_movie.start()
+            movie_ref = self.current_movie
+            QTimer.singleShot(0, movie_ref.start)
+
+
 
         self.state_changed.emit(state_name)
         if "duration" in state_def:

@@ -99,16 +99,19 @@ def _detect_mood(text: str, mood_hint: Optional[str] = None) -> Optional[str]:
     return "casual"  # 默认日常
 
 
-def _normalize_audio(audio, target_peak: int = 25000):
-    """将音频归一化到目标峰值幅度。基于 openclaw 项目的音量增益逻辑。"""
+def _normalize_audio(audio, target_peak: int = 28000):
+    """音量归一化：将所有句子的峰值统一拉到 target_peak，消除句间音量波动。"""
     import numpy as np
     original_max = np.max(np.abs(audio))
-    if original_max > 0 and original_max < 10000:
+    if original_max > 0:
         gain = target_peak / original_max
+        # 只做衰减/小幅提升，避免噪音也被过度放大
+        gain = min(gain, 3.0)
         audio_float = audio.astype(np.float32) * gain
         audio_float = np.clip(audio_float, -32768, 32767).astype(np.int16)
         audio = audio_float
     return audio
+
 
 
 # ══════════════════════════════════════════════════════════

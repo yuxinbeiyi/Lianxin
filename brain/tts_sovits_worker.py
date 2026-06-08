@@ -16,6 +16,9 @@ import re
 
 import numpy as np
 import scipy.io.wavfile
+import tempfile
+import asyncio
+
 
 
 def _detect_language(text: str) -> str:
@@ -29,11 +32,15 @@ def _detect_language(text: str) -> str:
     return "中文"
 
 
-def _normalize_audio(audio, target_peak: int = 25000):
-    """音量归一化。"""
+# 修改后
+def _normalize_audio(audio, target_peak: int = 28000):
+    """音量归一化：将所有句子的峰值统一拉到 target_peak，消除句间音量波动。"""
+    import numpy as np
     original_max = np.max(np.abs(audio))
-    if original_max > 0 and original_max < 10000:
+    if original_max > 0:
         gain = target_peak / original_max
+        # 只做衰减/小幅提升，避免噪音也被过度放大
+        gain = min(gain, 3.0)
         audio_float = audio.astype(np.float32) * gain
         audio_float = np.clip(audio_float, -32768, 32767).astype(np.int16)
         audio = audio_float
@@ -47,7 +54,7 @@ def synthesize(gs_path: str, text: str, ref_wav: str, output_path: str,
     _orig_stdout = sys.stdout
     sys.stdout = sys.stderr
 
-    from GPT_SoVITS.inference_webui import get_tts_wav
+    from GPT_SoVITS.inference_webui import get_tts_wav # type: ignore
 
     # 参考音频路径
     ref_path = ref_wav if os.path.isfile(ref_wav) else ""
@@ -80,7 +87,7 @@ def synthesize(gs_path: str, text: str, ref_wav: str, output_path: str,
         "how_to_cut": "不切",
         "top_k": 5,
         "top_p": 0.9,
-        "temperature": 0.7,
+        "temperature": 0.3,
         "ref_free": True,
         "speed": 1.0,
         "if_freeze": False,
