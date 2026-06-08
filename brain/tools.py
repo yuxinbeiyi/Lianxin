@@ -1225,6 +1225,57 @@ TOOL_DEFINITIONS = [
             }
         }
     },
+    # ==================== 天气工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": (
+                "查询指定城市的实时天气和天气预报。支持实时(current)、逐小时(hourly)、"
+                "逐天(daily)、完整(full)四种模式。当用户问天气、气温、多少度、冷不冷、"
+                "热不热、下雨、刮风、下雪等天气相关问题时调用。"
+                "如果用户没有说城市名，先尝试从记忆中查找用户所在城市，找不到再反问用户。"
+                "获取天气后会附带出行建议（带伞/加衣/防晒等）。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "城市名称，如'北京'、'上海'、'广州'。如果用户没有说城市，请先检查记忆中是否有记录"
+                    },
+                    "forecast_type": {
+                        "type": "string",
+                        "enum": ["current", "hourly", "daily", "full"],
+                        "description": "查询模式：current(实时天气)、hourly(逐小时预报)、daily(逐天预报)、full(实时+3天预报+出行建议，默认)"
+                    }
+                },
+                "required": ["city"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_user_city",
+            "description": (
+                "设置或更新用户的所在城市。当用户告诉你'我在XX'、'我住在XX'、"
+                "'我的城市是XX'、'我在XX上学/工作'、'我目前在XX'时调用此工具。"
+                "保存后莲心就能记住用户所在的城市，以后查询天气时自动使用这个城市，"
+                "无需用户每次都说城市名。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "用户所在城市名称，如'北京'、'上海'、'广州'"
+                    }
+                },
+                "required": ["city"]
+            }
+        }
+    },
 ]
 
 # ── 工具执行函数 ─────────────────────────────────────────────
@@ -3099,6 +3150,68 @@ def _set_expression(emotion: str) -> str:
     return "Galgame 立绘窗口未就绪。"
 
 
+# ── 天气工具执行函数 ────────────────────────────────────────
+
+def _get_weather_tool(city: str, forecast_type: str = "full") -> str:
+    """查询天气信息，返回格式化文本。"""
+    from brain.weather import (
+        get_full_weather, get_hourly_weather_text,
+        get_current_weather, get_forecast_3d,
+        get_location_id, get_user_city_from_memory,
+        _format_full_weather,
+    )
+    from config import get_qweather_config
+
+    cfg = get_qweather_config()
+    api_key = cfg.get("api_key", "").strip()
+    if not api_key:
+        return "错误：未配置和风天气 API Key，请在 API 设置中填写。"
+
+    city = city.strip()
+    if not city:
+        city = get_user_city_from_memory()
+        if not city:
+            return (
+                "我还不知道你在哪个城市呢~ 你可以告诉我'我在XX'，"
+                "或者直接说'查询北京的天气'这样~"
+            )
+
+    try:
+        if forecast_type == "hourly":
+            return get_hourly_weather_text(city, api_key=api_key)
+        elif forecast_type == "current":
+            loc_id = get_location_id(city, api_key)
+            if not loc_id:
+                return f"错误：未找到城市「{city}」"
+            now_data = get_current_weather(loc_id, api_key)
+            if not now_data:
+                return f"无法获取「{city}」的实时天气数据。"
+            daily_data = get_forecast_3d(loc_id, api_key)
+            return _format_full_weather(city, now_data, daily_data)
+        elif forecast_type == "daily":
+            loc_id = get_location_id(city, api_key)
+            if not loc_id:
+                return f"错误：未找到城市「{city}」"
+            daily_data = get_forecast_3d(loc_id, api_key)
+            if not daily_data:
+                return f"无法获取「{city}」的天气预报。"
+            return _format_full_weather(city, None, daily_data)
+        else:
+            return get_full_weather(city, api_key=api_key)
+    except Exception as e:
+        logger.error("天气查询失败: %s", e)
+        return f"天气查询出错：{e}"
+
+
+def _set_user_city_tool(city: str) -> str:
+    """保存用户所在城市到长期记忆。"""
+    from brain.weather import save_user_city_to_memory
+    city = city.strip()
+    if not city:
+        return "城市名不能为空哦~"
+    save_user_city_to_memory(city)
+    return f"记住啦，你在{city}~ 以后问天气就不用每次都说城市名啦 (｡･ω･｡)"
+
 
 # ── 工具调度表 ───────────────────────────────────────────────
 TOOL_EXECUTORS = {
@@ -3149,6 +3262,8 @@ TOOL_EXECUTORS = {
     "query_connected_entities": lambda inp: _query_connected_entities(inp["entity_name"], inp.get("depth", 1)),
     "delete_graph_entity": lambda inp: _delete_graph_entity(inp["entity_name"]),
     "set_expression":  lambda inp: _set_expression(inp["emotion"]),
+    "get_weather":     lambda inp: _get_weather_tool(inp.get("city", ""), inp.get("forecast_type", "full")),
+    "set_user_city":   lambda inp: _set_user_city_tool(inp["city"]),
     }
 
 def execute_tool(name: str, tool_input: dict) -> str:

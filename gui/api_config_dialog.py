@@ -16,6 +16,7 @@ from config import (
     get_aliyun_stt_config, save_aliyun_stt_config,
     get_qq_bridge_config, save_qq_bridge_config,
     get_siliconflow_config, save_siliconflow_config,
+    get_qweather_config, save_qweather_config,
 )
 
 
@@ -161,6 +162,11 @@ class ApiConfigDialog(QDialog):
         tab_vision = QWidget()
         self._build_tab_siliconflow(tab_vision)
         tabs.addTab(tab_vision, "视觉理解")
+
+        # Tab 4: 和风天气
+        tab_qw = QWidget()
+        self._build_tab_qweather(tab_qw)
+        tabs.addTab(tab_qw, "☁️ 和风天气")
 
         layout.addWidget(tabs)
 
@@ -605,6 +611,117 @@ class ApiConfigDialog(QDialog):
 
         layout.addStretch()
 
+    # ── 和风天气选项卡 ───────────────────────────────────────
+
+    def _build_tab_qweather(self, parent: QWidget):
+        layout = QVBoxLayout(parent)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+
+        title = QLabel("☁️ 和风天气 API 配置")
+        title.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
+        title.setStyleSheet("color: #3A3A5C;")
+        layout.addWidget(title)
+
+        desc = QLabel(
+            "配置和风天气 API Key 后，莲心就能查询实时天气和预报，"
+            "并在适当时机主动提醒你天气变化和出行建议～"
+        )
+        desc.setFont(QFont("Microsoft YaHei UI", 9))
+        desc.setStyleSheet("color: #888888;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+        layout.addSpacing(8)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+        form.setSpacing(10)
+
+        # API Key（密码模式）
+        key_row = QHBoxLayout()
+        self._qw_key_edit = QLineEdit()
+        self._qw_key_edit.setPlaceholderText("输入和风天气 API Key")
+        self._qw_key_edit.setEchoMode(QLineEdit.Password)
+        self._qw_key_edit.setFont(QFont("Consolas", 10))
+        self._apply_field_style(self._qw_key_edit)
+        key_row.addWidget(self._qw_key_edit)
+
+        self._show_qw_btn = QPushButton("显示")
+        self._show_qw_btn.setFixedSize(60, 34)
+        self._show_qw_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        self._show_qw_btn.setCursor(Qt.PointingHandCursor)
+        self._show_qw_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #F0F0F8;
+                color: #555555;
+                border-radius: 8px;
+                border: 1px solid #D8D8EE;
+            }
+            QPushButton:hover { background-color: #E4E4F0; }
+        """)
+        self._show_qw_btn.setCheckable(True)
+        self._show_qw_btn.clicked.connect(self._toggle_qw_key_visibility)
+        key_row.addWidget(self._show_qw_btn)
+
+        form.addRow("API Key:", key_row)
+        # API 专属域名
+        self._qw_host_edit = QLineEdit()
+        self._qw_host_edit.setPlaceholderText("pp65npvqtt.re.qweatherapi.com")
+        self._qw_host_edit.setFont(QFont("Consolas", 10))
+        self._apply_field_style(self._qw_host_edit)
+        form.addRow("API 主机:", self._qw_host_edit)
+
+        # 开发者 ID
+        self._qw_dev_id_edit = QLineEdit()
+        self._qw_dev_id_edit.setPlaceholderText("Q158859C18（选填）")
+        self._qw_dev_id_edit.setFont(QFont("Consolas", 10))
+        self._apply_field_style(self._qw_dev_id_edit)
+        form.addRow("开发者 ID:", self._qw_dev_id_edit)
+
+        # 主动天气提醒开关
+        self._qw_auto_remind = QCheckBox("开启主动天气提醒")
+        self._qw_auto_remind.setFont(QFont("Microsoft YaHei UI", 9))
+        self._qw_auto_remind.setStyleSheet("color: #3A3A5C;")
+        form.addRow("", self._qw_auto_remind)
+
+        # 每日提醒时间
+        self._qw_remind_time = QComboBox()
+        self._qw_remind_time.setFont(QFont("Microsoft YaHei UI", 9))
+        self._qw_remind_time.setFixedWidth(120)
+        self._qw_remind_time.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #D8D8EE;
+                border-radius: 8px;
+                padding: 4px 10px;
+                background-color: #FFFFFF;
+                color: #2C2C2C;
+            }
+            QComboBox:focus { border: 1px solid #6C7BFF; }
+        """)
+        for h in range(6, 23):
+            self._qw_remind_time.addItem(f"{h:02d}:00")
+            self._qw_remind_time.addItem(f"{h:02d}:30")
+        form.addRow("提醒时间:", self._qw_remind_time)
+
+        layout.addLayout(form)
+        layout.addSpacing(8)
+
+        help_text = QLabel(
+            "💡 和风天气（QWeather）免费版每日 1000 次调用，个人使用绰绰有余。\n"
+            "    API 主机和 Key 可在 console.qweather.com 获取。\n"
+            "    建议开启主动提醒，莲心会在每天早上提醒你今日天气和出行建议。"
+        )
+        help_text.setFont(QFont("Microsoft YaHei UI", 8))
+        help_text.setStyleSheet("color: #999999; background-color: #F8F8FC; padding: 8px; border-radius: 6px;")
+        help_text.setWordWrap(True)
+        layout.addWidget(help_text)
+
+        layout.addStretch()
+
+    def _toggle_qw_key_visibility(self, checked: bool):
+        self._qw_key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+        self._show_qw_btn.setText("隐藏" if checked else "显示")
+
     # ── 辅助样式 ──────────────────────────────────────────────
 
     def _apply_field_style(self, widget: QLineEdit):
@@ -682,6 +799,18 @@ class ApiConfigDialog(QDialog):
         self._sf_url_edit.setText(sf_cfg.get("base_url", "https://api.siliconflow.cn/v1"))
         self._sf_model_edit.setText(sf_cfg.get("vision_model", "Qwen/Qwen3-VL-30B-A3B-Instruct"))
 
+        # 和风天气配置
+        qw_cfg = get_qweather_config()
+        self._qw_key_edit.setText(qw_cfg.get("api_key", ""))
+        self._qw_auto_remind.setChecked(qw_cfg.get("auto_remind", True))
+        self._qw_host_edit.setText(qw_cfg.get("api_host", ""))
+        self._qw_dev_id_edit.setText(qw_cfg.get("dev_id", ""))
+        self._qw_remind_time.setCurrentText(qw_cfg.get("remind_time", "07:00"))
+        remind_time = qw_cfg.get("remind_time", "07:00")
+        idx = self._qw_remind_time.findText(remind_time)
+        if idx >= 0:
+            self._qw_remind_time.setCurrentIndex(idx)
+
     # ── 数据收集 ─────────────────────────────────────────────
 
     def _collect_deepseek(self) -> dict:
@@ -720,6 +849,15 @@ class ApiConfigDialog(QDialog):
             "vision_model": self._sf_model_edit.text().strip() or "deepseek-ai/deepseek-vl2",
         }
 
+    def _collect_qweather(self) -> dict:
+        return {
+            "api_key":     self._qw_key_edit.text().strip(),
+            "api_host":    self._qw_host_edit.text().strip(),
+            "dev_id":      self._qw_dev_id_edit.text().strip(),
+            "auto_remind": self._qw_auto_remind.isChecked(),
+            "remind_time": self._qw_remind_time.currentText(),
+        }
+
     # ── 保存 ─────────────────────────────────────────────────
 
     def _on_save(self):
@@ -749,6 +887,10 @@ class ApiConfigDialog(QDialog):
         # SiliconFlow 视觉 API
         sf_cfg = self._collect_siliconflow()
         save_siliconflow_config(sf_cfg)
+
+        # 和风天气
+        qw_cfg = self._collect_qweather()
+        save_qweather_config(qw_cfg)
 
         self.config_saved.emit()
         self.accept()

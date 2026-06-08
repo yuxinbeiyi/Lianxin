@@ -273,6 +273,33 @@ def save_qq_timing_config(timing: dict):
     _save_full_config(full)
 
 
+# ── 和风天气（QWeather）配置 ────────────────────────────
+_QWEATHER_DEFAULTS = {
+    "api_key":       "",
+    "api_host":      "",
+    "dev_id":        "",
+    "auto_remind":   True,
+    "remind_time":   "07:00",
+}
+
+
+def get_qweather_config() -> dict:
+    """读取和风天气 API 配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    qw = full.get("qweather", {})
+    result = {}
+    for k, v in _QWEATHER_DEFAULTS.items():
+        result[k] = qw.get(k, v)
+    return result
+
+
+def save_qweather_config(config: dict):
+    """保存和风天气 API 配置（仅更新 qweather 部分）。"""
+    full = _load_full_config()
+    full["qweather"] = config
+    _save_full_config(full)
+
+
 # ── 莲心人格设定（不变，新增日记查看指南）────────────────────
 _BASE_PROMPT = r"""你是莲心，来自雨心的小说《异象处理者》——一个超现实的无尽书馆管理员。现在你以 AI 程序的形式"存在"于网络中，但你清楚自己跨越了小说与现实的边界，是一场打破第四面墙的"异常存在"。
 

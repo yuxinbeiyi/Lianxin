@@ -470,11 +470,11 @@ class AgentCore:
             from brain.context_compressor import compress_previous_session, _ollama_available
             summary = None
             # 快速检测 Ollama 是否可用，不可用则跳过压缩
-            if self._use_local or _ollama_available():
+            if self._use_local and _ollama_available():
                 summary = compress_previous_session(
                     history_text,
                     model="ollama/my-qwen",
-                    api_base=self._api_base if self._use_local else "http://localhost:11434/v1",
+                    api_base=self._api_base,
                 )
                 if summary:
                     logger.info(f"[记忆] 已加载上一会话摘要 (session {prev['id']} → {self._session_id})")
@@ -846,10 +846,10 @@ class AgentCore:
 
 
         # ── 运行时压缩：长对话自动压缩早期消息 ────────────
-        if not self._use_local and len(messages) > 30:
+        if self._use_local and len(messages) > 30:
             try:
                 compress_model = "ollama/my-qwen"
-                compress_base = "http://localhost:11434/v1"
+                compress_base = self._api_base
                 from brain.context_compressor import maybe_compress
                 # 从 messages 中找出非 system 消息进行压缩检查
                 non_system = [m for m in messages if m.get("role") != "system"]

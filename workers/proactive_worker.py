@@ -175,12 +175,27 @@ class ProactiveWorker(QThread):
         # 观察结果（如果有）
         if observation_text:
             parts.append(f"【你刚才看到的画面】\n{observation_text}")
-            # 也存为短期记忆
             self._last_observation = observation_text
 
-        # 上次观察的短期记忆（用于后续非观察主动消息）
+        # 上次观察的短期记忆
         if not observation_text and self._last_observation:
             parts.append(f"【上次观察结果（你之前看过{_get_user_name()}一次，还记得画面）】\n{self._last_observation}")
+
+        # ── 天气感知 ────────────────────────────────────────
+        try:
+            from config import get_qweather_config
+            from brain.weather import get_user_city_from_memory
+            qw_cfg = get_qweather_config()
+            api_key = qw_cfg.get("api_key", "").strip()
+            if api_key:
+                city = get_user_city_from_memory()
+                if city:
+                    from brain.weather import get_full_weather
+                    weather_text = get_full_weather(city, api_key=api_key)
+                    if weather_text and "错误" not in weather_text:
+                        parts.append(f"【当前天气信息】\n{weather_text}")
+        except Exception:
+            pass
 
         # 长期记忆（按分类组织）
         all_mem = get_all()
