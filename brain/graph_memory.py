@@ -113,6 +113,70 @@ def store_quintuple(head: str, head_type: str, relation: str,
     conn.commit()
     return cur.lastrowid is not None and cur.rowcount > 0
 
+def add_graph_edge(head: str, head_type: str, relation: str,
+                   tail: str, tail_type: str) -> str:
+    """手动添加一条五元组边（供 LLM 工具调用），自动去重。返回操作结果文本。"""
+    head = head.strip()
+    tail = tail.strip()
+    relation = relation.strip()
+    if not head or not tail or not relation:
+        return "错误：实体名和关系名不能为空。"
+    if head_type not in ENTITY_TYPES:
+        head_type = "概念"
+    if tail_type not in ENTITY_TYPES:
+        tail_type = "概念"
+
+    conn = _get_conn()
+    hid = _get_or_create_entity(conn, head, head_type)
+    tid = _get_or_create_entity(conn, tail, tail_type)
+
+    existing = conn.execute(
+        "SELECT strength FROM graph_edges WHERE head_id=? AND relation=? AND tail_id=?",
+        (hid, relation, tid)
+    ).fetchone()
+
+    if existing:
+        conn.execute(
+            "UPDATE graph_edges SET strength=strength+1 WHERE head_id=? AND relation=? AND tail_id=?",
+            (hid, relation, tid)
+        )
+        conn.commit()
+        return f"已强化：{head}({head_type}) —[{relation}]→ {tail}({tail_type})，当前强度 {existing['strength']+1}"
+
+    conn.execute(
+        """INSERT INTO graph_edges(head_id, head_type, relation, tail_id, tail_type, source)
+           VALUES (?, ?, ?, ?, ?, 'manual')""",
+        (hid, head_type, relation, tid, tail_type)
+    )
+    conn.commit()
+    return f"已添加：{head}({head_type}) —[{relation}]→ {tail}({tail_type})"
+
+
+def remove_graph_edge(head: str, relation: str, tail: str) -> str:
+    """删除一条指定的五元组边。返回操作结果文本。"""
+    head = head.strip()
+    tail = tail.strip()
+    relation = relation.strip()
+    if not head or not tail or not relation:
+        return "错误：实体名和关系名不能为空。"
+
+    conn = _get_conn()
+    hid_row = conn.execute("SELECT id FROM graph_entities WHERE name=?", (head,)).fetchone()
+    tid_row = conn.execute("SELECT id FROM graph_entities WHERE name=?", (tail,)).fetchone()
+    if not hid_row:
+        return f"错误：实体「{head}」不存在于图记忆中。"
+    if not tid_row:
+        return f"错误：实体「{tail}」不存在于图记忆中。"
+
+    cur = conn.execute(
+        "DELETE FROM graph_edges WHERE head_id=? AND relation=? AND tail_id=?",
+        (hid_row["id"], relation, tid_row["id"])
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        return f"未找到匹配的边：{head} —[{relation}]→ {tail}"
+    return f"已删除：{head} —[{relation}]→ {tail}"
+
 
 def query_by_entity(keyword: str, entity_type: str = None) -> list[dict]:
     """按实体名模糊搜索，返回该实体的所有关联边。"""

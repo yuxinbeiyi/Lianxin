@@ -770,9 +770,12 @@ class MainWindow(QMainWindow):
         else:
             self._agent_worker = AgentWorker(self._agent, text, self, forced_tool=selected_tool)
             self._agent_worker.response_ready.connect(self._on_ai_response)
+            self._agent_worker.progress_update.connect(self._on_progress_update)
             self._agent_worker.tool_called.connect(self._on_tool_called)
             self._agent_worker.error_occurred.connect(self._on_error)
             self._agent_worker.start()
+            self._input_panel.show_interrupt_bar(self._agent_worker)
+
 
         self._input_panel.clear_selection()
 
@@ -809,11 +812,14 @@ class MainWindow(QMainWindow):
         if not self._staged_text.strip():
             full_context += "\n\n请根据你看到的内容自然地回应，描述你看到了什么。"
 
-        self._agent_worker = AgentWorker(self._agent, full_context, self, forced_tool=self._staged_selected_tool)
-        self._agent_worker.response_ready.connect(self._on_ai_response)
-        self._agent_worker.tool_called.connect(self._on_tool_called)
-        self._agent_worker.error_occurred.connect(self._on_error)
-        self._agent_worker.start()
+            self._agent_worker = AgentWorker(self._agent, full_context, self, forced_tool=self._staged_selected_tool)
+            self._agent_worker.response_ready.connect(self._on_ai_response)
+            self._agent_worker.progress_update.connect(self._on_progress_update)
+            self._agent_worker.tool_called.connect(self._on_tool_called)
+            self._agent_worker.error_occurred.connect(self._on_error)
+            self._agent_worker.start()
+            self._input_panel.show_interrupt_bar(self._agent_worker)
+
 
 
     def _on_tool_called(self, tool_name: str):
@@ -825,7 +831,18 @@ class MainWindow(QMainWindow):
         if self._galgame_visible and self._galgame_dialog:
             self._galgame_dialog.show_thinking()
 
+    def _on_progress_update(self, text: str):
+        """收到插话进度回复：追加为系统提示气泡，不触发言语。"""
+        self._chat_widget.add_system_tip(f"💬 莲心：{text}")
+
+    def _on_error(self, err: str):
+        self._input_panel.set_enabled(True)
+        self._input_panel.hide_interrupt_bar()
+        self._chat_widget.add_system_tip(f"错误：{err}")
+
+
     def _on_ai_response(self, text: str):
+        self._input_panel.hide_interrupt_bar()
         # 先结束思考（如果是非待机模式，会播放放下手机动画；如果是待机模式，则什么都不做）
         if self._standby_state != "STANDBY":
             # 非待机模式，使用原有的思考结束逻辑（等待打字动画结束）
@@ -1016,6 +1033,7 @@ class MainWindow(QMainWindow):
         self._is_recording = True
         self._input_panel.set_voice_recording()
         self._chat_widget.add_system_tip("🎤 正在录音，停顿后自动识别…")
+        self._input_panel.hide_interrupt_bar()
         self._input_panel.set_enabled(False)
         self._voice_worker = VoiceWorker(self._listener, self)
         self._voice_worker.recording_stopped.connect(self._on_recording_stopped)
@@ -1987,12 +2005,14 @@ class MainWindow(QMainWindow):
         self._reset_heartbeat_timer()
         self._set_thinking_state()
         self._agent_worker = AgentWorker(self._agent, text, self, disable_tools=is_chat)
-        # 存储路由结果供 AgentWorker 使用（按需注入工具）
         self._last_route_result = route_result
         self._agent_worker.response_ready.connect(self._on_ai_response)
+        self._agent_worker.progress_update.connect(self._on_progress_update)
         self._agent_worker.tool_called.connect(self._on_tool_called)
         self._agent_worker.error_occurred.connect(self._on_error)
         self._agent_worker.start()
+        self._input_panel.show_interrupt_bar(self._agent_worker)
+
 
 
     # ── 窗口关闭 ─────────────────────────────────────────────

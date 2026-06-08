@@ -39,8 +39,9 @@ def _get_qq_session_ids() -> set:
         if map_path.exists():
             data = json.loads(map_path.read_text(encoding="utf-8"))
             return set(int(v) for v in data.values())
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger("Agent").warning(f"五元组提取失败: {e}")
     return set()
 
 
@@ -214,14 +215,18 @@ class AgentCore:
     def chat(self, user_message: str,
             on_tool_call=None, on_tool_result=None,
             forced_tool: str = None,
-            disable_tools: bool = False) -> str:
+            disable_tools: bool = False,
+            interrupt_queue=None,
+            on_interrupt=None,
+            on_progress=None) -> str:
         """
         处理用户消息并返回 AI 回复。
 
         参数:
-            disable_tools: True 表示此轮不走工具调用，纯聊天模式。
-                           用于三层架构中的角色扮演层（Roleplay）。
-                           覆盖实例化时的 disable_tools 设置。
+            disable_tools:     True 表示此轮不走工具调用，纯聊天模式。
+            interrupt_queue:   queue.Queue | None，用户中途插话的消息队列。
+            on_interrupt:      callable(msg) -> str，处理插话的 LLM 回调。
+            on_progress:       callable(text)，报告进度回复的回调。
         """
         # 清除上次探索留存的观察数据，防止脏数据导致"探索被截断"误报
         try:
@@ -239,7 +244,10 @@ class AgentCore:
         self._history_mgr.save_message(self._session_id, "user", user_message)
 
         effective_disable = disable_tools or self._disable_tools or self._use_local
-        response_text = self._function_calling_loop(on_tool_call, on_tool_result, forced_tool, effective_disable)
+        response_text = self._function_calling_loop(on_tool_call, on_tool_result, forced_tool,
+                                                      effective_disable, interrupt_queue,
+                                                      on_interrupt, on_progress)
+
 
         # ── 剥离情绪标签：只存/显示干净文本，情绪通过属性传递 ──
         from utils.emotion_manager import parse_emotion_tag, infer_emotion_from_text
@@ -365,10 +373,11 @@ class AgentCore:
             # ── 五元组图记忆提取（独立 try，失败不影响分类提取） ──
             if self._graph_enabled and self._auto_extract_quintuples:
                 try:
-                    from brain.quintuple_extractor import extract_and_store
-                    extract_and_store(text)
-                except Exception:
-                    pass
+                    from brain.quintuple_extractor import extract_and_store_with_config
+                    extract_and_store_with_config(text, self._model, self._api_key, self._api_base)
+                except Exception as e:
+                    import logging
+                    logging.getLogger("Agent").warning(f"五元组提取失败: {e}")
 
         threading.Thread(target=_do_extract, daemon=True).start()
 
@@ -692,10 +701,14 @@ class AgentCore:
             name, args = item["name"], item["args"]
             if on_tool_call:
                 on_tool_call(name, args)
-            print(f"\n  [工具调用] {name}({json.dumps(args, ensure_ascii=False)})", flush=True)
-            result = _exec(name, args)
-            preview = result[:200].replace("\n", " ") + ("..." if len(result) > 200 else "")
-            print(f"  [工具结果] {name} → {preview}\n", flush=True)
+            try:
+                print(f"\n  [工具调用] {name}({json.dumps(args, ensure_ascii=False)})", flush=True)
+                result = _exec(name, args)
+                preview = result[:200].replace("\n", " ") + ("..." if len(result) > 200 else "")
+                print(f"  [工具结果] {name} → {preview}\n", flush=True)
+            except Exception as e:
+                result = f"工具执行错误: {e}"
+                print(f"  [工具错误] {name} → {e}\n", flush=True)
             if on_tool_result:
                 on_tool_result(name, result)
             idx = parsed_order[id(item["tc"])]
@@ -740,7 +753,12 @@ class AgentCore:
                     "content": result,
                 })
 
-    def _function_calling_loop(self, on_tool_call=None, on_tool_result=None, forced_tool: str = None, disable_tools: bool = False) -> str:
+    def _function_calling_loop(self, on_tool_call=None, on_tool_result=None, forced_tool: str = None,
+                               disable_tools: bool = False,
+                               interrupt_queue=None, on_interrupt=None,
+                               on_progress=None) -> str:
+
+       
         messages = [{"role": "system", "content": self._system_prompt}]
 
         # ── 注入实时时间信息 ────────────────────────────────
@@ -908,13 +926,32 @@ class AgentCore:
                 )
                 if forced_tool:
                     forced_tool = None
- # 每轮工具执行完后，提示 LLM 可以自主决定是否继续
+
+                # ── 中途插话检查 ───────────────────────────
+                if interrupt_queue and on_interrupt and on_progress and not disable_tools:
+                    try:
+                        interrupt_msg = interrupt_queue.get_nowait()
+                    except Exception:
+                        interrupt_msg = None
+                    if interrupt_msg:
+                        print(f"  [插话] 用户: {interrupt_msg}", flush=True)
+                        try:
+                            reply = on_interrupt(interrupt_msg)
+                        except Exception as e:
+                            reply = f"（插话处理异常: {e}）"
+                        print(f"  [插话回复] {reply}", flush=True)
+                        on_progress(reply)
+                        if "[终止]" in reply:
+                            return "（任务已取消）"
+
+                # 每轮工具执行完后，提示 LLM 可以自主决定是否继续
                 messages.append({
                     "role": "system",
                     "content": """工具调用结果已返回。你可以自主选择：
 1. 如果问题已经解决，信息足够 → 直接给出最终回答，结束任务
 2. 如果还需要更多信息才能回答 → 继续调用工具获取请自主判断何时结束，不需要每次都继续调用工具。""",
                 })
+
 
             else:
                 return f"（意外停止: {choice.finish_reason}）"

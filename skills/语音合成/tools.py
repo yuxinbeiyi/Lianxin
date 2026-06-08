@@ -90,13 +90,53 @@ _stop_event = threading.Event()  # 停止信号，用户发新消息时触发
 
 # ── 句子分割 + 流式合成 ──────────────────────────────────
 
-
-def _split_into_sentences(text: str):
-    """将文本按句末标点或换行分割为句子列表。"""
+def _split_into_sentences(text: str, max_len: int = 100, min_len: int = 10):
+    """将文本按句末标点或换行分割为句子列表。
+    增强版：
+    - 过长句子继续按逗号分号拆分
+    - 过短句子（小于 min_len）合并，避免停顿太多
+    - 单句不超过 max_len，防止 GPT-SoVITS 乱读
+    """
     if not text:
         return []
-    parts = re.split(r'(?<=[。！？.!?])\s*|\n+', text)
-    return [p.strip() for p in parts if p.strip()]
+
+    # 第一步：按句末标点和换行拆分
+    parts = re.split(r'(?<=[。！？.!?；;])\s*|\n+', text)
+    parts = [p.strip() for p in parts if p.strip()]
+
+    # 第二步：拆分过长句子
+    result = []
+    for p in parts:
+        if len(p) > max_len:
+            # 按逗号分号继续拆分
+            subparts = re.split(r'(?<=[，,;；])\s*', p)
+            # 如果子部分还是太长，直接按长度切
+            for sp in subparts:
+                if len(sp) > max_len:
+                    # 按 max_len 切分
+                    for i in range(0, len(sp), max_len):
+                        result.append(sp[i:i+max_len])
+                else:
+                    result.append(sp)
+        else:
+            result.append(p)
+
+    # 第三步：合并过短句（减少不必要停顿）
+    merged = []
+    current = ""
+    for p in result:
+        if not current:
+            current = p
+        elif len(current) + len(p) <= max_len and len(p) < min_len:
+            current += "，" + p
+        else:
+            merged.append(current)
+            current = p
+    if current:
+        merged.append(current)
+
+    return [p.strip() for p in merged if p.strip()]
+
 
 
 def _play_blocking(wav_path: str):

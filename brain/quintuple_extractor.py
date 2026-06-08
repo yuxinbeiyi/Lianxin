@@ -111,6 +111,51 @@ def extract_and_store(conversation_text: str) -> int:
         logger.info(f"图记忆: 存储 {count} 条五元组")
     return count
 
+def extract_and_store_with_config(conversation_text: str, model: str,
+                                   api_key: str, api_base: str) -> int:
+    """用指定 API 配置提取五元组并写入图数据库。返回写入条数。"""
+    cfg = get_graph_config()
+    if not cfg.get("graph_enabled", True):
+        return 0
+
+    if not conversation_text or len(conversation_text) < 30:
+        return 0
+
+    try:
+        import litellm
+        response = litellm.completion(
+            model=model if "/" in model else f"deepseek/{model}",
+            messages=[
+                {"role": "system", "content": _EXTRACT_SYSTEM},
+                {"role": "user", "content": f"请从以下对话中提取五元组：\n\n{conversation_text[:4000]}"},
+            ],
+            api_key=api_key,
+            api_base=api_base,
+            temperature=0.1,
+            max_tokens=1000,
+            timeout=30,
+            response_format={"type": "json_object"},
+        )
+        raw = response.choices[0].message.content or "{}"
+        data = json.loads(raw)
+        quintuples = data.get("quintuples", [])
+        if not isinstance(quintuples, list):
+            return 0
+
+        count = 0
+        for q in quintuples:
+            if isinstance(q, list) and len(q) == 5:
+                head, head_type, relation, tail, tail_type = q
+                if store_quintuple(head, head_type, relation, tail, tail_type, source="auto"):
+                    count += 1
+        if count > 0:
+            logger.info(f"图记忆: 存储 {count} 条五元组")
+        return count
+
+    except Exception as e:
+        logger.warning(f"五元组提取失败: {e}")
+        return 0
+
 
 def build_quintuple_extraction_prompt(conversation_text: str) -> str:
     """构建五元组提取的完整 prompt（供 agent.py 直接调用 LLM 时使用）。"""

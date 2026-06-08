@@ -1225,6 +1225,50 @@ TOOL_DEFINITIONS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_graph_edge",
+            "description": (
+                "手动向知识图谱添加一条五元组边（实体→关系→实体）。"
+                "适合将已知的事实关系写入图记忆，例如从分类记忆中提取的关系。"
+                "如果边已存在，会增强其强度而非重复添加。"
+                "实体类型必须是：人物/地点/组织/物品/概念/时间/事件/活动/技术/文件"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "head": {"type": "string", "description": "主体实体名，如：雨心"},
+                    "head_type": {"type": "string", "description": "主体实体类型"},
+                    "relation": {"type": "string", "description": "关系名，如：工作于、喜欢、创造"},
+                    "tail": {"type": "string", "description": "客体实体名，如：润建公司"},
+                    "tail_type": {"type": "string", "description": "客体实体类型"}
+                },
+                "required": ["head", "head_type", "relation", "tail", "tail_type"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remove_graph_edge",
+            "description": (
+                "从知识图谱中删除一条指定的边（不影响实体本身）。"
+                "适用于纠正错误关系或清理过时信息。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "head": {"type": "string", "description": "主体实体名"},
+                    "relation": {"type": "string", "description": "关系名"},
+                    "tail": {"type": "string", "description": "客体实体名"}
+                },
+                "required": ["head", "relation", "tail"]
+            }
+        }
+    },
+
+    
     # ==================== 天气工具 ====================
     {
         "type": "function",
@@ -3105,16 +3149,24 @@ def _ensure_migrated():
 
 
 def _search_graph_memory(keywords, entity_type: str = None) -> str:
-    """在图记忆中搜索实体关联（支持多关键词相关性排序）。"""
-    if isinstance(keywords, str):
-        keywords = [keywords]  # 向后兼容旧版单字符串
-    if not keywords:
+    """在图记忆中搜索实体关联，同时搜索图边和分类事实。"""
+    if isinstance(keywords, list):
+        keyword = keywords[0] if keywords else ""
+    elif isinstance(keywords, str):
+        keyword = keywords
+    else:
+        keyword = ""
+    if not keyword:
         return "请提供搜索关键词。"
-    results = search_graph_ranked(keywords)
+
+    from brain.graph_memory import unified_search
+    data = unified_search(keyword, entity_type)
     if entity_type:
-        results = [r for r in results
-                   if r.get("head_type") == entity_type or r.get("tail_type") == entity_type]
-    return format_graph_result(results)
+        data["graph_edges"] = [
+            r for r in data.get("graph_edges", [])
+            if r.get("head_type") == entity_type or r.get("tail_type") == entity_type
+        ]
+    return format_unified_search_result(data)
 
 
 def _query_connected_entities(entity_name: str, depth: int = 1) -> str:
@@ -3139,6 +3191,22 @@ def _delete_graph_entity(entity_name: str) -> str:
     if count == 0:
         return f"在图记忆中未找到名为「{entity_name}」的实体。"
     return f"已从图记忆中删除实体「{entity_name}」及其 {count} 条关联边。"
+
+def _add_graph_edge(head: str, head_type: str, relation: str,
+                    tail: str, tail_type: str) -> str:
+    """手动添加一条图边。"""
+    from brain.graph_memory import add_graph_edge, ENTITY_TYPES
+    if head_type not in ENTITY_TYPES:
+        head_type = "概念"
+    if tail_type not in ENTITY_TYPES:
+        tail_type = "概念"
+    return add_graph_edge(head, head_type, relation, tail, tail_type)
+
+
+def _remove_graph_edge(head: str, relation: str, tail: str) -> str:
+    """手动删除一条图边。"""
+    from brain.graph_memory import remove_graph_edge
+    return remove_graph_edge(head, relation, tail)
 
 
 def _set_expression(emotion: str) -> str:
@@ -3264,6 +3332,8 @@ TOOL_EXECUTORS = {
     "set_expression":  lambda inp: _set_expression(inp["emotion"]),
     "get_weather":     lambda inp: _get_weather_tool(inp.get("city", ""), inp.get("forecast_type", "full")),
     "set_user_city":   lambda inp: _set_user_city_tool(inp["city"]),
+    "add_graph_edge":  lambda inp: _add_graph_edge(inp["head"], inp["head_type"], inp["relation"], inp["tail"], inp["tail_type"]),
+    "remove_graph_edge": lambda inp: _remove_graph_edge(inp["head"], inp["relation"], inp["tail"]),
     }
 
 def execute_tool(name: str, tool_input: dict) -> str:

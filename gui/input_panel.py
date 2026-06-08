@@ -1076,3 +1076,74 @@ class InputPanel(QWidget):
     def _show_image_error(self, msg: str):
         self._input.setPlainText(msg)
         QTimer.singleShot(2000, lambda: self._input.clear() if self._input.toPlainText() == msg else None)
+    # ── 中途插话条 ───────────────────
+    def show_interrupt_bar(self, agent_worker):
+        """显示插话输入条，绑定到 AgentWorker 的 interrupt_queue。"""
+        from PyQt5.QtWidgets import QLineEdit, QPushButton, QHBoxLayout, QFrame
+        from PyQt5.QtCore import Qt
+
+        if hasattr(self, '_interrupt_bar') and self._interrupt_bar is not None:
+            self._interrupt_bar.show()
+            self._interrupt_input.setText("")
+            self._interrupt_input.setFocus()
+            return
+
+        bar = QFrame(self)
+        bar.setObjectName("interruptBar")
+        bar.setStyleSheet("""
+            QFrame#interruptBar {
+                background: rgba(60, 60, 80, 200);
+                border: 1px solid #666;
+                border-radius: 8px;
+                margin: 4px 8px;
+            }
+        """)
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(6, 3, 6, 3)
+        layout.setSpacing(4)
+
+        lbl = QLineEdit()
+        lbl.setPlaceholderText("插话问问进度…（Enter 发送）")
+        lbl.setStyleSheet("""
+            QLineEdit {
+                background: transparent; border: none; color: #ddd;
+                font-size: 13px; padding: 3px 6px;
+            }
+        """)
+        lbl.setEnabled(True)
+
+        btn = QPushButton("发送")
+        btn.setStyleSheet("""
+            QPushButton {
+                background: #4a6fa5; color: white; border-radius: 4px;
+                padding: 3px 10px; font-size: 12px; min-width: 40px;
+            }
+            QPushButton:hover { background: #5a8fc5; }
+        """)
+
+        def _do_send():
+            txt = lbl.text().strip()
+            if txt and agent_worker and agent_worker.isRunning():
+                agent_worker.send_interrupt(txt)
+            lbl.setText("")
+
+        lbl.returnPressed.connect(_do_send)
+        btn.clicked.connect(_do_send)
+
+        layout.addWidget(lbl)
+        layout.addWidget(btn)
+
+        # 插入到当前布局底部
+        parent_layout = self.parent().layout() if self.parent() else None
+        if parent_layout:
+            parent_layout.addWidget(bar)
+
+        self._interrupt_bar = bar
+        self._interrupt_input = lbl
+        bar.show()
+        lbl.setFocus()
+
+    def hide_interrupt_bar(self):
+        """隐藏插话输入条。"""
+        if hasattr(self, '_interrupt_bar') and self._interrupt_bar is not None:
+            self._interrupt_bar.hide()

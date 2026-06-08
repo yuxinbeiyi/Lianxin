@@ -189,10 +189,15 @@ def transcribe(wav_path: str, language: str = "zh") -> str:
 # ══════════════════════════════════════════════════════════
 
 def clean_tts_text(text: str) -> str:
-    """清洗 TTS 文本：移除 Markdown、emoji、特殊符号，防止 TTS 乱读。"""
+    """清洗 TTS 文本：移除 Markdown、emoji、特殊符号，防止 TTS 乱读。
+    增强版：处理表格、代码文件名、驼峰拆分、符号替换，让中英混读更自然。
+    """
     import re
     if not text:
         return ""
+
+    # 0. 先删分隔线
+    text = re.sub(r'-{3,}|={3,}|~{3,}', '\n', text)
 
     # 1. Markdown 链接 [text](url) -> text
     text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
@@ -233,7 +238,7 @@ def clean_tts_text(text: str) -> str:
     text = re.sub(r'(?<=[^\d])-(?=[^\d])', ' ', text)
     text = text.replace('_', ' ')
     text = text.replace('~', ' ')
-    text = text.replace('|', ' ')
+    text = text.replace('|', '，')  # 表格竖线换成逗号，便于断句
     text = re.sub(r'\\+', ' ', text)
     text = text.replace('^', ' ')
     text = text.replace('@', ' at ')
@@ -244,29 +249,45 @@ def clean_tts_text(text: str) -> str:
     text = text.replace('/', ' ')
     text = re.sub(r'\$\$?', ' ', text)
     text = re.sub(r'%', ' percent ', text)
+    # 箭头
+    text = re.sub(r'→|➔|➜', '到', text)
+    text = re.sub(r'↘|↙', '', text)
+    # 范围
+    text = re.sub(r'(\d+)\s*~\s*(\d+)', r'\1 到 \2', text)
+    text = re.sub(r'(\d+)\s*~\s*(\d+)', r'\1 到 \2', text)
+    # 圆角数字圈
+    text = re.sub(r'[①②③④⑤⑥⑦⑧⑨⑩]', '', text)
 
     # 10. 移除 URL
     text = re.sub(r'https?://[^\s,，。！？、\)）】]+', '', text)
 
     # 11. 规范化重复标点
-    text = re.sub(r'！{2,}', '！', text)
-    text = re.sub(r'？{2,}', '？', text)
-    text = re.sub(r'。{2,}', '……', text)
-    text = re.sub(r'，{2,}', '，', text)
+    text = re.sub(r'[。！？；，]{2,}', lambda m: m.group(0)[0], text)
 
-    # 12. 移除括号及括号内的全部内容（角色扮演描写等不出声）
-    text = re.sub(r'[（(][^）)]*?[）)]', '', text)
+    # 12. 处理驼峰命名和点分隔文件名（events.py → events dot py）
+    def split_camel_case(match):
+        word = match.group(0)
+        if len(word) <= 1:
+            return word
+        # 驼峰拆分
+        import re
+        word = re.sub('([a-z0-9])([A-Z])', r'\1 \2', word)
+        return word.lower()
 
-    # 13. 换行 → 句号
-    text = re.sub(r'\n+', '。 ', text)
+    def split_dot(match):
+        return match.group(0).replace('.', ' dot ')
 
-    # 14. 压缩空白
-    text = re.sub(r'\s+', ' ', text).strip()
+    # 匹配文件名样式
+    text = re.sub(r'[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+', split_dot, text)
+    # 拆分驼峰
+    text = re.sub(r'[A-Z][a-zA-Z]+', split_camel_case, text)
 
-    # 15. 空保护
-    if not text:
-        return " "
-    return text
+    # 13. 折叠多个空行
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    # 14. 首尾空白
+    return text.strip()
+
 
 
 def tts_to_wav(text: str, wav_path: str, voice: str = "zh-CN-XiaoxiaoNeural",
