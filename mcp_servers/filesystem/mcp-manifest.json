@@ -1,20 +1,19 @@
 {
-  "name": "filesystem",
-  "displayName": "文件系统",
-  "description": "读写本地文件系统，支持列出目录、读取文件、搜索文件",
-  "version": "1.0.0",
-  "author": "modelcontextprotocol",
-  "icon": "📁",
-  "agentType": "external",
-  "connection": {
-    "command": [
-      "npx.cmd",
-      "-y",
-      "@modelcontextprotocol/server-filesystem",
-      "E:/Desktop"
-    ]
-  },
-  "capabilities": {
-    "tools": "auto"
+    "name": "filesystem",
+    "displayName": "文件系统",
+    "description": "读写本地文件系统，支持列出目录、读取文件、搜索文件、创建目录、移动文件",
+    "version": "1.0.0",
+    "author": "modelcontextprotocol",
+    "icon": "📁",
+    "agentType": "external",
+    "connection": {
+      "command": [
+        "node",
+        "C:/Users/guoyuxin/AppData/Roaming/npm/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js",
+        "E:/Desktop"
+      ]
+    },
+    "capabilities": {
+      "tools": "auto"
+    }
   }
-}
