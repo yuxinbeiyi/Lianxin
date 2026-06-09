@@ -141,7 +141,25 @@ def _create_agent(manifest: Dict, service_dir: Path) -> Optional[Any]:
             tv_cfg = get_tavily_config()
             if tv_cfg.get("api_key", "").strip():
                 env["TAVILY_API_KEY"] = tv_cfg["api_key"]
-        
+        # 如果是 tavily_search，从用户配置读取 API Key（优先级高于 manifest）
+        if manifest["name"] == "tavily_search":
+            from config import get_tavily_config
+            tv_cfg = get_tavily_config()
+            if tv_cfg.get("api_key", "").strip():
+                env["TAVILY_API_KEY"] = tv_cfg["api_key"]
+
+        # 如果是 firecrawl，从用户配置读取 API Key；未配置则跳过
+        if manifest["name"] == "firecrawl":
+            from config import get_firecrawl_config
+            fc_cfg = get_firecrawl_config()
+            api_key = fc_cfg.get("api_key", "").strip()
+            if not api_key:
+                logger.warning("[MCP] firecrawl 未配置 API Key，跳过注册")
+                return None
+            env["FIRECRAWL_API_KEY"] = api_key
+
+    
+
         client = ExternalMCPClient(
             service_name=manifest["name"],
             command=cmd,
