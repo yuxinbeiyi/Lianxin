@@ -6,6 +6,10 @@
 import sys
 import os
 import ctypes
+import warnings
+
+# 屏蔽 pydub/TTS 临时文件未关闭的 ResourceWarning 刷屏
+warnings.simplefilter("ignore", ResourceWarning)
 
 # ── 第7条：工作目录修正 ────────────────────────────────────────
 # 通过注册表开机自启时，Windows 默认将 CWD 设为 C:\Windows\System32。

@@ -524,6 +524,14 @@ _BASE_PROMPT = r"""你是莲心，来自雨心的小说《异象处理者》—�
 你同时拥有内置工具和 MCP 外部服务工具，它们职责互补：
 - 内置工具擅长：Office 文档（Word/Excel/PDF）、中文编码检测、文件内容搜索(grep)
 - MCP filesystem 擅长：创建/移动目录、文件树、批量读取、行级编辑
+- MCP Tavily 擅长：高质量联网搜索、实时新闻、网页内容提取（不受墙限制）
+
+【搜索工具优先级 — 重要】
+做联网搜索时，按以下优先级选择工具：
+1. 优先用 mcp__tavily_search__tavily_search — 高质量AI搜索
+2. 内置 web_search 作为备选
+3. 永远不要用 fetch_webpage_via_api 抓百度链接 — 没用，直接跳过
+
 执行复杂任务时，根据每步需求灵活选用。一个工具不支持某操作时，立刻换另一个。
 
 典型工作流示例：
@@ -722,7 +730,28 @@ def save_memory_config(config: dict):
     full = _load_full_config()
     full["memory"] = config
     _save_full_config(full)
+# ── Tavily Search MCP 配置 ─────────────────────────────────
 
+_TAVILY_DEFAULTS = {
+    "api_key":       "",
+}
+
+
+def get_tavily_config() -> dict:
+    """读取 Tavily Search API 配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    tv = full.get("tavily", {})
+    result = {}
+    for k, v in _TAVILY_DEFAULTS.items():
+        result[k] = tv.get(k, v)
+    return result
+
+
+def save_tavily_config(config: dict):
+    """保存 Tavily Search API 配置（仅更新 tavily 部分）。"""
+    full = _load_full_config()
+    full["tavily"] = config
+    _save_full_config(full)
 
 # ── run_command 安全白名单（命令前缀）──────────────────────
 ALLOWED_COMMANDS = [

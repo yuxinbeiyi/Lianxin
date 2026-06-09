@@ -1,0 +1,19 @@
+{
+  "name": "tavily_search",
+  "displayName": "Tavily AI搜索",
+  "description": "AI专属搜索引擎，支持实时网络搜索、网页内容提取、网站地图和深度爬取",
+  "version": "1.0.0",
+  "author": "tavily-ai",
+  "icon": "🔍",
+  "agentType": "external",
+  "connection": {
+    "command": [
+      "node",
+      "C:/Users/guoyuxin/AppData/Roaming/npm/node_modules/tavily-mcp/build/index.js"
+    ],
+    "env": {}
+  },
+  "capabilities": {
+    "tools": "auto"
+  }
+}

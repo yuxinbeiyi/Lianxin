@@ -22,6 +22,9 @@ import threading
 import queue
 from pathlib import Path
 from typing import Optional, Callable
+import warnings
+warnings.simplefilter("ignore", ResourceWarning)
+
 
 logger = logging.getLogger("TtsEngine")
 

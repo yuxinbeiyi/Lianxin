@@ -17,8 +17,8 @@ from config import (
     get_qq_bridge_config, save_qq_bridge_config,
     get_siliconflow_config, save_siliconflow_config,
     get_qweather_config, save_qweather_config,
+    get_tavily_config, save_tavily_config,
 )
-
 
 # ── 测试 DeepSeek 连接的后台线程 ──────────────────────────────
 
@@ -167,6 +167,11 @@ class ApiConfigDialog(QDialog):
         tab_qw = QWidget()
         self._build_tab_qweather(tab_qw)
         tabs.addTab(tab_qw, "☁️ 和风天气")
+        
+        # Tab 5: Tavily Search
+        tab_tavily = QWidget()
+        self._build_tab_tavily(tab_tavily)
+        tabs.addTab(tab_tavily, "🔍 Tavily 搜索")
 
         layout.addWidget(tabs)
 
@@ -718,9 +723,81 @@ class ApiConfigDialog(QDialog):
 
         layout.addStretch()
 
+        # ── Tavily Search 选项卡 ─────────────────────────────────
+
+    def _build_tab_tavily(self, parent: QWidget):
+        layout = QVBoxLayout(parent)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+
+        title = QLabel("🔍 Tavily Search AI 配置")
+        title.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
+        title.setStyleSheet("color: #3A3A5C;")
+        layout.addWidget(title)
+
+        desc = QLabel(
+            "配置 Tavily Search API Key 后，莲心就能使用高质量 AI 搜索，"
+            "获取实时新闻和公开网页内容，绕过后端网络限制。\n"
+            "注册地址：https://tavily.com/，免费额度 1000次/月。"
+        )
+        desc.setFont(QFont("Microsoft YaHei UI", 9))
+        desc.setStyleSheet("color: #888888;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+        layout.addSpacing(8)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+        form.setSpacing(10)
+
+        # API Key（密码模式）
+        key_row = QHBoxLayout()
+        self._tv_key_edit = QLineEdit()
+        self._tv_key_edit.setPlaceholderText("tvly-xxxxxxxxxxxxxxxxxxxxxxxx")
+        self._tv_key_edit.setEchoMode(QLineEdit.Password)
+        self._tv_key_edit.setFont(QFont("Consolas", 10))
+        self._apply_field_style(self._tv_key_edit)
+        key_row.addWidget(self._tv_key_edit)
+
+        self._show_tv_btn = QPushButton("显示")
+        self._show_tv_btn.setFixedSize(60, 34)
+        self._show_tv_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        self._show_tv_btn.setCursor(Qt.PointingHandCursor)
+        self._show_tv_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #F0F0F8;
+                color: #555555;
+                border-radius: 8px;
+                border: 1px solid #D8D8EE;
+            }
+            QPushButton:hover { background-color: #E4E4F0; }
+        """)
+        self._show_tv_btn.setCheckable(True)
+        self._show_tv_btn.clicked.connect(self._toggle_tv_key_visibility)
+        key_row.addWidget(self._show_tv_btn)
+
+        form.addRow("API Key:", key_row)
+
+        layout.addLayout(form)
+        layout.addStretch()
+
+        # 帮助提示
+        help_text = QLabel(
+            "💡 提示：MCP Tavily 请求从你本地发出，绕过后端被墙限制，搜索质量优于 DuckDuckGo。"
+        )
+        help_text.setFont(QFont("Microsoft YaHei UI", 8))
+        help_text.setStyleSheet("color: #999999; background-color: #F8F8FC; padding: 8px; border-radius: 6px;")
+        help_text.setWordWrap(True)
+        layout.addWidget(help_text)
+
+
     def _toggle_qw_key_visibility(self, checked: bool):
         self._qw_key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
         self._show_qw_btn.setText("隐藏" if checked else "显示")
+    
+    def _toggle_tv_key_visibility(self, checked: bool):
+        self._tv_key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+        self._show_tv_btn.setText("隐藏" if checked else "显示")
 
     # ── 辅助样式 ──────────────────────────────────────────────
 
@@ -811,6 +888,10 @@ class ApiConfigDialog(QDialog):
         if idx >= 0:
             self._qw_remind_time.setCurrentIndex(idx)
 
+        # Tavily Search 配置
+        tv_cfg = get_tavily_config()
+        self._tv_key_edit.setText(tv_cfg.get("api_key", ""))
+
     # ── 数据收集 ─────────────────────────────────────────────
 
     def _collect_deepseek(self) -> dict:
@@ -894,6 +975,13 @@ class ApiConfigDialog(QDialog):
 
         self.config_saved.emit()
         self.accept()
+        
+        # Tavily Search
+        tv_cfg = {
+            "api_key": self._tv_key_edit.text().strip(),
+        }
+        save_tavily_config(tv_cfg)
+
 
     # ── 测试 DeepSeek 连接 ────────────────────────────────────
 

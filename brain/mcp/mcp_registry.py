@@ -133,11 +133,20 @@ def _create_agent(manifest: Dict, service_dir: Path) -> Optional[Any]:
 
         connection = manifest.get("connection", {})
         cmd = connection.get("command", [])
-        env = connection.get("env", {})
+        env = connection.get("env", {}).copy()
+        
+        # 如果是 tavily_search，从用户配置读取 API Key（优先级高于 manifest）
+        if manifest["name"] == "tavily_search":
+            from config import get_tavily_config
+            tv_cfg = get_tavily_config()
+            if tv_cfg.get("api_key", "").strip():
+                env["TAVILY_API_KEY"] = tv_cfg["api_key"]
+        
         client = ExternalMCPClient(
             service_name=manifest["name"],
             command=cmd,
             env=env,
+
         )
         if not client.connect_sync():
             logger.error(f"[MCP] 外部服务连接失败: {manifest['name']}")
