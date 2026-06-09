@@ -1,0 +1,20 @@
+{
+  "name": "filesystem",
+  "displayName": "文件系统",
+  "description": "读写本地文件系统，支持列出目录、读取文件、搜索文件",
+  "version": "1.0.0",
+  "author": "modelcontextprotocol",
+  "icon": "📁",
+  "agentType": "external",
+  "connection": {
+    "command": [
+      "npx.cmd",
+      "-y",
+      "@modelcontextprotocol/server-filesystem",
+      "E:/Desktop"
+    ]
+  },
+  "capabilities": {
+    "tools": "auto"
+  }
+}

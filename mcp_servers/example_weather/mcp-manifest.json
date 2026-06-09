@@ -1,0 +1,53 @@
+{
+  "name": "weather_time",
+  "displayName": "天气时间服务",
+  "version": "1.0.0",
+  "description": "查询今日天气、未来天气预报、当前时间，自动识别本地城市",
+  "author": "lianxin-community",
+  "icon": "🌤️",
+  "agentType": "local",
+
+  "entryPoint": {
+    "module": "",
+    "class": ""
+  },
+
+  "capabilities": {
+    "tools": [
+      {
+        "name": "today_weather",
+        "description": "查询今日天气信息。参数 city 格式为 '省 市'，如 '湖北 武汉'，不传则自动识别本地城市。",
+        "parameters": {
+          "city": {
+            "type": "string",
+            "description": "城市名，格式：省 市，如'湖北 武汉'。留空自动识别。"
+          }
+        },
+        "required": []
+      },
+      {
+        "name": "forecast_weather",
+        "description": "查询未来天气预报（未来3天）。参数同 today_weather。",
+        "parameters": {
+          "city": {
+            "type": "string",
+            "description": "城市名，格式：省 市。留空自动识别。"
+          }
+        },
+        "required": []
+      },
+      {
+        "name": "get_time",
+        "description": "获取当前系统时间，自动返回本地城市信息。无需参数。",
+        "parameters": {},
+        "required": []
+      }
+    ]
+  },
+
+  "dependencies": {
+    "packages": ["aiohttp"]
+  },
+  "permissions": ["network"],
+  "auto_activate": false
+}

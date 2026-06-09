@@ -84,6 +84,15 @@ def main():
     from brain.skill_manager import activate_all_skills
     activate_all_skills()
 
+    # ── 初始化 MCP 系统 ──────────────────────────────────
+    from brain.mcp.mcp_manager import get_mcp_manager
+    _mcp_mgr = get_mcp_manager()
+    _mcp_mgr.initialize()
+
+    import atexit
+    atexit.register(_mcp_mgr.shutdown)
+
+
     # ── QQ 桥接（由 MainWindow 管理，详见 main_window.py）─────
 
     # ── 第6条：自启动时最小化，不打扰用户 ────────────────────────

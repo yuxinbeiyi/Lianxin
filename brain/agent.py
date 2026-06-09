@@ -24,6 +24,8 @@ from brain.memory_store import (
 from brain.graph_memory import add_fact as _memory_add
 from memory.history_manager import HistoryManager
 from pathlib import Path
+from brain.mcp import get_all_mcp_tool_definitions
+
 
 logger = logging.getLogger("Agent")
 
@@ -805,7 +807,9 @@ class AgentCore:
             all_tools = []
         else:
             skill_tools = get_active_tool_definitions()
-            all_tools = TOOL_DEFINITIONS + skill_tools
+            mcp_tools = get_all_mcp_tool_definitions()
+            all_tools = TOOL_DEFINITIONS + skill_tools + mcp_tools
+
 
         # 注入已激活技能的知识内容（本地模式跳过）
         if not self._use_local:
