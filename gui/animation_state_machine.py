@@ -1,13 +1,7 @@
-"""
-AnimationStateMachine：动画状态机
-根据配置文件管理角色动画的状态切换和序列播放。
-预加载所有动画，消除切换时的卡顿。
-"""
-
 import json
 from pathlib import Path
-from PyQt5.QtCore import QObject, QTimer, pyqtSignal
-from PyQt5.QtGui import QMovie
+from PyQt5.QtCore import QObject, QTimer, pyqtSignal, Qt
+from PyQt5.QtGui import QMovie, QPixmap
 from PyQt5.QtWidgets import QLabel
 
 
@@ -102,7 +96,6 @@ class AnimationStateMachine(QObject):
             QTimer.singleShot(0, movie_ref.start)
 
 
-
         self.state_changed.emit(state_name)
         if "duration" in state_def:
             self.timer.start(int(state_def["duration"] * 1000))
@@ -125,3 +118,15 @@ class AnimationStateMachine(QObject):
                 return
         if "next" in state_def:
             self._goto_state(state_def["next"])
+
+    def set_static_pixmap(self, pixmap):
+        self.timer.stop()
+        if self.current_movie:
+            self.current_movie.stop()
+            self.current_movie = None
+        self._current_anim_file = ""
+        self.label.setMovie(QMovie())
+        self.label.setPixmap(pixmap)
+
+    def restore_animation(self):
+        self._goto_state(self.config["modes"][self.current_mode]["initial"])

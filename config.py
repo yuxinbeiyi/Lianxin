@@ -708,6 +708,27 @@ def load_memories() -> list:
         return result
     except Exception:
         return []
+# ── 头像显示配置 ─────────────────────────────────
+
+_AVATAR_DEFAULTS = {
+    "mode":              "animated",
+    "static_image_path": "",
+}
+
+
+def get_avatar_config() -> dict:
+    full = _load_full_config()
+    avatar = full.get("avatar", {})
+    result = {}
+    for k, v in _AVATAR_DEFAULTS.items():
+        result[k] = avatar.get(k, v)
+    return result
+
+
+def save_avatar_config(config: dict):
+    full = _load_full_config()
+    full["avatar"] = config
+    _save_full_config(full)
 
 # ── 记忆系统配置默认值 ────────────────────────────────────
 _MEMORY_DEFAULTS = {

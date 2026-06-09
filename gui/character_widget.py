@@ -6,11 +6,18 @@ CharacterWidget：莲心角色图像显示区域
 
 import os
 from pathlib import Path
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QScrollArea, QSlider
+
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel, QPushButton, QScrollArea, QSlider,
+    QLineEdit, QMessageBox, QFileDialog, QRadioButton,
+    QButtonGroup, QDialog, QDialogButtonBox,
+)
 from PyQt5.QtCore import Qt, QTimer, QPoint
-from PyQt5.QtGui import QFont, QIcon
-# 导入动画状态机
+from PyQt5.QtGui import QFont, QIcon, QPixmap
+
 from gui.animation_state_machine import AnimationStateMachine
+
 
 # 状态定义（用于兼容旧接口）
 STATE_NORMAL   = "normal"
@@ -57,8 +64,18 @@ class CharacterWidget(QWidget):
             assets_dir=str(self._gif_dir)
         )
         self.anim_machine.state_changed.connect(self._on_state_changed)
-        self.anim_machine.set_mode("normal")
+
+        from config import get_avatar_config
+        avatar_cfg = get_avatar_config()
+        self._avatar_mode = avatar_cfg.get("mode", "animated")
+        self._static_image_path = avatar_cfg.get("static_image_path", "")
+
+        if self._avatar_mode == "static" and self._static_image_path and os.path.exists(self._static_image_path):
+            self._apply_static_avatar(self._static_image_path)
+        else:
+            self.anim_machine.set_mode("normal")
         self._update_status_label(STATE_NORMAL)
+
 
     def _build_ui(self):
         self.setStyleSheet("background-color: rgba(232, 235, 245, 180); border-right: 1px solid rgba(208, 212, 232, 150);")
@@ -331,7 +348,10 @@ class CharacterWidget(QWidget):
         grid.addWidget(self._btn_api_config, 1, 1)
         grid.addWidget(self._btn_alarm, 2, 0)
         grid.addWidget(self._btn_camera, 2, 1)
-        grid.addWidget(self._btn_emotion, 3, 0, 1, 2)
+        self._btn_avatar = self._create_button("🎨 头像设置", color="#2E86AB")
+        grid.addWidget(self._btn_emotion, 3, 0)
+        grid.addWidget(self._btn_avatar, 3, 1)
+
         popup_layout.addLayout(grid)
         popup_layout.addStretch()
 
@@ -448,30 +468,47 @@ class CharacterWidget(QWidget):
 
     # ========== 动画控制方法（保持不变） ==========
     def set_talking(self):
+        if self._avatar_mode == "static":
+            self._update_status_label(STATE_TALKING)
+            return
         if self._playing_arms_cross:
             self._arms_cross_speech_pending = True
             return
         self.anim_machine.trigger_event("speak_start")
         self._update_status_label(STATE_TALKING)
 
+
     def set_normal(self):
+        if self._avatar_mode == "static":
+            self._update_status_label(STATE_NORMAL)
+            return
         if self._playing_arms_cross:
             return
         self.anim_machine.trigger_event("speak_end")
         self.anim_machine.trigger_event("think_end")
         self._update_status_label(STATE_NORMAL)
 
+
     def set_thinking(self):
         self.start_thinking()
 
     def start_thinking(self):
+        if self._avatar_mode == "static":
+            self._update_status_label(STATE_THINKING)
+            return
         if self._playing_arms_cross:
             return
         self._previous_mode = self.anim_machine.current_mode
         self.anim_machine.set_mode("thinking")
         self._update_status_label(STATE_THINKING)
 
+
     def stop_thinking(self, on_finished=None):
+        if self._avatar_mode == "static":
+            self._update_status_label(STATE_NORMAL)
+            if on_finished:
+                on_finished()
+            return
         if self._playing_arms_cross:
             return
         if self.anim_machine.current_mode == "thinking":
@@ -480,29 +517,45 @@ class CharacterWidget(QWidget):
         else:
             self._restore_after_thinking(on_finished)
 
+
     def _restore_after_thinking(self, on_finished=None):
+        if self._avatar_mode == "static":
+            self._update_status_label(STATE_NORMAL)
+            if on_finished:
+                on_finished()
+            return
         prev = getattr(self, '_previous_mode', 'normal')
         self.anim_machine.set_mode(prev)
         self._update_status_label(STATE_NORMAL)
         if on_finished:
             on_finished()
 
+
     def set_thinking_status(self):
-        if self._playing_arms_cross:
+        if self._avatar_mode == "static" or self._playing_arms_cross:
+            self._update_status_label(STATE_THINKING)
             return
         self._update_status_label(STATE_THINKING)
 
+
     def set_normal_status(self):
-        if self._playing_arms_cross:
+        if self._avatar_mode == "static" or self._playing_arms_cross:
+            self._update_status_label(STATE_NORMAL)
             return
         self._update_status_label(STATE_NORMAL)
 
+
     def _on_state_changed(self, state_name: str):
+        if self._avatar_mode == "static":
+            return
         if self.anim_machine.current_mode == "standby" and state_name == "normal_idle":
             self.anim_machine.set_mode("normal")
             self._update_status_label(STATE_NORMAL)
 
+
     def play_arms_cross(self, on_finished=None):
+        if self._avatar_mode == "static":
+            return
         if self._playing_arms_cross:
             return
         self._playing_arms_cross = True
@@ -519,6 +572,11 @@ class CharacterWidget(QWidget):
         QTimer.singleShot(total_duration, lambda: self._restore_after_arms_cross(on_finished))
 
     def _restore_after_arms_cross(self, on_finished=None):
+        if self._avatar_mode == "static":
+            self._playing_arms_cross = False
+            if on_finished:
+                on_finished()
+            return
         prev = getattr(self, '_previous_arms_cross_mode', 'normal')
         self.anim_machine.set_mode(prev)
         self._playing_arms_cross = False
@@ -535,28 +593,34 @@ class CharacterWidget(QWidget):
             on_finished()
 
     def enter_standby(self):
-        if self._playing_arms_cross:
+        if self._avatar_mode == "static" or self._playing_arms_cross:
             return
         self.anim_machine.set_mode("standby")
 
+
     def exit_standby(self):
-        if self._playing_arms_cross:
+        if self._avatar_mode == "static" or self._playing_arms_cross:
             return
         self.anim_machine.trigger_event("standby_end")
 
     def set_arms_cross(self):
-        self.play_arms_cross()
+        if self._avatar_mode != "static":
+            self.play_arms_cross()
+
 
     def set_normal_mode(self):
-        if self._playing_arms_cross:
+        if self._avatar_mode == "static" or self._playing_arms_cross:
             return
         self.anim_machine.set_mode("normal")
 
+
     def wave_seen(self):
-        self.anim_machine.trigger_event("wave_seen")
+        if self._avatar_mode != "static":
+            self.anim_machine.trigger_event("wave_seen")
 
     def smile_seen(self):
-        self.anim_machine.trigger_event("smile_seen")
+        if self._avatar_mode != "static":
+            self.anim_machine.trigger_event("smile_seen")
 
     def get_accompany_button(self):
         return self._btn_accompany
@@ -578,8 +642,131 @@ class CharacterWidget(QWidget):
 
     def get_emotion_button(self):
         return self._btn_emotion
+    def get_avatar_button(self):
+        return self._btn_avatar
+
 
     def _update_status_label(self, state: str):
         text, color = STATE_CONFIG.get(state, ("● 待机中", "#6C7BFF"))
         self._state_label.setText(text)
         self._state_label.setStyleSheet(f"color: {color}; background: transparent;")
+
+    def _apply_static_avatar(self, image_path: str):
+        pixmap = QPixmap(image_path)
+        if not pixmap.isNull():
+            scaled = pixmap.scaled(
+                self._gif_label.width(), self._gif_label.height(),
+                Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            self.anim_machine.set_static_pixmap(scaled)
+        self._static_image_path = image_path
+
+    def _switch_to_animated(self):
+        self._avatar_mode = "animated"
+        self.anim_machine.restore_animation()
+
+    def _show_avatar_dialog(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("头像显示设置")
+        dlg.setFixedSize(420, 340)
+        dlg.setStyleSheet("background-color: #F5F5FA;")
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+
+        title = QLabel("🎨 头像显示设置")
+        title.setFont(QFont("Microsoft YaHei UI", 13, QFont.Bold))
+        title.setStyleSheet("color: #3A3A5C;")
+        layout.addWidget(title)
+
+        group = QButtonGroup(dlg)
+        radio_animated = QRadioButton("动画状态机（动态GIF）")
+        radio_static = QRadioButton("静态头像（本地图片）")
+        radio_animated.setFont(QFont("Microsoft YaHei UI", 10))
+        radio_static.setFont(QFont("Microsoft YaHei UI", 10))
+        radio_animated.setStyleSheet("color: #333;")
+        radio_static.setStyleSheet("color: #333;")
+        group.addButton(radio_animated, 0)
+        group.addButton(radio_static, 1)
+        layout.addWidget(radio_animated)
+        layout.addWidget(radio_static)
+
+        if self._avatar_mode == "static":
+            radio_static.setChecked(True)
+        else:
+            radio_animated.setChecked(True)
+
+        path_row = QHBoxLayout()
+        path_edit = QLineEdit()
+        path_edit.setPlaceholderText("选择本地图片...")
+        path_edit.setFont(QFont("Microsoft YaHei UI", 9))
+        path_edit.setReadOnly(True)
+        path_edit.setStyleSheet("background: white; border: 1px solid #D0D0E0; border-radius: 6px; padding: 4px 8px;")
+        if self._static_image_path:
+            path_edit.setText(self._static_image_path)
+        path_edit.setEnabled(radio_static.isChecked())
+        path_row.addWidget(path_edit)
+
+        browse_btn = QPushButton("浏览")
+        browse_btn.setFixedWidth(60)
+        browse_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        browse_btn.setCursor(Qt.PointingHandCursor)
+        browse_btn.setStyleSheet("background: #6C7BFF; color: white; border-radius: 6px; border: none; padding: 4px;")
+        browse_btn.setEnabled(radio_static.isChecked())
+        path_row.addWidget(browse_btn)
+        layout.addLayout(path_row)
+
+        radio_static.toggled.connect(lambda checked: [
+            path_edit.setEnabled(checked),
+            browse_btn.setEnabled(checked)
+        ])
+
+        browse_btn.clicked.connect(lambda: self._browse_avatar_image(path_edit))
+
+        tip = QLabel("💡 选择静态头像可避免动画卡顿，节省 CPU 资源。图片将自动缩放适应。")
+        tip.setFont(QFont("Microsoft YaHei UI", 8))
+        tip.setStyleSheet("color: #888; background: #F0F0F8; padding: 8px; border-radius: 6px;")
+        tip.setWordWrap(True)
+        layout.addWidget(tip)
+        layout.addStretch()
+
+        btn_box = QDialogButtonBox()
+        save_btn = btn_box.addButton("保存", QDialogButtonBox.AcceptRole)
+        cancel_btn = btn_box.addButton("取消", QDialogButtonBox.RejectRole)
+        save_btn.setStyleSheet("background: #6C7BFF; color: white; border-radius: 8px; padding: 6px 20px; border: none;")
+        cancel_btn.setStyleSheet("background: #E0E0F0; color: #555; border-radius: 8px; padding: 6px 20px; border: none;")
+        layout.addWidget(btn_box)
+
+        btn_box.accepted.connect(lambda: self._on_avatar_dialog_save(
+            radio_static.isChecked(), path_edit.text().strip(), dlg
+        ))
+        btn_box.rejected.connect(dlg.reject)
+
+        dlg.exec_()
+
+    def _browse_avatar_image(self, path_edit):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择莲心头像", "",
+            "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif)"
+        )
+        if file_path:
+            path_edit.setText(file_path)
+
+    def _on_avatar_dialog_save(self, is_static: bool, image_path: str, dlg: QDialog):
+        from config import save_avatar_config
+
+        if is_static:
+            if not image_path or not os.path.exists(image_path):
+                QMessageBox.warning(dlg, "提示", "请先选择一张图片作为静态头像。")
+                return
+            self._avatar_mode = "static"
+            self._static_image_path = image_path
+            self._apply_static_avatar(image_path)
+            save_avatar_config({"mode": "static", "static_image_path": image_path})
+        else:
+            self._avatar_mode = "animated"
+            self._switch_to_animated()
+            save_avatar_config({"mode": "animated", "static_image_path": self._static_image_path})
+
+        dlg.accept()
