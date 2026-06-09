@@ -883,17 +883,38 @@ class AgentCore:
             except Exception:
                 pass
 
-        max_iterations = 18
-        iteration = 0
+        MAX_ITERATIONS = 50          # 安全网，正常不会触发
+        TODO_CHECK_INTERVAL = 6      # 每N轮检查一次进度
+        DEAD_LOOP_THRESHOLD = 3      # 连续相同结果N次判定为死循环
 
-        while iteration < max_iterations:
+        iteration = 0
+        last_round_summaries: list[str] = []   # 最近N轮工具结果摘要
+
+        # ── 复杂度判断：用户消息超过80字视为复杂任务 ──
+        is_complex = len(self.history[-1]["content"]) > 80 if self.history else False
+
+        while iteration < MAX_ITERATIONS:
             iteration += 1
-            # 接近上限时，给 LLM 软提示让它自己收尾（Claude Code 风格）
-            if iteration >= max_iterations - 2:
+
+            # ── Todo 规划（第1轮，复杂任务） ──
+            if iteration == 1 and is_complex and not self._use_local:
                 messages.append({
                     "role": "system",
-                    "content": """你已经多次调用工具，已经获得足够信息了。基于目前已有的工具调用结果，请直接给出最终回答，不需要再调用工具了。""",
+                    "content": (
+                        "【任务规划】\n"
+                        "这是一个较复杂的任务。请先规划执行步骤，按步骤稳步推进。\n"
+                        "每完成一步，根据结果判断是否需要继续。任务完成就直接给出最终回答。\n"
+                        "如果某个工具返回错误，分析原因后尝试其他方法，不要反复用相同参数重试。"
+                    ),
                 })
+
+            # ── 接近安全网上限时才软提示 ──
+            if iteration >= MAX_ITERATIONS - 3:
+                messages.append({
+                    "role": "system",
+                    "content": "已接近最大工具调用次数上限。请基于已有信息直接给出最终回答，不要再调用工具。",
+                })
+
             # 确定 tool_choice
             tool_choice = "auto"
             if forced_tool and forced_tool in [t["function"]["name"] for t in all_tools]:
@@ -931,7 +952,42 @@ class AgentCore:
                 if forced_tool:
                     forced_tool = None
 
+                # ── 死循环检测 ────────────────────────────
+                prev_msg_count = len(messages) - len(choice.message.tool_calls)
+                new_summaries = []
+                for m in messages[prev_msg_count:]:
+                    if m.get("role") == "tool":
+                        new_summaries.append(m.get("content", "")[:80])
+                if new_summaries:
+                    round_summary = "|".join(sorted(new_summaries))
+                    last_round_summaries.append(round_summary)
+                    if len(last_round_summaries) > DEAD_LOOP_THRESHOLD:
+                        last_round_summaries.pop(0)
+
+                if len(last_round_summaries) >= DEAD_LOOP_THRESHOLD and last_round_summaries[0]:
+                    if len(set(last_round_summaries)) == 1:
+                        print(f"  [死循环检测] 连续{DEAD_LOOP_THRESHOLD}轮相同结果，强制终止",
+                              flush=True)
+                        messages.append({
+                            "role": "system",
+                            "content": (
+                                "⚠️ 检测到连续多轮返回相同结果，可能陷入循环。"
+                                "请停止调用工具，基于已有信息直接给出最终回答。"
+                            ),
+                        })
+
+                # ── 进度检查（复杂任务每N轮确认一次） ──────
+                if is_complex and iteration % TODO_CHECK_INTERVAL == 0 and iteration > 1:
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            f"【进度检查 — 第{iteration}轮】"
+                            "请评估当前任务完成度。已完成就直接回答，未完成就继续调用工具。"
+                        ),
+                    })
+
                 # ── 中途插话检查 ───────────────────────────
+
                 if interrupt_queue and on_interrupt and on_progress and not disable_tools:
                     try:
                         interrupt_msg = interrupt_queue.get_nowait()
@@ -948,19 +1004,11 @@ class AgentCore:
                         if "[终止]" in reply:
                             return "（任务已取消）"
 
-                # 每轮工具执行完后，提示 LLM 可以自主决定是否继续
-                messages.append({
-                    "role": "system",
-                    "content": """工具调用结果已返回。你可以自主选择：
-1. 如果问题已经解决，信息足够 → 直接给出最终回答，结束任务
-2. 如果还需要更多信息才能回答 → 继续调用工具获取请自主判断何时结束，不需要每次都继续调用工具。""",
-                })
-
 
             else:
                 return f"（意外停止: {choice.finish_reason}）"
 
-        return "（达到最大工具调用次数，请重试）"
+        return "（任务过于复杂，已达到工具调用上限。请尝试拆分为更小的任务分步完成。）"
         
 
     def _call_api_with_retry(self, messages, max_retries=3, initial_delay=1.0):
