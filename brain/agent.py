@@ -754,6 +754,86 @@ class AgentCore:
                     "tool_call_id": item["tc"].id,
                     "content": result,
                 })
+    def _collect_stream(self, response, on_chunk=None):
+        """收集 litellm 流式响应，拼接成完整 message 对象。
+
+        参数:
+            response:  litellm 流式迭代器
+            on_chunk:  可选回调 on_chunk(text_so_far)，用于实时进度报告
+
+        返回:
+            (content, reasoning, tool_calls_dict, finish_reason)
+            - content:      完整文本内容 (str | None)
+            - reasoning:    深度思考链 (str | None)
+            - tool_calls:   list[dict] | None，格式 [{"id":..., "function":{"name":..., "arguments":...}}]
+            - finish_reason: "stop" | "tool_calls" | "length"
+
+        异常:
+            如果流在中途断开且未收集到任何内容，向上抛出原始异常。
+            如果已有部分内容，返回部分内容 + finish_reason="stop"。
+        """
+        full_content = ""
+        full_reasoning = ""
+        tool_parts: dict[int, dict] = {}  # index → {id, name, arguments}
+        has_tool_calls = False
+        final_finish = "stop"
+
+        try:
+            for chunk in response:
+                delta = chunk.choices[0].delta
+
+                # 1) 深度思考（DeepSeek-R1）
+                rc = getattr(delta, "reasoning_content", None)
+                if rc is not None:
+                    full_reasoning += rc
+
+                # 2) 文本增量
+                if delta.content is not None:
+                    full_content += delta.content
+                    if on_chunk:
+                        on_chunk(full_content)
+
+                # 3) 工具调用增量
+                tc_list = getattr(delta, "tool_calls", None)
+                if tc_list:
+                    has_tool_calls = True
+
+                    for tc_delta in tc_list:
+                        idx = tc_delta.index
+                        if idx not in tool_parts:
+                            tool_parts[idx] = {
+                                "id": tc_delta.id or "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""}
+                            }
+                        if tc_delta.id:
+                            tool_parts[idx]["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                tool_parts[idx]["function"]["name"] += tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                tool_parts[idx]["function"]["arguments"] += tc_delta.function.arguments
+
+                # 4) 结束原因（最后一个 chunk 才有）
+                fr = getattr(chunk.choices[0], "finish_reason", None)
+                if fr is not None:
+                    final_finish = fr
+
+        except Exception:
+            # 流中断：如果有部分内容，返回已收集的；否则向上抛
+            if full_content or has_tool_calls:
+                final_finish = "stop"
+            else:
+                raise
+
+        if has_tool_calls and not tool_parts:
+            # 标记了有工具调用但实际没收集到 → 当成纯文本停止
+            has_tool_calls = False
+        finish = "tool_calls" if has_tool_calls else final_finish
+        tool_calls = [tc for _, tc in sorted(tool_parts.items())] if has_tool_calls else None
+
+
+        return full_content, full_reasoning, tool_calls, finish
 
     def _function_calling_loop(self, on_tool_call=None, on_tool_result=None, forced_tool: str = None,
                                disable_tools: bool = False,
@@ -823,18 +903,22 @@ class AgentCore:
         # ── 禁用工具模式：直接纯文本对话，不走工具循环 ──────
         if disable_tools:
             try:
-                response = litellm.completion(
+                stream = litellm.completion(
                     model=self._model,
                     max_tokens=self._max_tokens,
                     messages=messages,
                     api_key=self._api_key,
                     api_base=self._api_base,
-                    timeout=90,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    timeout=120,
                 )
+                content, reasoning, _, _ = self._collect_stream(stream)
             except Exception as e:
                 return f"（API 调用失败：{e}）"
-            self._last_reasoning = getattr(response.choices[0].message, "reasoning_content", None)
-            return response.choices[0].message.content or "（莲心没有说话）"
+            self._last_reasoning = reasoning if reasoning else None
+            return content or "（莲心没有说话）"
+
 
         # ── 长期记忆说明（仅在走工具路径时注入） ────────────
         messages.append({
@@ -925,7 +1009,7 @@ class AgentCore:
             if forced_tool and forced_tool in [t["function"]["name"] for t in all_tools]:
                 tool_choice = {"type": "function", "function": {"name": forced_tool}}
             try:
-                response = litellm.completion(
+                stream = litellm.completion(
                     model=self._model,
                     max_tokens=self._max_tokens,
                     tools=all_tools if all_tools else None,
@@ -933,32 +1017,68 @@ class AgentCore:
                     messages=messages,
                     api_key=self._api_key,
                     api_base=self._api_base,
-                    timeout=90,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    timeout=120,
                 )
+                content, reasoning, stream_tool_calls, finish = self._collect_stream(stream, on_chunk=on_progress)
             except Exception as e:
                 return f"（API 调用失败：{e}）"
 
-            choice = response.choices[0]
-            # 捕获 COT 推理链（DeepSeek-R1 等推理模型）
-            reasoning = getattr(choice.message, "reasoning_content", None)
             if reasoning:
                 self._last_reasoning = reasoning
 
-            if choice.finish_reason == "stop":
-                return choice.message.content or "（莲心没有说话）"
-            elif choice.finish_reason == "tool_calls":
-                messages.append(choice.message)
+            if finish == "stop" or finish == "length":
+                return content or "（莲心没有说话）"
+            elif finish == "tool_calls":
+                from types import SimpleNamespace
+                # 外层用 dict（兼容 messages 列表中其他代码的 .get() 访问）
+                # 内层 tool_calls 用 SimpleNamespace（兼容 _execute_tool_calls_parallel 属性访问）
+                fake_tool_calls = [
+                    SimpleNamespace(
+                        id=tc["id"],
+                        type=tc.get("type", "function"),
+                        function=SimpleNamespace(
+                            name=tc["function"]["name"],
+                            arguments=tc["function"]["arguments"],
+                        ),
+                    )
+                    for tc in stream_tool_calls
+                ]
+                fake_msg = {
+                    "role": "assistant",
+                    "content": content,
+                    "tool_calls": [
+                        {
+                            "id": tc["id"],
+                            "type": tc.get("type", "function"),
+                            "function": {
+                                "name": tc["function"]["name"],
+                                "arguments": tc["function"]["arguments"],
+                            },
+                        }
+                        for tc in stream_tool_calls
+                    ],
+
+                }
+                if reasoning:
+                    fake_msg["reasoning_content"] = reasoning
+
+                messages.append(fake_msg)
                 self._execute_tool_calls_parallel(
-                    choice.message.tool_calls,
+                    fake_tool_calls,
+
                     messages,
                     on_tool_call=on_tool_call,
                     on_tool_result=on_tool_result,
                 )
+
                 if forced_tool:
                     forced_tool = None
 
                 # ── 死循环检测 ────────────────────────────
-                prev_msg_count = len(messages) - len(choice.message.tool_calls)
+                prev_msg_count = len(messages) - len(fake_tool_calls)
+
                 new_summaries = []
                 for m in messages[prev_msg_count:]:
                     if m.get("role") == "tool":
@@ -1008,10 +1128,8 @@ class AgentCore:
                         on_progress(reply)
                         if "[终止]" in reply:
                             return "（任务已取消）"
-
-
             else:
-                return f"（意外停止: {choice.finish_reason}）"
+                return f"（意外停止: {finish}）"
 
         return "（任务过于复杂，已达到工具调用上限。请尝试拆分为更小的任务分步完成。）"
         

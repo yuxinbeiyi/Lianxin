@@ -836,8 +836,9 @@ class MainWindow(QMainWindow):
             self._galgame_dialog.show_thinking()
 
     def _on_progress_update(self, text: str):
-        """收到插话进度回复：追加为系统提示气泡，不触发言语。"""
-        self._chat_widget.add_system_tip(f"💬 莲心：{text}")
+        """收到插话进度回复（流式文本不显示在聊天界面）。"""
+        pass
+
 
     def _on_error(self, err: str):
         self._input_panel.set_enabled(True)
