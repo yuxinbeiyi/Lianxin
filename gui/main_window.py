@@ -816,13 +816,15 @@ class MainWindow(QMainWindow):
         if not self._staged_text.strip():
             full_context += "\n\n请根据你看到的内容自然地回应，描述你看到了什么。"
 
-            self._agent_worker = AgentWorker(self._agent, full_context, self, forced_tool=self._staged_selected_tool)
-            self._agent_worker.response_ready.connect(self._on_ai_response)
-            self._agent_worker.progress_update.connect(self._on_progress_update)
-            self._agent_worker.tool_called.connect(self._on_tool_called)
-            self._agent_worker.error_occurred.connect(self._on_error)
-            self._agent_worker.start()
-            self._input_panel.show_interrupt_bar(self._agent_worker)
+        self._agent_worker = AgentWorker(self._agent, full_context, self, forced_tool=self._staged_selected_tool)
+        self._agent_worker.response_ready.connect(self._on_ai_response)
+        self._agent_worker.progress_update.connect(self._on_progress_update)
+        self._agent_worker.tool_called.connect(self._on_tool_called)
+        self._agent_worker.error_occurred.connect(self._on_error)
+        self._agent_worker.start()
+        self._input_panel.show_interrupt_bar(self._agent_worker)
+
+
 
 
 

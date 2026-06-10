@@ -185,7 +185,12 @@ class AgentCore:
         if self._prev_session_summary:
             self._system_prompt += f"\n\n{self._prev_session_summary}"
 
+        # ── 会话内滑动窗口摘要（Token 优化，仅云端模式生效） ──
+        self._conversation_summary = ""
+        self._summarized_history_idx = 0
+
         # ── 用户上下文：让 AI 知道当前在跟谁说话 ───────────────
+
         if user_desc:
             self._system_prompt += f"\n\n【当前对话对象】\n{user_desc}"
 
@@ -392,6 +397,9 @@ class AgentCore:
         self.history = []
         self._session_id = self._history_mgr.new_session()
         self._session_titled = False
+        self._conversation_summary = ""
+        self._summarized_history_idx = 0
+
 
     def get_history_manager(self) -> HistoryManager:
         """返回历史管理器（供 GUI 历史对话框使用）。"""
@@ -831,9 +839,123 @@ class AgentCore:
             has_tool_calls = False
         finish = "tool_calls" if has_tool_calls else final_finish
         tool_calls = [tc for _, tc in sorted(tool_parts.items())] if has_tool_calls else None
-
-
+        print(f"[DEBUG] _collect_stream 返回: content={bool(full_content)}, finish={final_finish}")
         return full_content, full_reasoning, tool_calls, finish
+
+    # ── 滑动窗口 + 摘要压缩 ────────────────────────────────
+
+    _WINDOW_SIZE = 20        # 保留最近 20 条消息
+    _SUMMARY_TRIGGER = 30    # 超过 30 条触发摘要
+
+    def _apply_history_window(self):
+        """对 self.history 应用滑动窗口截断 + 早期摘要压缩。
+
+        仅在云端模式调用。
+
+        Returns:
+            (summary_text, recent_messages)
+            - summary_text: 为 None 或待注入的 system 消息文本
+            - recent_messages: 最近窗口内的完整历史消息列表
+        """
+        history = self.history
+        print(f"[DEBUG-WINDOW] history 长度 = {len(history)}, idx = {self._summarized_history_idx}")
+        if len(history) <= self._SUMMARY_TRIGGER:
+            return None, list(history)
+
+        # 截断点：前 N-WINDOW_SIZE 条 → 摘要；后 WINDOW_SIZE 条 → 原文
+        keep_start = max(0, len(history) - self._WINDOW_SIZE)
+
+        # 增量摘要：只对上次摘要后新增的溢出部分调用 LLM
+        new_overflow = history[self._summarized_history_idx:keep_start]
+        print(f"[DEBUG-WINDOW] new_overflow 条数 = {len(new_overflow)}, keep_start = {keep_start}")
+        if len(new_overflow) >= 10:
+            print(f"[DEBUG-WINDOW] 正在生成摘要...")
+            chunk_summary = self._generate_history_summary(new_overflow)
+            print(f"[DEBUG-WINDOW] 摘要完成: {bool(chunk_summary)}")
+            if self._conversation_summary and chunk_summary:
+                # 合并新旧摘要
+                self._conversation_summary = self._merge_summaries(
+                    self._conversation_summary, chunk_summary
+                )
+            else:
+                self._conversation_summary = chunk_summary or self._conversation_summary
+            self._summarized_history_idx = keep_start
+
+        summary = None
+        if self._conversation_summary:
+            omitted = self._summarized_history_idx
+            summary = (
+                f"【对话历史摘要 — 前 {omitted} 条消息已压缩】\n"
+                f"{self._conversation_summary}"
+            )
+
+        return summary, list(history[keep_start:])
+
+    def _generate_history_summary(self, history_chunk: list[dict]) -> str | None:
+        """将一段对话历史压缩为简洁摘要（调用 LLM）。"""
+        lines = []
+        for m in history_chunk:
+            role = "用户" if m["role"] == "user" else "莲心"
+            content = m.get("content", "")
+            if len(content) > 400:
+                content = content[:400] + "…"
+            if content.strip():
+                lines.append(f"{role}：{content}")
+
+        if not lines:
+            return None
+
+        transcript = "\n".join(lines)
+
+        try:
+            response = litellm.completion(
+                model=self._model,
+                max_tokens=300,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "你是一个对话摘要助手。将以下对话压缩为一段简洁摘要（200字以内）。"
+                            "只保留：讨论主题、用户个人情况、重要决策、进行中任务。"
+                            "省略寒暄、闲聊、情绪表达。用第三人称叙述。"
+                        ),
+                    },
+                    {"role": "user", "content": transcript},
+                ],
+                api_key=self._api_key,
+                api_base=self._api_base,
+                timeout=20,
+            )
+            result = response.choices[0].message.content
+            return result.strip() if result else None
+        except Exception:
+            return f"（早期对话，含 {len(history_chunk)} 条消息）"
+
+    def _merge_summaries(self, old_summary: str, new_summary: str) -> str:
+        """将新旧两段摘要合并为一段（调用 LLM）。"""
+        try:
+            response = litellm.completion(
+                model=self._model,
+                max_tokens=300,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "将以下两段对话摘要合并为一段简洁摘要（200字以内），去重，保持第三人称。",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"旧摘要：\n{old_summary}\n\n新摘要：\n{new_summary}",
+                    },
+                ],
+                api_key=self._api_key,
+                api_base=self._api_base,
+                timeout=20,
+            )
+            result = response.choices[0].message.content
+            return result.strip() if result else f"{old_summary}\n{new_summary}"
+        except Exception:
+            return f"{old_summary}\n{new_summary}"
+
 
     def _function_calling_loop(self, on_tool_call=None, on_tool_result=None, forced_tool: str = None,
                                disable_tools: bool = False,
@@ -876,11 +998,14 @@ class AgentCore:
             if cross_ctx:
                 messages.append({"role": "system", "content": cross_ctx})
 
-        # 本地模式只保留最近 10 轮对话，避免上下文溢出
+        # ── 对话历史：云端模式滑动窗口 + 摘要压缩 ──────
         if self._use_local:
             messages.extend(self.history[-20:])
         else:
-            messages.extend(self.history)
+            summary_text, recent_history = self._apply_history_window()
+            if summary_text:
+                messages.append({"role": "system", "content": summary_text})
+            messages.extend(recent_history)
 
         # 合并核心工具 + 已激活技能的自定义工具（本地模式跳过）
         if self._use_local:

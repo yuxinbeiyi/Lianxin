@@ -8,6 +8,7 @@ from PyQt5.QtGui import QFont
 from config import get_memory_config, save_memory_config
 
 
+
 class MemorySettingsDialog(QDialog):
     """记忆系统独立设置对话框"""
 
