@@ -351,6 +351,9 @@ class CharacterWidget(QWidget):
         self._btn_avatar = self._create_button("🎨 头像设置", color="#2E86AB")
         grid.addWidget(self._btn_emotion, 3, 0)
         grid.addWidget(self._btn_avatar, 3, 1)
+        self._btn_sound = self._create_button("🔊 声音设置", color="#16A085")
+        grid.addWidget(self._btn_sound, 4, 0)
+
 
         popup_layout.addLayout(grid)
         popup_layout.addStretch()
@@ -644,6 +647,9 @@ class CharacterWidget(QWidget):
         return self._btn_emotion
     def get_avatar_button(self):
         return self._btn_avatar
+    def get_sound_button(self):
+        return self._btn_sound
+
 
 
     def _update_status_label(self, state: str):

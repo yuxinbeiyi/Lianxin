@@ -601,7 +601,7 @@ class MainWindow(QMainWindow):
         self._char_widget.get_camera_button().clicked.connect(self._on_camera_capture)
         self._char_widget.get_emotion_button().clicked.connect(self._on_open_emotion_debug)
         self._char_widget.get_avatar_button().clicked.connect(self._on_avatar_settings)
-
+        self._char_widget.get_sound_button().clicked.connect(self._on_sound_settings)
         top_layout.addWidget(self._char_widget)
 
         self._chat_widget = ChatWidget()
@@ -1262,6 +1262,15 @@ class MainWindow(QMainWindow):
         from utils.sound import play_sound
         play_sound("ButtonAll.mp3")
         self._char_widget._show_avatar_dialog()
+    
+    def _on_sound_settings(self):
+        from utils.sound import play_sound
+        play_sound("ButtonAll.mp3")
+        from gui.sound_settings_dialog import SoundSettingsDialog
+        dlg = SoundSettingsDialog(self)
+        dlg.exec_()
+
+
 
 
     def _on_api_config_saved(self):
