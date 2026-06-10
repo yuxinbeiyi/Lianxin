@@ -201,7 +201,9 @@ class VoiceSpeaker:
         try:
             from brain.tts_engine import TtsEngine
             _temp = TtsEngine()
-            engine = _temp if _temp.gpt_sovits_available else None
+            from config import get_tts_config
+            engine = _temp if (get_tts_config().get("engine") != "edge_tts" and _temp.gpt_sovits_available) else None
+
         except Exception:
             engine = None
 
@@ -236,14 +238,11 @@ class VoiceSpeaker:
             return
 
         # ── 多句：流水线合成 + 播放 ──────────────────
-        # Producer 线程逐句合成 → 放入队列
-        # Consumer（主线程）从队列取 → 播放
-        # 播放句子 N 的同时，后台已开始合成句子 N+1，消除句间停顿
         import queue as _queue
         audio_queue = _queue.Queue(maxsize=2)
         temp_files = []
         gpt_avail = engine is not None and engine.gpt_sovits_available
-        has_edge = False  # 避免每次都检查
+        has_edge = False
 
         def _producer():
             nonlocal has_edge
@@ -283,12 +282,11 @@ class VoiceSpeaker:
 
                 audio_queue.put(tmp_path if ok else None)
 
-            audio_queue.put(None)  # 结束信号
+            audio_queue.put(None)
 
         prod = threading.Thread(target=_producer, daemon=True)
         prod.start()
 
-        # Consumer：按序播放
         while True:
             tmp_path = audio_queue.get()
             if tmp_path is None:
@@ -299,12 +297,12 @@ class VoiceSpeaker:
 
         prod.join(timeout=3)
 
-        # 清理临时文件
         for fp in temp_files:
             try:
                 os.unlink(fp)
             except OSError:
                 pass
+
 
     def stop(self):
         """停止当前播放。"""

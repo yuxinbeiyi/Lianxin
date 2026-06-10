@@ -515,18 +515,22 @@ class TtsEngine:
         Returns:
             True 表示成功，False 表示失败
         """
-        # 优先 GPT-SoVITS
-        if _is_gpt_sovits_available():
+        # 读取引擎配置，决定是否使用 GPT-SoVITS
+        from config import get_tts_config
+        cfg = get_tts_config()
+        voice = cfg.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural")
+
+        # 优先 GPT-SoVITS（除非用户强制 Edge-TTS）
+        if cfg.get("engine") != "edge_tts" and _is_gpt_sovits_available():
             try:
                 return self._synthesize_gpt_sovits(text, output_path, mood, speed)
             except Exception as e:
                 logger.warning(f"GPT-SoVITS 合成失败，回退 Edge-TTS: {e}")
 
-        # 回退 Edge-TTS
-        from config import get_tts_config
-        cfg = get_tts_config()
-        voice = cfg.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural")
+        # 使用 Edge-TTS
         return _fallback_edge_tts(text, output_path, voice)
+
+
 
     def synthesize_to_mp3(self, text: str, output_path: str,
                           mood: Optional[str] = None,
