@@ -18,7 +18,7 @@ import os
 from utils.settings import get_settings
 from utils.autostart import enable_autostart, disable_autostart, is_autostart_enabled
 from utils.accompany_stats import AccompanyStats
-from config import get_memory_config, save_memory_config, get_proxy_config, save_proxy_config
+from config import get_proxy_config, save_proxy_config
 from config import get_proxy_config, save_proxy_config, get_heartbeat_config
 from config import get_quick_launch_apps, save_quick_launch_apps
 from brain.memory_store import ALL_CATEGORIES, CATEGORY_DESCRIPTIONS
@@ -35,7 +35,6 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self._settings = get_settings()
         self._accompany_stats = AccompanyStats()
-        self._load_memory_config()
 
         self.setWindowTitle("全局设置")
         self.setMinimumSize(540, 780)
@@ -45,17 +44,6 @@ class SettingsDialog(QDialog):
         self._build_ui()
         self._load_from_settings()
 
-    def _load_memory_config(self):
-        self._mem_cfg = get_memory_config()
-
-    def _save_memory_config(self):
-        save_memory_config({
-            "auto_extract": self._mem_cfg["auto_extract"],
-            "extract_interval": self._mem_cfg["extract_interval"],
-            "extract_message_count": self._mem_cfg["extract_message_count"],
-            "max_items_per_category": self._mem_cfg["max_items_per_category"],
-            "default_save_category": self._mem_cfg["default_save_category"],
-        })
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -311,144 +299,6 @@ class SettingsDialog(QDialog):
         general_layout.addWidget(scroll_area)
         tab_widget.addTab(general_tab, "常规")
 
-        # ----- 记忆系统设置选项卡 -----
-        memory_tab = QWidget()
-        memory_layout = QVBoxLayout(memory_tab)
-        memory_layout.setSpacing(14)
-
-        # ── 自动记忆提取 ──
-        extract_frame = self._create_frame()
-        extract_layout = QVBoxLayout(extract_frame)
-        extract_layout.setSpacing(10)
-
-        self._memory_auto_cb = QCheckBox("启用自动记忆提取（后台分析对话内容，自动提取值得记住的信息）")
-        self._memory_auto_cb.setFont(QFont("Microsoft YaHei UI", 9))
-        self._memory_auto_cb.setCursor(Qt.PointingHandCursor)
-        self._memory_auto_cb.setToolTip("开启后，莲心会在聊天时悄悄分析对话，自动提取你的个人信息、偏好、事件等保存到长期记忆中。关闭后只能通过手动说「记住这个」来保存。")
-        extract_layout.addWidget(self._memory_auto_cb)
-
-        interval_row = QHBoxLayout()
-        interval_row.addWidget(QLabel("每"))
-        self._memory_extract_interval_spin = QSpinBox()
-        self._memory_extract_interval_spin.setRange(1, 50)
-        self._memory_extract_interval_spin.setValue(6)
-        self._memory_extract_interval_spin.setFixedWidth(70)
-        self._memory_extract_interval_spin.setSuffix(" 轮")
-        self._memory_extract_interval_spin.setToolTip("莲心每跟你聊完这么多轮对话后，会触发一次后台记忆分析。数值越小提取越频繁（更耗token），数值越大越省但可能漏掉信息。")
-        interval_row.addWidget(self._memory_extract_interval_spin)
-        interval_row.addWidget(QLabel("对话触发一次自动提取"))
-        interval_row.addStretch()
-        extract_layout.addLayout(interval_row)
-
-        msg_row = QHBoxLayout()
-        msg_row.addWidget(QLabel("每次提取分析最近"))
-        self._memory_extract_msgs_spin = QSpinBox()
-        self._memory_extract_msgs_spin.setRange(5, 100)
-        self._memory_extract_msgs_spin.setValue(20)
-        self._memory_extract_msgs_spin.setFixedWidth(70)
-        self._memory_extract_msgs_spin.setSuffix(" 条")
-        self._memory_extract_msgs_spin.setToolTip("每次提取时，莲心会分析最近多少条消息来找出值得记住的内容。消息越多分析越全面，但也更耗token。建议20-30条。")
-        msg_row.addWidget(self._memory_extract_msgs_spin)
-        msg_row.addWidget(QLabel("消息"))
-        msg_row.addStretch()
-        extract_layout.addLayout(msg_row)
-
-        memory_layout.addWidget(extract_frame)
-
-        # ── 存储设置 ──
-        store_frame = self._create_frame()
-        store_layout = QVBoxLayout(store_frame)
-        store_layout.setSpacing(10)
-
-        max_row = QHBoxLayout()
-        max_row.addWidget(QLabel("每类记忆最多保留"))
-        self._memory_max_per_cat_spin = QSpinBox()
-        self._memory_max_per_cat_spin.setRange(10, 9999)
-        self._memory_max_per_cat_spin.setValue(200)
-        self._memory_max_per_cat_spin.setFixedWidth(90)
-        self._memory_max_per_cat_spin.setSuffix(" 条")
-        self._memory_max_per_cat_spin.setToolTip("每个分类（个人档案/偏好/事件/知识/行为模式/技能）最多保留多少条记忆。超出时会自动淘汰最旧且最不重要的条目。设得太大可能导致记忆文件臃肿，太小可能丢失有用信息。")
-        max_row.addWidget(self._memory_max_per_cat_spin)
-        max_row.addStretch()
-        store_layout.addLayout(max_row)
-
-        default_cat_row = QHBoxLayout()
-        default_cat_row.addWidget(QLabel("未指定分类时默认存入："))
-        self._memory_default_cat_combo = QComboBox()
-        for cat in ALL_CATEGORIES:
-            desc = CATEGORY_DESCRIPTIONS.get(cat, cat)
-            self._memory_default_cat_combo.addItem(f"{cat} — {desc}", cat)
-        self._memory_default_cat_combo.setToolTip("当你对莲心说「记住这个」但没有说属于哪类时，默认存到哪个分类。当前默认是「知识（knowledge）」。")
-        default_cat_row.addWidget(self._memory_default_cat_combo)
-        default_cat_row.addStretch()
-        store_layout.addLayout(default_cat_row)
-
-        memory_layout.addWidget(store_frame)
-
-        # ── 记忆浏览器（手动管理） ──
-        browse_frame = self._create_frame()
-        browse_layout = QVBoxLayout(browse_frame)
-        browse_layout.setSpacing(6)
-
-        browse_title = QLabel("📖 记忆浏览与管理")
-        browse_title.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
-        browse_title.setStyleSheet("color: #444466;")
-        browse_layout.addWidget(browse_title)
-
-        self._memory_tree = QTreeWidget()
-        self._memory_tree.setHeaderLabels(["分类", "内容", "强度", "来源", "日期"])
-        self._memory_tree.setAlternatingRowColors(True)
-        self._memory_tree.setRootIsDecorated(False)
-        self._memory_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self._memory_tree.header().setSectionResizeMode(1, QHeaderView.Stretch)
-        self._memory_tree.setFixedHeight(200)
-        self._memory_tree.setStyleSheet("""
-            QTreeWidget {
-                background-color: white;
-                border: 1px solid #D8D8E8;
-                border-radius: 4px;
-                font-size: 9pt;
-            }
-            QTreeWidget::item {
-                padding: 3px;
-            }
-            QHeaderView::section {
-                background-color: #E8EAF6;
-                padding: 4px;
-                border: none;
-                font-weight: bold;
-            }
-        """)
-        browse_layout.addWidget(self._memory_tree)
-
-        btn_row2 = QHBoxLayout()
-        self._memory_refresh_btn = QPushButton("🔄 刷新列表")
-        self._memory_refresh_btn.setCursor(Qt.PointingHandCursor)
-        self._memory_refresh_btn.setToolTip("从记忆文件中重新加载最新数据，反映其他方式新增或删除的记忆。")
-        self._memory_refresh_btn.clicked.connect(self._refresh_memory_tree)
-        btn_row2.addWidget(self._memory_refresh_btn)
-
-        self._memory_delete_btn = QPushButton("🗑️ 删除选中")
-        self._memory_delete_btn.setCursor(Qt.PointingHandCursor)
-        self._memory_delete_btn.setStyleSheet("background-color: #FFE0E0; border: 1px solid #FFB0B0; border-radius: 4px; padding: 4px 10px;")
-        self._memory_delete_btn.setToolTip("删除列表中勾选的记忆条目。此操作不可恢复，请谨慎使用。")
-        self._memory_delete_btn.clicked.connect(self._delete_selected_memories)
-        btn_row2.addWidget(self._memory_delete_btn)
-
-        self._memory_export_btn = QPushButton("💾 导出备份")
-        self._memory_export_btn.setCursor(Qt.PointingHandCursor)
-        self._memory_export_btn.setToolTip("将所有记忆导出为 JSON 文件，方便备份或迁移。")
-        self._memory_export_btn.clicked.connect(self._export_memories)
-        btn_row2.addWidget(self._memory_export_btn)
-
-        btn_row2.addStretch()
-        browse_layout.addLayout(btn_row2)
-
-        memory_layout.addWidget(browse_frame)
-
-        memory_layout.addStretch()
-        tab_widget.addTab(memory_tab, "🧠 记忆系统")
-
         # ----- 快捷启动设置选项卡 -----
         ql_tab = QWidget()
         ql_layout = QVBoxLayout(ql_tab)
@@ -579,7 +429,6 @@ class SettingsDialog(QDialog):
         layout.addLayout(btn_row)
 
         # 初始化记忆设置界面
-        self._init_memory_ui()
         self._refresh_ql_table()
 
     def _create_frame(self):
@@ -592,90 +441,6 @@ class SettingsDialog(QDialog):
             }
         """)
         return frame
-
-    def _init_memory_ui(self):
-        """从实例变量填充记忆系统界面的控件。"""
-        self._memory_auto_cb.setChecked(self._mem_cfg.get("auto_extract", True))
-        self._memory_extract_interval_spin.setValue(self._mem_cfg.get("extract_interval", 6))
-        self._memory_extract_msgs_spin.setValue(self._mem_cfg.get("extract_message_count", 20))
-        self._memory_max_per_cat_spin.setValue(self._mem_cfg.get("max_items_per_category", 200))
-        idx = self._memory_default_cat_combo.findData(self._mem_cfg.get("default_save_category", "knowledge"))
-        if idx >= 0:
-            self._memory_default_cat_combo.setCurrentIndex(idx)
-        self._refresh_memory_tree()
-
-    def _refresh_memory_tree(self):
-        """从 SQLite 知识库重新加载记忆并刷新树形列表。"""
-        self._memory_tree.clear()
-        all_mem = list_all_facts()
-        for cat in ALL_CATEGORIES:
-            items = all_mem.get(cat, [])
-            for item in items:
-                source = "自动" if item.get("source") == "auto_extracted" else "手动"
-                qitem = QTreeWidgetItem([
-                    CATEGORY_DESCRIPTIONS.get(cat, cat).split("：")[0],
-                    item.get("content", ""),
-                    str(item.get("strength", 1)),
-                    source,
-                    item.get("created_at", ""),
-                ])
-                qitem.setData(0, Qt.UserRole, item.get("id", ""))
-                qitem.setData(1, Qt.UserRole, cat)
-                self._memory_tree.addTopLevelItem(qitem)
-
-    def _delete_selected_memories(self):
-        """删除列表中选中的记忆条目（从 SQLite 知识库）。"""
-        selected = self._memory_tree.selectedItems()
-        if not selected:
-            QMessageBox.information(self, "提示", "请先在列表中选择要删除的记忆条目。")
-            return
-        count = len(selected)
-        reply = QMessageBox.question(
-            self, "确认删除",
-            f"确定要删除选中的 {count} 条记忆吗？此操作不可恢复。",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
-            return
-
-        deleted = 0
-        for item in selected:
-            content = item.text(1)
-            cat = item.data(1, Qt.UserRole)
-            n = delete_facts(content, category=cat)
-            deleted += n
-        if deleted > 0:
-            QMessageBox.information(self, "删除成功", f"已删除 {deleted} 条记忆。")
-            self._refresh_memory_tree()
-        else:
-            QMessageBox.information(self, "提示", "未能删除选中的记忆，请刷新后重试。")
-
-    def _export_memories(self):
-        """将全部记忆导出为 JSON 文件。"""
-        from pathlib import Path
-        default_name = f"莲心记忆备份_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "导出记忆备份",
-            str(Path.home() / "Desktop" / default_name),
-            "JSON 文件 (*.json)",
-        )
-        if not file_path:
-            return
-        try:
-            import json
-            all_mem = list_all_facts()
-            export_data = {
-                "version": 2,
-                "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "categories": all_mem,
-            }
-            Path(file_path).write_text(
-                json.dumps(export_data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            QMessageBox.information(self, "导出成功", f"记忆已导出到：\n{file_path}")
-        except Exception as e:
-            QMessageBox.warning(self, "导出失败", f"导出时出错：{e}")
 
     # === 以下为原有方法（保持不变） ===
     def _browse_note_path(self):
@@ -792,14 +557,6 @@ class SettingsDialog(QDialog):
         date_str = f"{self._year_spin.value():04d}-{self._month_spin.value():02d}-{self._day_spin.value():02d}"
         self._accompany_stats.set_first_meet_date(date_str)
         self.date_saved.emit()
-
-        # ── 保存记忆系统配置 ──
-        self._mem_cfg["auto_extract"] = self._memory_auto_cb.isChecked()
-        self._mem_cfg["extract_interval"] = self._memory_extract_interval_spin.value()
-        self._mem_cfg["extract_message_count"] = self._memory_extract_msgs_spin.value()
-        self._mem_cfg["max_items_per_category"] = self._memory_max_per_cat_spin.value()
-        self._mem_cfg["default_save_category"] = self._memory_default_cat_combo.currentData()
-        self._save_memory_config()
 
         # ── 保存用户称呼 ──
         self._settings.user_name = self._user_name_edit.text()

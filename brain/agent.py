@@ -353,7 +353,7 @@ class AgentCore:
                     temperature=0.1,
                     api_key=self._api_key,
                     api_base=self._api_base,
-                    timeout=30,
+                    timeout=90,
                 )
                 raw = response.choices[0].message.content or "{}"
                 result = json.loads(raw)
@@ -829,7 +829,7 @@ class AgentCore:
                     messages=messages,
                     api_key=self._api_key,
                     api_base=self._api_base,
-                    timeout=30,
+                    timeout=90,
                 )
             except Exception as e:
                 return f"（API 调用失败：{e}）"
@@ -912,8 +912,13 @@ class AgentCore:
             if iteration >= MAX_ITERATIONS - 3:
                 messages.append({
                     "role": "system",
-                    "content": "已接近最大工具调用次数上限。请基于已有信息直接给出最终回答，不要再调用工具。",
+                    "content": (
+                        "已接近最大工具调用次数上限。"
+                        "请立刻基于已有信息给出最终回答，不要再调用工具。"
+                        "如果内容较多，用最精炼的方式总结即可，不要展开长篇大论。"
+                    ),
                 })
+
 
             # 确定 tool_choice
             tool_choice = "auto"
@@ -928,7 +933,7 @@ class AgentCore:
                     messages=messages,
                     api_key=self._api_key,
                     api_base=self._api_base,
-                    timeout=30,
+                    timeout=90,
                 )
             except Exception as e:
                 return f"（API 调用失败：{e}）"
@@ -1024,7 +1029,7 @@ class AgentCore:
                     messages=messages,
                     api_key=self._api_key,
                     api_base=self._api_base,
-                    timeout=30,
+                    timeout=90,
                 )
                 return response
             except Exception as e:

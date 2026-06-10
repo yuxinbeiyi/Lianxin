@@ -1611,24 +1611,37 @@ def write_file(path: str, content: str) -> str:
 
 
 
-def write_docx(file_path: str, content: str) -> str:
-    """将文本内容写入 Word 文档（.docx）。"""
+def write_docx(file_path: str, content: str, mode: str = "create") -> str:
+    """将文本内容写入 Word 文档（.docx）。
+    
+    Args:
+        file_path: 文档路径
+        content: 文本内容
+        mode: "create" 新建文档, "append" 在末尾追加内容
+    """
     try:
         from docx import Document
-    except ImportError:
-        return "错误：未安装 python-docx，请执行：pip install python-docx"
+        import os
 
-    try:
-        doc = Document()
-        # 按两个换行符分段（常见段落分隔）
-        paragraphs = content.split('\n\n')
-        for para in paragraphs:
-            if para.strip():
-                doc.add_paragraph(para.strip())
+        if mode == "append" and os.path.exists(file_path):
+            doc = Document(file_path)
+        else:
+            doc = Document()
+
+        # 按段落分割内容并添加
+        for line in content.strip().split("\n"):
+            if line.strip():
+                # 简单判断：全大写英文行视为标题
+                if line.strip().isupper() and len(line.strip()) < 50:
+                    doc.add_heading(line.strip(), level=2)
+                else:
+                    doc.add_paragraph(line)
+
         doc.save(file_path)
-        return f"成功创建 Word 文档：{file_path}"
+        return f"[OK] 已{'追加' if mode == 'append' else '创建'} Word 文档：{file_path}"
     except Exception as e:
-        return f"写入 Word 文档失败：{e}"
+        return f"[ERROR] write_docx 失败: {e}"
+
 
 
 

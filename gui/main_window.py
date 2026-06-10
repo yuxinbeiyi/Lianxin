@@ -602,6 +602,8 @@ class MainWindow(QMainWindow):
         self._char_widget.get_emotion_button().clicked.connect(self._on_open_emotion_debug)
         self._char_widget.get_avatar_button().clicked.connect(self._on_avatar_settings)
         self._char_widget.get_sound_button().clicked.connect(self._on_sound_settings)
+        self._char_widget.get_memory_button().clicked.connect(self._on_memory_settings)
+
         top_layout.addWidget(self._char_widget)
 
         self._chat_widget = ChatWidget()
@@ -1270,6 +1272,12 @@ class MainWindow(QMainWindow):
         dlg = SoundSettingsDialog(self)
         dlg.exec_()
 
+    def _on_memory_settings(self):
+        from utils.sound import play_sound
+        play_sound("ButtonAll.mp3")
+        from gui.memory_settings_dialog import MemorySettingsDialog
+        dlg = MemorySettingsDialog(self)
+        dlg.exec_()
 
 
 

@@ -353,6 +353,9 @@ class CharacterWidget(QWidget):
         grid.addWidget(self._btn_avatar, 3, 1)
         self._btn_sound = self._create_button("🔊 声音设置", color="#16A085")
         grid.addWidget(self._btn_sound, 4, 0)
+        self._btn_memory = self._create_button("🧠 记忆系统", color="#5D6D7E")
+        grid.addWidget(self._btn_memory, 4, 1)
+
 
 
         popup_layout.addLayout(grid)
@@ -649,6 +652,8 @@ class CharacterWidget(QWidget):
         return self._btn_avatar
     def get_sound_button(self):
         return self._btn_sound
+    def get_memory_button(self):
+        return self._btn_memory
 
 
 
