@@ -844,9 +844,11 @@ class AgentCore:
 
     # ── 滑动窗口 + 摘要压缩 ────────────────────────────────
 
-    _WINDOW_SIZE = 20        # 保留最近 20 条消息
-    _SUMMARY_TRIGGER = 30    # 超过 30 条触发摘要
-
+    from config import get_memory_config
+    _mem_cfg = get_memory_config()
+    _WINDOW_SIZE = _mem_cfg.get("context_window_size", 20)
+    _SUMMARY_TRIGGER = _mem_cfg.get("summary_trigger_threshold", 30)
+    _ENABLE_SUMMARY = _mem_cfg.get("enable_conversation_summary", True)
     def _apply_history_window(self):
         """对 self.history 应用滑动窗口截断 + 早期摘要压缩。
 
@@ -857,21 +859,19 @@ class AgentCore:
             - summary_text: 为 None 或待注入的 system 消息文本
             - recent_messages: 最近窗口内的完整历史消息列表
         """
+        cfg = get_memory_config()
+        window_size = cfg.get("context_window_size", 20)
+        trigger = cfg.get("summary_trigger_threshold", 30)
+        enable_summary = cfg.get("enable_conversation_summary", True)
+
         history = self.history
-        print(f"[DEBUG-WINDOW] history 长度 = {len(history)}, idx = {self._summarized_history_idx}")
-        if len(history) <= self._SUMMARY_TRIGGER:
+        if not enable_summary or len(history) <= trigger:
             return None, list(history)
-
-        # 截断点：前 N-WINDOW_SIZE 条 → 摘要；后 WINDOW_SIZE 条 → 原文
-        keep_start = max(0, len(history) - self._WINDOW_SIZE)
-
+        keep_start = max(0, len(history) - window_size)
         # 增量摘要：只对上次摘要后新增的溢出部分调用 LLM
         new_overflow = history[self._summarized_history_idx:keep_start]
-        print(f"[DEBUG-WINDOW] new_overflow 条数 = {len(new_overflow)}, keep_start = {keep_start}")
         if len(new_overflow) >= 10:
-            print(f"[DEBUG-WINDOW] 正在生成摘要...")
             chunk_summary = self._generate_history_summary(new_overflow)
-            print(f"[DEBUG-WINDOW] 摘要完成: {bool(chunk_summary)}")
             if self._conversation_summary and chunk_summary:
                 # 合并新旧摘要
                 self._conversation_summary = self._merge_summaries(
