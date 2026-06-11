@@ -1,5 +1,16 @@
 """
 memory_store.py — 莲心AI 分类记忆存储引擎
+⚠️ 代码状态说明（2026-06）：
+  - 记忆数据已全面迁移至 SQLite（brain/graph_memory.py → memory_facts 表）
+  - 本文件目前仅保留以下活跃功能：
+      常量：ALL_CATEGORIES, CATEGORY_DESCRIPTIONS
+      格式化：format_search_result(), format_all_memories()
+      提取：build_extraction_prompt()
+      迁移：_migrate_v1_to_v2()（被 graph_memory.migrate_from_json 调用）
+  - 以下函数已废弃（不再有调用方）：
+      add(), update(), delete(), search(), search_by_category(), get_all(),
+      extract_auto(), load(), _save_raw(), _prune_category(), _get_memory_path()
+  - 新增记忆/搜索记忆请走 brain/graph_memory.py → add_fact / search_facts
 
 记忆类型（分类）：
   profile      — 个人档案（姓名、外貌、性格、背景故事等稳定信息）

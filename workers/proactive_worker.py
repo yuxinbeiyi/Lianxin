@@ -11,7 +11,7 @@ from typing import Optional
 from PyQt5.QtCore import QThread, pyqtSignal
 from openai import OpenAI
 from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, MODEL, MAX_TOKENS
-from brain.memory_store import get_all, ALL_CATEGORIES
+from brain.graph_memory import list_all_facts, ALL_MEMORY_CATEGORIES
 from memory.history_manager import HistoryManager
 from utils.settings import get_settings
 
@@ -198,9 +198,9 @@ class ProactiveWorker(QThread):
             pass
 
         # 长期记忆（按分类组织）
-        all_mem = get_all()
+        all_mem = list_all_facts()
         mem_lines = []
-        for cat in ALL_CATEGORIES:
+        for cat in ALL_MEMORY_CATEGORIES:
             items = all_mem.get(cat, [])
             for item in items[:5]:  # 每类最多5条
                 mem_lines.append(f"- [{cat}] {item['content']}")

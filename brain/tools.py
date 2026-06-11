@@ -1168,7 +1168,8 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "search_graph_memory",
-            "description": "在知识图谱记忆中搜索实体之间的关联。返回形如\"A(人物)—[喜欢]→B(物品)\"的关系。适用于用户问\"我和X有什么关系\"、\"X是谁\"、\"我提过哪些Y\"、\"谁喜欢Z\"等涉及实体间关联的问题。",
+                       "description": "统一搜索长期记忆：同时搜索分类事实和知识图谱实体关系。比 search_memory 更全面——一次调用返回分类事实 + 实体关系边。适用于所有需要回顾信息的问题，尤其是涉及「谁」「什么关系」「哪些关联」的查询。",
+
             "parameters": {
                 "type": "object",
                 "properties": {
