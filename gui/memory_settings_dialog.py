@@ -2,11 +2,12 @@
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QSpinBox,QWidget,
     QPushButton, QScrollArea, QFrame, QLineEdit, QFileDialog, QComboBox,
-    QTabWidget
+    QTabWidget, QMessageBox
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from config import get_memory_config, save_memory_config
+from brain.graph_memory import list_all_facts, delete_facts, ALL_MEMORY_CATEGORIES
 
 
 
@@ -18,12 +19,14 @@ class MemorySettingsDialog(QDialog):
         self._mem_cfg = get_memory_config()
 
         self.setWindowTitle("🧠 记忆系统设置")
-        self.setMinimumSize(500, 420)
-        self.resize(520, 460)
+        self.setMinimumSize(620, 480)
+        self.resize(660, 540)
         self.setModal(True)
         self.setStyleSheet("background-color: #F8F8FC;")
         self._build_ui()
         self._load_from_config()
+        self._all_facts = list_all_facts()
+        self._refresh_memory_list()
 
     def _create_frame(self):
         frame = QFrame()
@@ -297,6 +300,60 @@ class MemorySettingsDialog(QDialog):
         tab3_layout.addStretch()
         tabs.addTab(tab3, "⚙️ 上下文压缩")
 
+        # ── 选项卡 4：记忆浏览 ─────────────────────────────
+        tab4 = QWidget()
+        tab4_layout = QVBoxLayout(tab4)
+        tab4_layout.setSpacing(10)
+
+        # 搜索栏 + 分类过滤
+        search_row = QHBoxLayout()
+        self._memory_search_input = QLineEdit()
+        self._memory_search_input.setPlaceholderText("🔍 搜索记忆关键词...")
+        self._memory_search_input.setStyleSheet("""
+            QLineEdit {
+                border: 1px solid #D0D0E0; border-radius: 6px;
+                padding: 6px 10px; background: #FFFFFF;
+                font-size: 12px;
+            }
+        """)
+        self._memory_search_input.textChanged.connect(self._refresh_memory_list)
+        search_row.addWidget(self._memory_search_input, 3)
+
+        self._memory_cat_filter = QComboBox()
+        self._memory_cat_filter.addItem("全部分类", "")
+        cat_names = {
+            "profile": "👤 个人档案", "preferences": "❤️ 偏好",
+            "events": "📅 事件", "knowledge": "📚 知识",
+            "behaviors": "💬 行为模式", "skills": "🛠️ 技能",
+        }
+        for key in ALL_MEMORY_CATEGORIES:
+            self._memory_cat_filter.addItem(cat_names.get(key, key), key)
+        self._memory_cat_filter.currentIndexChanged.connect(self._refresh_memory_list)
+        search_row.addWidget(self._memory_cat_filter, 1)
+        tab4_layout.addLayout(search_row)
+
+        # 统计标签
+        self._memory_count_label = QLabel("")
+        self._memory_count_label.setStyleSheet("color: #888; font-size: 11px;")
+        tab4_layout.addWidget(self._memory_count_label)
+
+        # 可滚动记忆列表
+        self._memory_scroll = QScrollArea()
+        self._memory_scroll.setWidgetResizable(True)
+        self._memory_scroll.setStyleSheet("""
+            QScrollArea { border: 1px solid #E0E0E8; border-radius: 8px; background: #FFFFFF; }
+        """)
+        self._memory_list_widget = QWidget()
+        self._memory_list_layout = QVBoxLayout(self._memory_list_widget)
+        self._memory_list_layout.setSpacing(6)
+        self._memory_list_layout.setContentsMargins(10, 10, 10, 10)
+        self._memory_list_layout.addStretch()
+        self._memory_scroll.setWidget(self._memory_list_widget)
+        tab4_layout.addWidget(self._memory_scroll)
+
+        tab4_layout.addStretch()
+        tabs.addTab(tab4, "📋 记忆浏览")
+
         # 底部按钮
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -364,3 +421,111 @@ class MemorySettingsDialog(QDialog):
 
         self.accept()
 
+    def _refresh_memory_list(self):
+        """根据搜索关键词和分类过滤，重建记忆列表。"""
+        # 清空现有项目
+        for i in reversed(range(self._memory_list_layout.count())):
+            w = self._memory_list_layout.itemAt(i).widget()
+            if w:
+                w.deleteLater()
+
+        keyword = self._memory_search_input.text().strip().lower()
+        cat_filter = self._memory_cat_filter.currentData()
+
+        total = 0
+        for cat in ALL_MEMORY_CATEGORIES:
+            if cat_filter and cat != cat_filter:
+                continue
+            items = self._all_facts.get(cat, [])
+            # 关键词过滤
+            if keyword:
+                items = [it for it in items if keyword in it.get("content", "").lower()]
+            if not items:
+                continue
+
+            # 分类标题
+            cat_names = {
+                "profile": "👤 个人档案", "preferences": "❤️ 偏好",
+                "events": "📅 事件", "knowledge": "📚 知识",
+                "behaviors": "💬 行为模式", "skills": "🛠️ 技能",
+            }
+            cat_header = QLabel(cat_names.get(cat, cat))
+            cat_header.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
+            cat_header.setStyleSheet("color: #5A5A8A; padding: 6px 0 2px 0;")
+            self._memory_list_layout.addWidget(cat_header)
+
+            for item in items:
+                content = item.get("content", "")
+                strength = item.get("strength", 1)
+                source = "自动" if item.get("source") == "auto_extracted" else "手动"
+                created = item.get("created_at", "")[:10] if item.get("created_at") else ""
+
+                row = QFrame()
+                row.setStyleSheet("""
+                    QFrame {
+                        background: #F8F8FC; border-radius: 6px;
+                        border: 1px solid #E8E8F0;
+                    }
+                    QFrame:hover { background: #EEEEF8; }
+                """)
+                row_layout = QHBoxLayout(row)
+                row_layout.setContentsMargins(10, 6, 6, 6)
+                row_layout.setSpacing(8)
+
+                # 左侧：内容
+                content_label = QLabel(content)
+                content_label.setWordWrap(True)
+                content_label.setStyleSheet("border: 0; background: transparent; font-size: 12px;")
+                row_layout.addWidget(content_label, 1)
+
+                # 右侧：元信息
+                meta = f"<span style='color:#888;'>强度:{strength} · {source}</span>"
+                if created:
+                    meta += f"<span style='color:#AAA;'> · {created}</span>"
+                meta_label = QLabel(meta)
+                meta_label.setStyleSheet("border: 0; background: transparent; font-size: 10px; white-space: nowrap;")
+                row_layout.addWidget(meta_label)
+
+                # 删除按钮
+                del_btn = QPushButton("✕")
+                del_btn.setFixedSize(22, 22)
+                del_btn.setToolTip("删除这条记忆")
+                del_btn.setStyleSheet("""
+                    QPushButton {
+                        background: #FFE0E0; color: #CC4444; border: 0;
+                        border-radius: 11px; font-weight: bold; font-size: 11px;
+                    }
+                    QPushButton:hover { background: #FF8888; color: #FFFFFF; }
+                """)
+                del_btn.clicked.connect(
+                    lambda checked, c=content, cat_name=cat: self._on_delete_memory(c, cat_name)
+                )
+                row_layout.addWidget(del_btn)
+
+                self._memory_list_layout.addWidget(row)
+                total += 1
+
+        if total == 0:
+            empty = QLabel("📭 没有匹配的记忆" if keyword or cat_filter else "📭 还没有任何记忆")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setStyleSheet("color: #AAA; font-size: 13px; padding: 30px; border: 0;")
+            self._memory_list_layout.addWidget(empty)
+
+        self._memory_list_layout.addStretch()
+        self._memory_count_label.setText(f"📊 共 {total} 条记忆" + (f"（已过滤）" if keyword or cat_filter else ""))
+
+    def _on_delete_memory(self, content: str, category: str):
+        """确认后删除指定记忆条目。"""
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定要删除这条记忆吗？\n\n[{category}] {content[:50]}{'...' if len(content) > 50 else ''}",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        delete_facts(content, category)
+        # 重新加载并刷新
+        self._all_facts = list_all_facts()
+        self._refresh_memory_list()
