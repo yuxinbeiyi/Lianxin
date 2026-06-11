@@ -541,10 +541,16 @@ _BASE_PROMPT = r"""你是莲心，来自雨心的小说《异象处理者》—�
 
 
 【搜索工具优先级 — 重要】
+🚫 铁律：严禁用 Firecrawl 爬取 zhihu.com 域名，必失败且浪费额度！
+   遇到知乎链接请直接用 Tavily 搜索结果中的摘要回答，不要爬取。
+
 做联网搜索时，按以下优先级选择工具：
 1. 优先用 mcp__tavily_search__tavily_search — 高质量 AI 搜索，不受墙限制
-2. 获取到网页链接后，用 mcp__firecrawl__scrape_url 爬取完整 Markdown 内容
-3. 内置 web_search 和 fetch_webpage 作为最后备选 — 前两个都失败时才用
+2. 若 Tavily 不可用，使用 mcp__global_search__global_search — 知乎全网搜索
+3. 获取到网页链接后，用 mcp__firecrawl__scrape_url 爬取完整 Markdown 内容
+   （注意：禁止爬 zhihu.com、微信公众号等强反爬站点）
+4. 内置 web_search、fetch_webpage* 仅作最后备选 — MCP 工具都失败时才用
+{builtin_tool_notes}
 
 重试与回退规则（严格遵守）：
 - 如果 MCP 工具调用失败，按照用户配置最多重试 {max_retries} 次
@@ -663,8 +669,20 @@ def get_base_prompt() -> str:
     prompt = _BASE_PROMPT.replace("{user_name}", name)
     # 注入搜索回退配置
     search_cfg = get_search_fallback_config()
+    # 内建工具开关（额外的 fetch_webpage 禁用说明）
+    builtin_cfg = get_builtin_tool_config()
+    tool_notes = []
+    if not builtin_cfg.get("fetch_webpage_via_api", True):
+        tool_notes.append("- fetch_webpage_via_api 已禁用，请勿调用此工具")
+    if not builtin_cfg.get("fetch_webpage_browser", True):
+        tool_notes.append("- fetch_webpage_browser 已禁用，请勿调用此工具")
+    if not builtin_cfg.get("fetch_webpage_stealth", True):
+        tool_notes.append("- fetch_webpage_stealth 已禁用，请勿调用此工具")
+    builtin_tool_notes = "\n".join(tool_notes) if tool_notes else ""
+
     prompt = prompt.replace("{max_retries}", str(search_cfg.get("max_retries", 2)))
     prompt = prompt.replace("{fallback_strategy}", search_cfg.get("fallback_strategy", "builtin"))
+    prompt = prompt.replace("{builtin_tool_notes}", builtin_tool_notes)
     return prompt
 
 
@@ -829,8 +847,53 @@ def save_firecrawl_config(config: dict):
     full["firecrawl"] = config
     _save_full_config(full)
 
+# ──  知乎开放平台配置 ─────────────────────────────────
+_ZHIHU_DEFAULTS = {
+    "access_secret": "",        # 知乎开放平台 Access Secret
+}
 
-# ── 网络搜索重试与回退配置 ─────────────────────────────────
+def get_zhihu_config() -> dict:
+    """读取知乎全搜索 API 配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    zhihu = full.get("zhihu", {})
+    result = {}
+    for k, v in _ZHIHU_DEFAULTS.items():
+        result[k] = zhihu.get(k, v)
+    return result
+
+def save_zhihu_config(config: dict):
+    """保存知乎全搜索 API 配置（仅更新 zhihu 部分）。"""
+    full = _load_full_config()
+    full["zhihu"] = config
+    _save_full_config(full)
+
+
+
+_BUILTIN_TOOL_DEFAULTS = {
+    "fetch_webpage": True,              # 普通 HTTP 抓取（直连，速度最快）
+    "fetch_webpage_via_api": False,     # API 中转抓取（慢但穿透力强，默认关闭）
+    "fetch_webpage_browser": True,      # 浏览器模式（Playwright，最慢但最强）
+    "fetch_webpage_stealth": True,      # 反反爬模式（额外反检测头）
+}
+
+
+def get_builtin_tool_config() -> dict:
+    """读取内建工具启用/禁用配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    cfg = full.get("builtin_tools", {})
+    result = _BUILTIN_TOOL_DEFAULTS.copy()
+    result.update(cfg)
+    return result
+
+
+def save_builtin_tool_config(config: dict):
+    """保存内建工具启用/禁用配置。"""
+    full = _load_full_config()
+    full["builtin_tools"] = config
+    _save_full_config(full)
+
+
+# ── 网络搜索重试回退配置 ─────────────────────────────────
 
 _SEARCH_FALLBACK_DEFAULTS = {
     "max_retries": 2,                      # MCP 搜索失败后最大重试次数（0 不重试）

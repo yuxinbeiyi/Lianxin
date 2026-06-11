@@ -1015,6 +1015,16 @@ class AgentCore:
             mcp_tools = get_all_mcp_tool_definitions()
             all_tools = TOOL_DEFINITIONS + skill_tools + mcp_tools
 
+            # 串联过滤：按用户内置工具配置过滤禁用的工具
+            from config import get_builtin_tool_config
+            builtin_cfg = get_builtin_tool_config()
+            disabled_tool_names = {name for name, enabled in builtin_cfg.items() if not enabled}
+            if disabled_tool_names:
+                all_tools = [
+                    t for t in all_tools
+                    if t.get("function", {}).get("name", "") not in disabled_tool_names
+                ]
+
 
         # 注入已激活技能的知识内容（本地模式跳过）
         if not self._use_local:

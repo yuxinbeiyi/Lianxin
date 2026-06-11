@@ -14,8 +14,10 @@ from PyQt5.QtGui import QFont
 from config import (
     get_tavily_config, save_tavily_config,
     get_firecrawl_config, save_firecrawl_config,
+    get_zhihu_config, save_zhihu_config,
     get_search_fallback_config, save_search_fallback_config,
     get_proxy_config, save_proxy_config,
+    get_builtin_tool_config, save_builtin_tool_config,
 )
 
 
@@ -82,12 +84,17 @@ class NetworkSettingsDialog(QDialog):
         self._build_tab_firecrawl(tab_firecrawl)
         tabs.addTab(tab_firecrawl, "🕷️ Firecrawl 爬虫")
 
-        # ── Tab 3: 重试与回退 ─────────────────────────────
+        # ── Tab 3: 知乎全搜索 ─────────────────────────
+        tab_zhihu = QWidget()
+        self._build_tab_zhihu(tab_zhihu)
+        tabs.addTab(tab_zhihu, "🎓 知乎搜索")
+
+        # ── Tab 4: 重试与回退 ─────────────────────────────
         tab_fallback = QWidget()
         self._build_tab_fallback(tab_fallback)
         tabs.addTab(tab_fallback, "⚙️ 重试回退")
 
-        # ── Tab 4: 代理设置 ─────────────────────────────
+        # ── Tab 5: 代理设置 ─────────────────────────────
         tab_proxy = QWidget()
         self._build_tab_proxy(tab_proxy)
         tabs.addTab(tab_proxy, "🛡️ 代理设置")
@@ -228,6 +235,62 @@ class NetworkSettingsDialog(QDialog):
         self._fc_key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
         self._show_fc_btn.setText("隐藏" if checked else "显示")
 
+    # ── 知乎全搜索 ────────────────────────────────────────
+    def _build_tab_zhihu(self, parent: QWidget):
+        layout = QVBoxLayout(parent)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+
+        title = QLabel("🎓 知乎全网搜索配置")
+        title.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
+        title.setStyleSheet("color: #3A3A5C;")
+        layout.addWidget(title)
+
+        desc = QLabel(
+            "接入知乎开放平台 MCP 服务，支持全站搜索和实时热榜。\n"
+            "配置后莲心可以直接搜索知乎最新内容、热门话题。\n"
+            "注册地址：https://developer.zhihu.com/，在个人中心获取 Access Secret。"
+        )
+        desc.setFont(QFont("Microsoft YaHei UI", 9))
+        desc.setStyleSheet("color: #888;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+        layout.addSpacing(8)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+        form.setSpacing(10)
+
+        key_row = QHBoxLayout()
+        self._zhihu_key_edit = QLineEdit()
+        self._zhihu_key_edit.setPlaceholderText("你的知乎开放平台 Access Secret")
+        self._zhihu_key_edit.setEchoMode(QLineEdit.Password)
+        self._zhihu_key_edit.setFont(QFont("Consolas", 10))
+        self._zhihu_key_edit.setStyleSheet("""
+            QLineEdit {
+                border: 1px solid #D0D0E0; border-radius: 6px;
+                padding: 6px 10px; background: #FFFFFF;
+            }
+            QLineEdit:focus { border-color: #6C7BFF; }
+        """)
+        key_row.addWidget(self._zhihu_key_edit)
+
+        self._show_zh_btn = QPushButton("显示")
+        self._show_zh_btn.setFixedSize(60, 34)
+        self._show_zh_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        self._show_zh_btn.setCursor(Qt.PointingHandCursor)
+        self._show_zh_btn.setCheckable(True)
+        self._show_zh_btn.clicked.connect(self._toggle_zh_key_visibility)
+        key_row.addWidget(self._show_zh_btn)
+        form.addRow("知乎 Access Secret：", key_row)
+
+        layout.addLayout(form)
+        layout.addStretch()
+
+    def _toggle_zh_key_visibility(self, checked: bool):
+        self._zhihu_key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+        self._show_zh_btn.setText("隐藏" if checked else "显示")
+
     # ── 重试与回退 ────────────────────────────────────────
     def _build_tab_fallback(self, parent: QWidget):
         layout = QVBoxLayout(parent)
@@ -271,6 +334,31 @@ class NetworkSettingsDialog(QDialog):
         form.addRow("额度不足自动回退：", self._search_auto_fallback_check)
 
         layout.addLayout(form)
+
+        # ── 内建工具开关 ────────────────────────────────
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("background-color: #E0E0E8; max-height: 1px;")
+        layout.addWidget(sep)
+
+        builtin_label = QLabel("内建网页抓取工具（勾选=可用，取消=禁止LLM调用）")
+        builtin_label.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
+        builtin_label.setStyleSheet("color: #3A3A5C;")
+        layout.addWidget(builtin_label)
+
+        self._bt_fetch_webpage = QCheckBox("fetch_webpage — 普通HTTP抓取，直连速度快")
+        self._bt_fetch_webpage.setChecked(True)
+        layout.addWidget(self._bt_fetch_webpage)
+
+        self._bt_fetch_via_api = QCheckBox("fetch_webpage_via_api — API中转抓取，速度慢但穿透力强")
+        layout.addWidget(self._bt_fetch_via_api)
+
+        self._bt_fetch_browser = QCheckBox("fetch_webpage_browser — 浏览器模式Playwright，最慢")
+        layout.addWidget(self._bt_fetch_browser)
+
+        self._bt_fetch_stealth = QCheckBox("fetch_webpage_stealth — 反反爬模式，额外伪装头")
+        layout.addWidget(self._bt_fetch_stealth)
+
         layout.addStretch()
 
     # ── 代理设置 ─────────────────────────────────────────
@@ -336,6 +424,9 @@ class NetworkSettingsDialog(QDialog):
         fc_cfg = get_firecrawl_config()
         self._fc_key_edit.setText(fc_cfg.get("api_key", ""))
 
+        zh_cfg = get_zhihu_config()
+        self._zhihu_key_edit.setText(zh_cfg.get("access_secret", ""))
+
         cfg = get_search_fallback_config()
         self._search_max_retries_spin.setValue(cfg.get("max_retries", 2))
 
@@ -350,9 +441,17 @@ class NetworkSettingsDialog(QDialog):
             self._search_strategy_direct.setChecked(True)
         self._search_auto_fallback_check.setChecked(cfg.get("auto_fallback_on_quota", True))
 
+        # 内建工具开关
+        builtin = get_builtin_tool_config()
+        self._bt_fetch_webpage.setChecked(builtin.get("fetch_webpage", True))
+        self._bt_fetch_via_api.setChecked(builtin.get("fetch_webpage_via_api", False))
+        self._bt_fetch_browser.setChecked(builtin.get("fetch_webpage_browser", True))
+        self._bt_fetch_stealth.setChecked(builtin.get("fetch_webpage_stealth", True))
+
     def _on_save(self):
         save_tavily_config({"api_key": self._tv_key_edit.text().strip()})
         save_firecrawl_config({"api_key": self._fc_key_edit.text().strip()})
+        save_zhihu_config({"access_secret": self._zhihu_key_edit.text().strip()})
         save_search_fallback_config({
             "max_retries": self._search_max_retries_spin.value(),
             "fallback_strategy": "builtin" if self._search_strategy_builtin.isChecked() else "direct",
@@ -363,6 +462,13 @@ class NetworkSettingsDialog(QDialog):
             "http_proxy":  self._proxy_http_edit.text().strip(),
             "https_proxy": self._proxy_https_edit.text().strip(),
             "no_proxy":    self._proxy_noproxy_edit.text().strip(),
+        })
+
+        save_builtin_tool_config({
+            "fetch_webpage":           self._bt_fetch_webpage.isChecked(),
+            "fetch_webpage_via_api":   self._bt_fetch_via_api.isChecked(),
+            "fetch_webpage_browser":   self._bt_fetch_browser.isChecked(),
+            "fetch_webpage_stealth":   self._bt_fetch_stealth.isChecked(),
         })
 
         self.config_saved.emit()
