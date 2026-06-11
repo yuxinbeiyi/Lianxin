@@ -56,6 +56,15 @@ class SoundSettingsDialog(QDialog):
         line.setStyleSheet("background-color: #E0E0E8; max-height: 1px;")
         layout.addWidget(line)
 
+        # ── 静默模式（全局开关）────────────
+        silent_frame = self._create_frame()
+        silent_vbox = QHBoxLayout(silent_frame)
+        self._silent_cb = QCheckBox("开启静默模式（所有消息只显示气泡，不语音朗读）")
+        self._silent_cb.setFont(QFont("Microsoft YaHei UI", 9))
+        self._silent_cb.setCursor(Qt.PointingHandCursor)
+        silent_vbox.addWidget(self._silent_cb)
+        layout.addWidget(silent_frame)
+
         # 滚动区域
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -258,6 +267,9 @@ class SoundSettingsDialog(QDialog):
         self._tts_warmup_cb.setChecked(self._tts_cfg.get("tts_warmup", True))
         self._update_gs_status()
 
+        # 静默模式
+        self._silent_cb.setChecked(self._settings.silent_mode)
+
     def _browse_gs_path(self):
         from PyQt5.QtWidgets import QFileDialog
         dir_path = QFileDialog.getExistingDirectory(
@@ -370,7 +382,10 @@ class SoundSettingsDialog(QDialog):
         dlg.exec_()
 
     def _on_save(self):
-        """保存所有设置：声音+TTS"""
+        """保存所有设置：声音+TTS+静默模式"""
+        # 静默模式
+        self._settings.silent_mode = self._silent_cb.isChecked()
+
         # 声音设置（音量）在滑块变化时已实时保存
         # 保存 TTS 配置
         engine_idx = self._tts_engine_combo.currentIndex()

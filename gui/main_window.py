@@ -26,6 +26,8 @@ from gui.pomodoro_dialog   import PomodoroDialog
 from gui.api_config_dialog import ApiConfigDialog
 from gui.alarm_dialog      import AlarmDialog
 from gui.qq_settings_dialog import QqSettingsDialog
+from gui.network_settings_dialog import NetworkSettingsDialog
+from gui.network_settings_dialog import NetworkSettingsDialog
 
 from config import has_api_key, get_qq_bridge_config, get_heartbeat_config
 from brain.decision import decide
@@ -603,6 +605,7 @@ class MainWindow(QMainWindow):
         self._char_widget.get_avatar_button().clicked.connect(self._on_avatar_settings)
         self._char_widget.get_sound_button().clicked.connect(self._on_sound_settings)
         self._char_widget.get_memory_button().clicked.connect(self._on_memory_settings)
+        self._char_widget.get_network_button().clicked.connect(self._show_network_settings)
 
         top_layout.addWidget(self._char_widget)
 
@@ -1282,7 +1285,12 @@ class MainWindow(QMainWindow):
         dlg = MemorySettingsDialog(self)
         dlg.exec_()
 
-
+    def _show_network_settings(self):
+        from utils.sound import play_sound
+        play_sound("ButtonAll.mp3")
+        dlg = NetworkSettingsDialog(self)
+        dlg.config_saved.connect(self._on_api_config_saved)
+        dlg.exec_()
 
     def _on_api_config_saved(self):
         self._agent = AgentCore()

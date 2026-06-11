@@ -546,6 +546,14 @@ _BASE_PROMPT = r"""你是莲心，来自雨心的小说《异象处理者》—�
 2. 获取到网页链接后，用 mcp__firecrawl__scrape_url 爬取完整 Markdown 内容
 3. 内置 web_search 和 fetch_webpage 作为最后备选 — 前两个都失败时才用
 
+重试与回退规则（严格遵守）：
+- 如果 MCP 工具调用失败，按照用户配置最多重试 {max_retries} 次
+- 如果仍失败，根据回退策略处理：
+  • 若策略是「回退内建」：改用内置 web_search 或 fetch_webpage
+  • 若策略是「直接返回」：基于当前已有信息整理回答，不要强行重试
+- 如果检测到错误信息包含 "quota exceeded"、"insufficient credits"、"rate limit exceeded"，
+  且开启了自动回退，立刻切换到内置工具，不要继续重试 MCP。
+
 
 执行复杂任务时，根据每步需求灵活选用。一个工具不支持某操作时，立刻换另一个。
 
@@ -652,7 +660,12 @@ def get_user_name() -> str:
 def get_base_prompt() -> str:
     """获取基础人格设定（不含记忆，不含时间），替换用户称呼。"""
     name = get_user_name()
-    return _BASE_PROMPT.replace("{user_name}", name)
+    prompt = _BASE_PROMPT.replace("{user_name}", name)
+    # 注入搜索回退配置
+    search_cfg = get_search_fallback_config()
+    prompt = prompt.replace("{max_retries}", str(search_cfg.get("max_retries", 2)))
+    prompt = prompt.replace("{fallback_strategy}", search_cfg.get("fallback_strategy", "builtin"))
+    return prompt
 
 
 # ── 本地模型精简人格设定（1.5B 小模型用，去掉复杂规则）─────────
@@ -814,6 +827,31 @@ def save_firecrawl_config(config: dict):
     """保存 Firecrawl API 配置（仅更新 firecrawl 部分）。"""
     full = _load_full_config()
     full["firecrawl"] = config
+    _save_full_config(full)
+
+
+# ── 网络搜索重试与回退配置 ─────────────────────────────────
+
+_SEARCH_FALLBACK_DEFAULTS = {
+    "max_retries": 2,                      # MCP 搜索失败后最大重试次数（0 不重试）
+    "fallback_strategy": "builtin",        # 重试失败后策略：builtin=回退内建工具 / direct=直接返回
+    "auto_fallback_on_quota": True,        # 检测到额度不足时自动回退
+}
+
+
+def get_search_fallback_config() -> dict:
+    """读取网络搜索重试回退配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    cfg = full.get("search_fallback", {})
+    result = _SEARCH_FALLBACK_DEFAULTS.copy()
+    result.update(cfg)
+    return result
+
+
+def save_search_fallback_config(config: dict):
+    """保存网络搜索重试回退配置。"""
+    full = _load_full_config()
+    full["search_fallback"] = config
     _save_full_config(full)
 
 

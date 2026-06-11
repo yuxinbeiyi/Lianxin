@@ -169,16 +169,6 @@ class ApiConfigDialog(QDialog):
         tab_qw = QWidget()
         self._build_tab_qweather(tab_qw)
         tabs.addTab(tab_qw, "☁️ 和风天气")
-        
-        # Tab 5: Tavily Search
-        tab_tavily = QWidget()
-        self._build_tab_tavily(tab_tavily)
-        tabs.addTab(tab_tavily, "🔍 Tavily 搜索")
-        # Tab 6: Firecrawl
-        tab_firecrawl = QWidget()
-        self._build_tab_firecrawl(tab_firecrawl)
-        tabs.addTab(tab_firecrawl, "🔍 Firecrawl 爬取")
-
 
         layout.addWidget(tabs)
 
@@ -877,6 +867,66 @@ class ApiConfigDialog(QDialog):
         self._tv_key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
         self._show_tv_btn.setText("隐藏" if checked else "显示")
 
+    # ── 网络搜索重试与回退设置 ───────────────────────────────
+    def _build_tab_search_fallback(self, parent: QWidget):
+        layout = QVBoxLayout(parent)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(12)
+
+        desc = QLabel(
+            "配置 MCP 搜索（Tavily/Firecrawl）失败后的重试和回退策略。\n"
+            "- 重试：同一请求失败后自动重试几次，偶发网络问题可以自动恢复\n"
+            "- 回退：重试全部失败后，是改用内建工具，还是基于已有信息直接回答\n"
+            "- 额度检测：免费额度用完时自动切换，不用手动改配置"
+        )
+        desc.setWordWrap(True)
+        desc.setFont(QFont("Microsoft YaHei UI", 9))
+        desc.setStyleSheet("color: #666; background: #F5F5FF; padding: 8px; border-radius: 4px;")
+        layout.addWidget(desc)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+        form.setSpacing(10)
+
+        # 最大重试次数
+        self._search_max_retries_spin = QSpinBox()
+        self._search_max_retries_spin.setRange(0, 5)
+        self._search_max_retries_spin.setSuffix(" 次")
+        form.addRow("MCP 最大重试次数：", self._search_max_retries_spin)
+
+        # 重试失败策略
+        from PyQt5.QtWidgets import QRadioButton, QButtonGroup
+        strategy_widget = QWidget()
+        strategy_vbox = QVBoxLayout(strategy_widget)
+        strategy_vbox.setContentsMargins(0, 4, 0, 4)
+        strategy_vbox.setSpacing(6)
+        self._search_strategy_group = QButtonGroup(strategy_widget)
+        self._search_strategy_builtin = QRadioButton("回退到内建搜索工具（web_search/fetch_webpage）")
+        self._search_strategy_direct = QRadioButton("基于已有信息直接回答")
+        self._search_strategy_group.addButton(self._search_strategy_builtin)
+        self._search_strategy_group.addButton(self._search_strategy_direct)
+        strategy_vbox.addWidget(self._search_strategy_builtin)
+        strategy_vbox.addWidget(self._search_strategy_direct)
+        form.addRow("重试失败后策略：", strategy_widget)
+
+        # 额度不足自动回退
+        self._search_auto_fallback_check = QCheckBox("启用")
+        form.addRow("额度不足自动回退：", self._search_auto_fallback_check)
+
+        layout.addLayout(form)
+
+        # 从 config 加载初始值
+        from config import get_search_fallback_config
+        cfg = get_search_fallback_config()
+        self._search_max_retries_spin.setValue(cfg.get("max_retries", 2))
+        if cfg.get("fallback_strategy", "builtin") == "builtin":
+            self._search_strategy_builtin.setChecked(True)
+        else:
+            self._search_strategy_direct.setChecked(True)
+        self._search_auto_fallback_check.setChecked(cfg.get("auto_fallback_on_quota", True))
+
+        layout.addStretch()
+
     # ── 辅助样式 ──────────────────────────────────────────────
 
     def _apply_field_style(self, widget: QLineEdit):
@@ -966,14 +1016,6 @@ class ApiConfigDialog(QDialog):
         if idx >= 0:
             self._qw_remind_time.setCurrentIndex(idx)
 
-        # Tavily Search 配置
-        tv_cfg = get_tavily_config()
-        self._tv_key_edit.setText(tv_cfg.get("api_key", ""))
-
-        # Firecrawl 网页爬虫配置
-        fc_cfg = get_firecrawl_config()
-        self._fc_key_edit.setText(fc_cfg.get("api_key", ""))
-
 
     # ── 数据收集 ─────────────────────────────────────────────
 
@@ -1058,20 +1100,6 @@ class ApiConfigDialog(QDialog):
 
         self.config_saved.emit()
         self.accept()
-        
-        # Tavily Search
-        tv_cfg = {
-            "api_key": self._tv_key_edit.text().strip(),
-        }
-        save_tavily_config(tv_cfg)
-
-        # Firecrawl 网页爬虫
-        fc_cfg = {
-            "api_key": self._fc_key_edit.text().strip(),
-        }
-        save_firecrawl_config(fc_cfg)
-
-
 
     # ── 测试 DeepSeek 连接 ────────────────────────────────────
 

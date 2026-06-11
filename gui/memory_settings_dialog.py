@@ -2,12 +2,12 @@
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QSpinBox,QWidget,
     QPushButton, QScrollArea, QFrame, QLineEdit, QFileDialog, QComboBox,
-    QTabWidget, QMessageBox
+    QTabWidget, QMessageBox, QMenu, QTextEdit
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from config import get_memory_config, save_memory_config
-from brain.graph_memory import list_all_facts, delete_facts, ALL_MEMORY_CATEGORIES
+from brain.graph_memory import list_all_facts, delete_facts, add_fact, update_facts, ALL_MEMORY_CATEGORIES
 
 
 
@@ -330,7 +330,76 @@ class MemorySettingsDialog(QDialog):
             self._memory_cat_filter.addItem(cat_names.get(key, key), key)
         self._memory_cat_filter.currentIndexChanged.connect(self._refresh_memory_list)
         search_row.addWidget(self._memory_cat_filter, 1)
+
+        add_btn = QPushButton("➕ 新增记忆")
+        add_btn.setFixedWidth(90)
+        add_btn.setStyleSheet("""
+            QPushButton {
+                background: #E8ECFF; color: #4A4A8A; border: 1px solid #C0C8E8;
+                border-radius: 6px; padding: 6px 10px; font-size: 11px;
+            }
+            QPushButton:hover { background: #D0D8FF; }
+        """)
+        add_btn.clicked.connect(self._toggle_add_form)
+        search_row.addWidget(add_btn)
         tab4_layout.addLayout(search_row)
+
+        # 新增记忆表单（默认隐藏）
+        self._add_form = QFrame()
+        self._add_form.setStyleSheet("""
+            QFrame {
+                background: #F0F4FF; border-radius: 8px;
+                border: 1px solid #C0C8E8;
+            }
+        """)
+        add_form_layout = QVBoxLayout(self._add_form)
+        add_form_layout.setContentsMargins(12, 10, 12, 10)
+        add_form_layout.setSpacing(8)
+
+        form_row1 = QHBoxLayout()
+        form_row1.addWidget(QLabel("分类："))
+        self._new_cat_combo = QComboBox()
+        cat_names2 = {
+            "profile": "👤 个人档案", "preferences": "❤️ 偏好",
+            "events": "📅 事件", "knowledge": "📚 知识",
+            "behaviors": "💬 行为模式", "skills": "🛠️ 技能",
+        }
+        for key in ALL_MEMORY_CATEGORIES:
+            self._new_cat_combo.addItem(cat_names2.get(key, key), key)
+        form_row1.addWidget(self._new_cat_combo, 1)
+        add_form_layout.addLayout(form_row1)
+
+        self._new_content_input = QTextEdit()
+        self._new_content_input.setPlaceholderText("输入记忆内容...")
+        self._new_content_input.setMaximumHeight(60)
+        self._new_content_input.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #D0D0E0; border-radius: 6px;
+                padding: 6px; background: #FFFFFF; font-size: 12px;
+            }
+        """)
+        add_form_layout.addWidget(self._new_content_input)
+
+        form_btns = QHBoxLayout()
+        form_btns.addStretch()
+        cancel_btn = QPushButton("取消")
+        cancel_btn.setFixedSize(60, 26)
+        cancel_btn.clicked.connect(lambda: self._add_form.hide())
+        form_btns.addWidget(cancel_btn)
+        save_btn = QPushButton("💾 保存")
+        save_btn.setFixedSize(70, 26)
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background: #6A7BFF; color: #FFFFFF; border: 0;
+                border-radius: 4px; font-weight: bold;
+            }
+            QPushButton:hover { background: #5A6BEF; }
+        """)
+        save_btn.clicked.connect(self._on_add_memory)
+        form_btns.addWidget(save_btn)
+        add_form_layout.addLayout(form_btns)
+        self._add_form.hide()
+        tab4_layout.addWidget(self._add_form)
 
         # 统计标签
         self._memory_count_label = QLabel("")
@@ -461,6 +530,18 @@ class MemorySettingsDialog(QDialog):
                 created = item.get("created_at", "")[:10] if item.get("created_at") else ""
 
                 row = QFrame()
+                row.setContextMenuPolicy(Qt.CustomContextMenu)
+                row.customContextMenuRequested.connect(
+                    lambda pos, c=content, cat_name=cat, r=row: self._show_context_menu(pos, c, cat_name, r)
+                )
+                row.setContextMenuPolicy(Qt.CustomContextMenu)
+                row.customContextMenuRequested.connect(
+                    lambda pos, c=content, cat_name=cat, r=row: self._show_context_menu(pos, c, cat_name, r)
+                )
+                row.setContextMenuPolicy(Qt.CustomContextMenu)
+                row.customContextMenuRequested.connect(
+                    lambda pos, c=content, cat_name=cat, r=row: self._show_context_menu(pos, c, cat_name, r)
+                )
                 row.setStyleSheet("""
                     QFrame {
                         background: #F8F8FC; border-radius: 6px;
@@ -475,7 +556,7 @@ class MemorySettingsDialog(QDialog):
                 # 左侧：内容
                 content_label = QLabel(content)
                 content_label.setWordWrap(True)
-                content_label.setStyleSheet("border: 0; background: transparent; font-size: 12px;")
+                content_label.setStyleSheet("border: 0; background: transparent; font-size: 14px;")
                 row_layout.addWidget(content_label, 1)
 
                 # 右侧：元信息
@@ -483,7 +564,7 @@ class MemorySettingsDialog(QDialog):
                 if created:
                     meta += f"<span style='color:#AAA;'> · {created}</span>"
                 meta_label = QLabel(meta)
-                meta_label.setStyleSheet("border: 0; background: transparent; font-size: 10px; white-space: nowrap;")
+                meta_label.setStyleSheet("border: 0; background: transparent; font-size: 11px; white-space: nowrap;")
                 row_layout.addWidget(meta_label)
 
                 # 删除按钮
@@ -526,6 +607,92 @@ class MemorySettingsDialog(QDialog):
             return
 
         delete_facts(content, category)
+        # 重新加载并刷新
+        self._all_facts = list_all_facts()
+        self._refresh_memory_list()
+
+    def _toggle_add_form(self):
+        """切换新增记忆表单的显示/隐藏。"""
+        self._add_form.setVisible(not self._add_form.isVisible())
+        if self._add_form.isVisible():
+            self._new_content_input.setFocus()
+
+    def _on_add_memory(self):
+        """保存用户手动新增的记忆。"""
+        content = self._new_content_input.toPlainText().strip()
+        if not content:
+            QMessageBox.warning(self, "提示", "记忆内容不能为空。")
+            return
+        category = self._new_cat_combo.currentData()
+        add_fact(content, category, source="user_saved")
+        # 清空表单
+        self._new_content_input.clear()
+        self._add_form.hide()
+        # 重新加载并刷新
+        self._all_facts = list_all_facts()
+        self._refresh_memory_list()
+
+    def _show_context_menu(self, pos, content: str, category: str, row: QFrame):
+        """右键菜单：修改记忆。"""
+        menu = QMenu(self)
+        edit_action = menu.addAction("✏️ 修改这条记忆")
+        action = menu.exec_(row.mapToGlobal(pos))
+        if action == edit_action:
+            self._on_edit_memory(content, category)
+
+    def _on_edit_memory(self, old_content: str, category: str):
+        """弹出编辑对话框，修改记忆内容。"""
+        from PyQt5.QtWidgets import QInputDialog
+        new_content, ok = QInputDialog.getMultiLineText(
+            self, "修改记忆", f"分类：{category}\n请输入新内容：", old_content
+        )
+        if not ok or not new_content or new_content.strip() == old_content:
+            return
+        new_content = new_content.strip()
+        update_facts(old_content, new_content, category)
+        # 重新加载并刷新
+        self._all_facts = list_all_facts()
+        self._refresh_memory_list()
+
+    def _toggle_add_form(self):
+        """切换新增记忆表单的显示/隐藏。"""
+        self._add_form.setVisible(not self._add_form.isVisible())
+        if self._add_form.isVisible():
+            self._new_content_input.setFocus()
+
+    def _on_add_memory(self):
+        """保存用户手动新增的记忆。"""
+        content = self._new_content_input.toPlainText().strip()
+        if not content:
+            QMessageBox.warning(self, "提示", "记忆内容不能为空。")
+            return
+        category = self._new_cat_combo.currentData()
+        add_fact(content, category, source="user_saved")
+        # 清空表单
+        self._new_content_input.clear()
+        self._add_form.hide()
+        # 重新加载并刷新
+        self._all_facts = list_all_facts()
+        self._refresh_memory_list()
+
+    def _show_context_menu(self, pos, content: str, category: str, row: QFrame):
+        """右键菜单：修改记忆。"""
+        menu = QMenu(self)
+        edit_action = menu.addAction("✏️ 修改这条记忆")
+        action = menu.exec_(row.mapToGlobal(pos))
+        if action == edit_action:
+            self._on_edit_memory(content, category)
+
+    def _on_edit_memory(self, old_content: str, category: str):
+        """弹出编辑对话框，修改记忆内容。"""
+        from PyQt5.QtWidgets import QInputDialog
+        new_content, ok = QInputDialog.getMultiLineText(
+            self, "修改记忆", f"分类：{category}\n请输入新内容：", old_content
+        )
+        if not ok or not new_content or new_content.strip() == old_content:
+            return
+        new_content = new_content.strip()
+        update_facts(old_content, new_content, category)
         # 重新加载并刷新
         self._all_facts = list_all_facts()
         self._refresh_memory_list()

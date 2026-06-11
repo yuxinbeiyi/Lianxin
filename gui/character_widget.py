@@ -355,6 +355,8 @@ class CharacterWidget(QWidget):
         grid.addWidget(self._btn_sound, 4, 0)
         self._btn_memory = self._create_button("🧠 记忆系统", color="#5D6D7E")
         grid.addWidget(self._btn_memory, 4, 1)
+        self._btn_network = self._create_button("🌐 网络设置", color="#3498DB")
+        grid.addWidget(self._btn_network, 5, 0)
 
 
 
@@ -654,6 +656,9 @@ class CharacterWidget(QWidget):
         return self._btn_sound
     def get_memory_button(self):
         return self._btn_memory
+
+    def get_network_button(self):
+        return self._btn_network
 
 
 
