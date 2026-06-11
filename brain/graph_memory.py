@@ -432,10 +432,20 @@ def delete_entity(name: str) -> int:
 
 
 # ── 分类事实记忆（替换 long_term.json） ─────────────────
-
 ALL_MEMORY_CATEGORIES = [
     "profile", "preferences", "events", "knowledge", "behaviors", "skills"
 ]
+ALL_CATEGORIES = ALL_MEMORY_CATEGORIES  # 向后兼容别名
+
+CATEGORY_DESCRIPTIONS = {
+    "profile": "个人档案：用户的姓名、年龄、外貌、性格、职业、背景故事等长期稳定的个人信息",
+    "preferences": "偏好：用户喜欢的音乐、游戏、食物、颜色、动漫、风格等喜好信息",
+    "events": "事件：用户过去经历的事、旅行、比赛、重要日期、未来的计划等",
+    "knowledge": "知识：路径配置、工作原理、规则、使用方法等客观事实",
+    "behaviors": "行为模式：沟通风格偏好、习惯、互动方式、期望的回应方式等",
+    "skills": "技能：莲心学会的能力、工具使用经验、新掌握的领域知识",
+}
+
 
 
 def add_fact(content: str, category: str = "knowledge",
@@ -732,3 +742,53 @@ def migrate_from_json(json_path: str | None = None) -> int:
         pass
 
     return migrated
+
+# ── 格式化工具 ─────────────────────────────────────────
+
+def format_all_memories(data: dict[str, list[dict]] | None = None) -> str:
+    """格式化输出全部记忆（用于 LLM 查看）。"""
+    if data is not None:
+        lines = []
+        for cat in ALL_CATEGORIES:
+            items = data.get(cat, [])
+            if items:
+                lines.append(f"\n【{cat} ({CATEGORY_DESCRIPTIONS.get(cat, '')})】")
+                for item in items:
+                    src = "自动" if item.get("source") == "auto_extracted" else "手动"
+                    lines.append(f"  · {item['content']} (强度:{item.get('strength', 1)}, {src})")
+        if len(lines) == 0:
+            return "还没有任何记忆。"
+        return "\n".join(lines)
+    return "还没有任何记忆。"
+
+
+def build_extraction_prompt(recent_conversation: str) -> str:
+    """构建用于自动记忆提取的 prompt。"""
+    cat_desc = "\n".join(f"  - {k}：{v}" for k, v in CATEGORY_DESCRIPTIONS.items())
+    return f"""分析以下最近的对话内容，从中提取值得长期记忆的信息。
+
+## 记忆分类说明
+{cat_desc}
+
+## 提取规则
+1. 只提取用户明确表达的稳定事实，不要从你自己的回复中提取
+2. 不要记录临时状态（如「今天天气好」「我现在很累」等一次性信息）
+3. 每条记忆应该自我完整，脱离上下文也能理解
+4. 如果某条信息与已有记忆相似，可以合并或强化（在 review 中注明）
+5. 宁少勿多：没有值得记的就不记
+
+## 输出格式（JSON）
+{{{{
+    "memories": [
+        {{{{
+            "category": "profile|preferences|events|knowledge|behaviors|skills",
+            "content": "完整的记忆文本",
+            "reason": "为什么这条信息值得记住"
+        }}}}
+    ]
+}}}}
+
+如果没有值得记忆的内容，返回 {{{{ "memories": [] }}}}。
+
+## 最近的对话
+{recent_conversation}"""

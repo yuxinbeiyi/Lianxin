@@ -11,7 +11,7 @@ from typing import Optional
 from PyQt5.QtCore import QThread, pyqtSignal
 from openai import OpenAI
 from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, MODEL, MAX_TOKENS
-from brain.graph_memory import list_all_facts, ALL_MEMORY_CATEGORIES
+from brain.graph_memory import list_all_facts, ALL_CATEGORIES
 from memory.history_manager import HistoryManager
 from utils.settings import get_settings
 
@@ -100,7 +100,7 @@ class ProactiveWorker(QThread):
                 return
         except Exception:
             pass
-
+    
         try:
             obs_path = None
             obs_text = self._observation_desc
@@ -200,7 +200,7 @@ class ProactiveWorker(QThread):
         # 长期记忆（按分类组织）
         all_mem = list_all_facts()
         mem_lines = []
-        for cat in ALL_MEMORY_CATEGORIES:
+        for cat in ALL_CATEGORIES:
             items = all_mem.get(cat, [])
             for item in items[:5]:  # 每类最多5条
                 mem_lines.append(f"- [{cat}] {item['content']}")

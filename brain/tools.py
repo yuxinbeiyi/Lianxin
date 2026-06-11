@@ -40,13 +40,7 @@ from brain.graph_memory import (
     delete_entity,
 )
 # 格式化工具和常量仍然从 memory_store 取（无存储依赖）
-from brain.memory_store import (
-    format_search_result,
-    format_all_memories,
-    ALL_CATEGORIES,
-    CATEGORY_DESCRIPTIONS,
-)
-
+from brain.graph_memory import format_all_memories
 # 每块最大字符数（read_file 默认读第0块，read_file_chunk 可读任意块）
 _CHUNK_SIZE = 15000
 

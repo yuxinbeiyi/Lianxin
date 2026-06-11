@@ -21,7 +21,7 @@ from utils.accompany_stats import AccompanyStats
 from config import get_proxy_config, save_proxy_config
 from config import get_proxy_config, save_proxy_config, get_heartbeat_config
 from config import get_quick_launch_apps, save_quick_launch_apps
-from brain.memory_store import ALL_CATEGORIES, CATEGORY_DESCRIPTIONS
+from brain.graph_memory import ALL_CATEGORIES, CATEGORY_DESCRIPTIONS
 from brain.graph_memory import list_all_facts, delete_facts
 from gui.quick_launch_dialog import QuickLaunchEditDialog
 

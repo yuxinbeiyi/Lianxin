@@ -17,7 +17,7 @@ litellm.suppress_debug_info = True  # 关闭 "Give Feedback" stderr 输出
 from config import get_api_config, get_base_prompt, get_local_base_prompt, get_qq_bridge_config, get_qq_timing_config, get_memory_config, get_graph_config
 from brain.tools import TOOL_DEFINITIONS, execute_tool, set_cross_session_context
 from brain.skill_manager import get_active_tool_definitions, get_active_knowledge
-from brain.memory_store import (
+from brain.graph_memory import (
     build_extraction_prompt,
     ALL_CATEGORIES,
 )
