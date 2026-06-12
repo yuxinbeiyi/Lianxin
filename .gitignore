@@ -59,3 +59,4 @@ nul
 "# GIF 压缩备份" 
 "*.gif.bak" 
 "assets/备份GIF/" 
+claude-code-main/ 
