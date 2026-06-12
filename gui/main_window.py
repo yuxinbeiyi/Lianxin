@@ -995,18 +995,13 @@ class MainWindow(QMainWindow):
             self._galgame_dialog.move(dx, dy)
 
     def _toggle_galgame_dialog(self):
-        """右键立绘：切换对话框显示/隐藏（不关闭立绘）。"""
+        """右键立绘：切换对话框显示/隐藏（不关闭立绘，记住上次位置）。"""
         if self._galgame_dialog:
             if self._galgame_dialog.isVisible():
                 self._galgame_dialog.hide()
             else:
-                # 重新计算对话框位置（立绘可能被移动过）
-                tx = self._tachie_win.x()
-                ty = self._tachie_win.y()
-                dx = tx - self._galgame_dialog.width() + 20
-                dy = ty + 40
-                self._galgame_dialog.move(dx, dy)
                 self._galgame_dialog.show()
+
 
     def _on_galgame_message(self, text: str):
         """Galgame 对话框发送消息。"""

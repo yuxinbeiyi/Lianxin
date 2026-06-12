@@ -12,9 +12,8 @@ from pathlib import Path
 from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout
 from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal, QPropertyAnimation, QSequentialAnimationGroup, QParallelAnimationGroup
 from PyQt5.QtGui import QPixmap, QMouseEvent
+from PyQt5.QtCore import QAbstractAnimation
 from PyQt5.QtWidgets import QGraphicsOpacityEffect
-
-from .live2d_widget import Live2DWidget
 
 
 class TachieWindow(QWidget):
@@ -31,24 +30,19 @@ class TachieWindow(QWidget):
         self._pinned = True
         self._window_opacity = 0.95
         self._in_animation = False
-
-        # 检测是否有 Live2D 模型
-        self._live2d_mode = self._detect_live2d()
-        self._live2d_widget = None
+        self._scale = 1.0
+        self._original_pixmap = None
 
         self._init_window()
         self._init_ui()
-        if not self._live2d_mode:
-            self._image_path = str(self._assets_dir / "莲心形象.jpg")
-            self._load_image()
+        self._image_path = str(self._assets_dir / "莲心形象透明背景.png")
+        self._load_image()
+
 
     @staticmethod
     def _detect_live2d() -> bool:
-        """检测 assets/live2d/models/ 下是否有 .model3.json 文件。"""
-        models_dir = Path(__file__).parent / "assets" / "live2d" / "models"
-        if not models_dir.is_dir():
-            return False
-        return any(models_dir.rglob("*.model3.json"))
+        return False
+
 
     def _init_window(self):
         self.setWindowTitle("莲心 - 立绘")
@@ -61,48 +55,20 @@ class TachieWindow(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self.setMinimumSize(100, 100)
+        self._old_label = QLabel(self)
+        self._old_label.setAlignment(Qt.AlignCenter)
+        self._old_label.setStyleSheet("background: transparent;")
+        self._old_label.hide()
 
-        if self._live2d_mode:
-            self._live2d_widget = Live2DWidget(
-                Path(__file__).parent / "assets" / "live2d", self
-            )
-            self._live2d_widget.setMinimumSize(100, 100)
-            layout.addWidget(self._live2d_widget)
+        self._image_label = QLabel(self)
+        self._image_label.setAlignment(Qt.AlignCenter)
+        self._image_label.setStyleSheet("background: transparent;")
 
-            # Live2D 模式下通过 QWebChannel 接收拖拽信号
-            self._l2d_dragging = False
-            self._l2d_drag_offset = QPoint()
-            self._live2d_widget.window_drag_started.connect(self._on_l2d_drag_start)
-            self._live2d_widget.window_drag_moved.connect(self._on_l2d_drag_move)
-            self._live2d_widget.window_drag_ended.connect(self._on_l2d_drag_end)
-            self._live2d_widget.right_clicked.connect(self.toggle_dialog_requested)
 
-            # 默认大小：窗口较大以展示 Live2D 模型
-            self.resize(280, 420)
-        else:
-            self.setMinimumSize(100, 100)
-            # 旧图标签（用于过渡动画中的淡出层）
-            self._old_label = QLabel(self)
-            self._old_label.setAlignment(Qt.AlignCenter)
-            self._old_label.setStyleSheet("background: transparent;")
-            self._old_label.hide()
-            layout.addWidget(self._old_label)
-
-            # 新图标签（主显示）
-            self._image_label = QLabel(self)
-            self._image_label.setAlignment(Qt.AlignCenter)
-            self._image_label.setStyleSheet("background: transparent;")
-            layout.addWidget(self._image_label)
-
-        self.setLayout(layout)
 
     def _load_image(self, pixmap: QPixmap = None):
-        """加载并显示立绘图片（仅静态模式）。"""
-        if self._live2d_mode:
-            return
+        """加载并显示立绘图片。"""
         if pixmap is None:
             if not os.path.exists(self._image_path):
                 self._image_label.setText("（暂无立绘）")
@@ -114,19 +80,37 @@ class TachieWindow(QWidget):
                 self.resize(200, 300)
                 return
 
-        scaled = pixmap.scaled(240, 360, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._original_pixmap = pixmap
+        # 初始尺寸：占屏幕 1/15 面积
+        screen = self.screen().availableGeometry()
+        target_area = screen.width() * screen.height() / 15
+        orig_w = pixmap.width()
+        orig_h = pixmap.height()
+        target_w = max(50, int(math.sqrt(target_area * orig_w / orig_h)))
+        target_h = max(50, int(target_area / target_w))
+        self._scale = target_w / orig_w
+        self._apply_scale()
+
+
+    def _apply_scale(self):
+        """按当前缩放比例渲染图片（以图像中心为原点）。"""
+        if self._original_pixmap is None:
+            return
+        old_center = self.geometry().center()
+        w = max(50, int(self._original_pixmap.width() * self._scale))
+        h = max(50, int(self._original_pixmap.height() * self._scale))
+        scaled = self._original_pixmap.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self._image_label.setPixmap(scaled)
-        self.resize(scaled.size())
         self._image_label.resize(scaled.size())
+        self.resize(scaled.size())
+        delta = old_center - self.geometry().center()
+        self.move(self.pos() + delta)
+
+
 
     def set_image(self, image_path: str):
-        """切换立绘图片（仅静态模式），Live2D 模式下忽略。"""
-        if self._live2d_mode:
-            return
-        if not os.path.exists(image_path):
-            return
-        if image_path == self._image_path and self._image_label.pixmap() is not None:
-            return
+        """切换立绘图片。"""
+
 
         current_pixmap = self._image_label.pixmap()
         if current_pixmap and not current_pixmap.isNull():
@@ -195,24 +179,6 @@ class TachieWindow(QWidget):
 
     # ── Live2D 控制代理 ─────────────────────────────────────
 
-    def is_live2d(self) -> bool:
-        return self._live2d_mode
-
-    def live2d_set_mouth(self, value: float):
-        """Live2D 唇形同步。"""
-        if self._live2d_widget:
-            self._live2d_widget.set_mouth_value(value)
-
-    def live2d_set_scale(self, scale: float):
-        """Live2D 缩放。"""
-        if self._live2d_widget:
-            self._live2d_widget.set_scale(scale)
-
-    def live2d_reset_view(self):
-        """重置 Live2D 模型位置/缩放。"""
-        if self._live2d_widget:
-            self._live2d_widget.reset_view()
-
     def is_pinned(self) -> bool:
         return self._pinned
 
@@ -224,29 +190,10 @@ class TachieWindow(QWidget):
         self.setWindowFlags(flags)
         self.show()
 
-    # ── Live2D 模式拖拽（由 QWebChannel 转发） ───────────────
-
-    def _on_l2d_drag_start(self, screen_x: int, screen_y: int):
-        self._l2d_dragging = True
-        self._l2d_drag_offset = QPoint(
-            screen_x - self.x(),
-            screen_y - self.y(),
-        )
-
-    def _on_l2d_drag_move(self, screen_x: int, screen_y: int):
-        if not self._l2d_dragging:
-            return
-        new_pos = QPoint(screen_x, screen_y) - self._l2d_drag_offset
-        self.move(new_pos)
-        self.position_changed.emit(self.x(), self.y())
-
-    def _on_l2d_drag_end(self):
-        self._l2d_dragging = False
-
     # ── 鼠标拖拽 + 信号 ─────────────────────────────────
 
     def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton:
+        if event.button() in (Qt.LeftButton, Qt.MiddleButton):
             self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
             event.accept()
         elif event.button() == Qt.RightButton:
@@ -254,33 +201,24 @@ class TachieWindow(QWidget):
             event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if event.buttons() == Qt.LeftButton and hasattr(self, '_drag_pos'):
+        if (event.buttons() & (Qt.LeftButton | Qt.MiddleButton)) and hasattr(self, '_drag_pos'):
             self.move(event.globalPos() - self._drag_pos)
             self.position_changed.emit(self.x(), self.y())
             event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton and hasattr(self, '_drag_pos'):
+        if event.button() in (Qt.LeftButton, Qt.MiddleButton) and hasattr(self, '_drag_pos'):
             del self._drag_pos
             event.accept()
 
     def wheelEvent(self, event):
-        if self._live2d_mode:
-            # Live2D 模式：滚轮缩放模型
-            delta = event.angleDelta().y()
-            scale_step = 1.06 if delta > 0 else 0.94
-            self.live2d_set_scale(scale_step)  # 相对缩放
+        delta = event.angleDelta().y()
+        if delta > 0:
+            self._scale = min(3.0, self._scale * 1.06)
         else:
-            # 静态模式：滚轮调透明度
-            delta = event.angleDelta().y()
-            if delta > 0:
-                self._window_opacity = min(1.0, self._window_opacity + 0.05)
-            else:
-                self._window_opacity = max(0.3, self._window_opacity - 0.05)
-            self.setWindowOpacity(self._window_opacity)
+            self._scale = max(0.3, self._scale / 1.06)
+        self._apply_scale()
         event.accept()
 
     def closeEvent(self, event):
-        if self._live2d_widget:
-            self._live2d_widget.shutdown()
         super().closeEvent(event)
