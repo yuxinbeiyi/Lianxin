@@ -53,7 +53,7 @@
 │  DeepSeek / SiliconFlow / Ollama / 阿里云 NLS             │
 │  ESP32-CAM / SG90 舵机 / NapCatQQ / Playwright           │
 └──────────────────────────────────────────────────────────┘
-
+```
 
 ## 环境要求
 
@@ -74,7 +74,7 @@ conda activate lianxin
 
 # 安装依赖
 pip install -r requirements.txt
-```
+
 
 ## 配置
 
