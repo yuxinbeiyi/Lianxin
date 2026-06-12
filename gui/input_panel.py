@@ -728,6 +728,47 @@ class InputPanel(QWidget):
             }
         """)
         right_layout.addWidget(self._btn_clear)
+        # 🔇 静音按钮
+        self._btn_mute = QPushButton("🔇")
+        self._btn_mute.setFixedSize(36, 36)
+        self._btn_mute.setFont(QFont("Segoe UI Emoji", 14))
+        self._btn_mute.setCursor(Qt.PointingHandCursor)
+        self._btn_mute.setToolTip("停止朗读")
+        self._btn_mute.setVisible(False)
+        self._btn_mute.setStyleSheet("""
+            QPushButton {
+                background-color: #FFF3CD;
+                color: #856404;
+                border-radius: 8px;
+                border: 1px solid #FFC107;
+            }
+            QPushButton:hover {
+                background-color: #FFE69C;
+                border: 1px solid #FF9800;
+            }
+        """)
+        right_layout.addWidget(self._btn_mute)
+
+        # ✏️ 重新发送按钮
+        self._btn_resend = QPushButton("✏️")
+        self._btn_resend.setFixedSize(36, 36)
+        self._btn_resend.setFont(QFont("Segoe UI Emoji", 14))
+        self._btn_resend.setCursor(Qt.PointingHandCursor)
+        self._btn_resend.setToolTip("打断思考，回填上一条消息")
+        self._btn_resend.setVisible(False)
+        self._btn_resend.setStyleSheet("""
+            QPushButton {
+                background-color: #E8F0FE;
+                color: #1A73E8;
+                border-radius: 8px;
+                border: 1px solid #4285F4;
+            }
+            QPushButton:hover {
+                background-color: #D2E3FC;
+                border: 1px solid #1A73E8;
+            }
+        """)
+        right_layout.addWidget(self._btn_resend)
 
         self._auto_send_cb = QCheckBox("自动发送")
         self._auto_send_cb.setFont(QFont("Microsoft YaHei UI", 9))
@@ -1147,3 +1188,14 @@ class InputPanel(QWidget):
         """隐藏插话输入条。"""
         if hasattr(self, '_interrupt_bar') and self._interrupt_bar is not None:
             self._interrupt_bar.hide()
+    def get_mute_button(self):
+        return self._btn_mute
+
+    def get_resend_button(self):
+        return self._btn_resend
+
+    def set_mute_visible(self, visible: bool):
+        self._btn_mute.setVisible(visible)
+
+    def set_resend_visible(self, visible: bool):
+        self._btn_resend.setVisible(visible)

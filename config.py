@@ -18,7 +18,7 @@ _DEEPSEEK_DEFAULTS = {
     "local_base_url": "http://localhost:11434/v1",
     "local_model_name": "my-deepseek",
     # 路由模型 (Intent Router) — 用小模型做意图分类，零成本
-    "router_model": "my-qwen",  # Ollama 本地模型名，设为 "" 则回退到规则路由
+    "router_model": "",  # Ollama 本地模型名，设为 "" 则回退到规则路由
 }
 
 # ── SiliconFlow 视觉 API 默认值 ────────────────────────────

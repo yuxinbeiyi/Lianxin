@@ -74,7 +74,7 @@ from utils.emotion_manager import parse_emotion_tag, get_random_emotion_image
 from gui.galgame.tachie_window import TachieWindow
 from gui.galgame.galgame_dialog import GalgameDialog
 from gui.galgame.expression_manager import ExpressionManager
-
+from PyQt5.QtCore import pyqtSignal
 # ── Win32 全局热键 ───────────────────────────────────────────
 WM_HOTKEY = 0x0312
 _HOTKEY_ID = 1
@@ -82,6 +82,7 @@ user32 = ctypes.windll.user32
 
 
 class _WinHotkeyFilter(QAbstractNativeEventFilter):
+
     """捕获 WM_HOTKEY 消息，桥接到 Qt 主线程。"""
     def __init__(self, callback):
         super().__init__()
@@ -102,6 +103,7 @@ _AUTOSTART_NET_MAX_ATTEMPTS = 30         # 最多等 15 分钟（30 × 30s）
 
 
 class MainWindow(QMainWindow):
+    _route_ready = pyqtSignal(str, bool, object)
     def __init__(self, autostart_mode: bool = False):
         super().__init__()
         self._autostart_mode = autostart_mode
@@ -176,6 +178,7 @@ class MainWindow(QMainWindow):
         brain_tools.set_music_info_callback(self._handle_music_info)
         brain_tools.set_note_refresh_callback(self.refresh_note_dialog_content)
         brain_tools.set_proactive_toggle_callback(self._proactive_scheduler.reload_settings)
+        self._route_ready.connect(self._on_route_ready)
 
         # 初始化 pygame 混音器（用于音乐播放）
         if not pygame.mixer.get_init():
@@ -286,6 +289,16 @@ class MainWindow(QMainWindow):
         self._restore_music_state()
         self.music_stats = MusicStats()
         self.current_song_start_time = None
+
+    def _on_route_ready(self, text: str, is_chat: bool, route_result):
+        self._agent_worker = AgentWorker(self._agent, text, self, disable_tools=is_chat)
+        self._last_route_result = route_result
+        self._agent_worker.response_ready.connect(self._on_ai_response)
+        self._agent_worker.progress_update.connect(self._on_progress_update)
+        self._agent_worker.tool_called.connect(self._on_tool_called)
+        self._agent_worker.error_occurred.connect(self._on_error)
+        self._agent_worker.start()
+        self._input_panel.show_interrupt_bar(self._agent_worker)
 
     def _handle_music_info(self, query_type: str) -> str:
         if query_type == "playlist":
@@ -619,10 +632,13 @@ class MainWindow(QMainWindow):
         self._input_panel.message_submitted.connect(self._on_user_message)
         self._input_panel.voice_clicked.connect(self._on_voice_clicked)
 
-        self._input_panel.enable_clear_button()  # 启用清空按钮
-        self._input_panel.clear_clicked.connect(self._on_clear_note)  # 清空小纸条
+        self._input_panel.clear_clicked.connect(self._on_clear_note)
         self._input_panel.image_submitted.connect(self._on_user_image)
+        # 静音 & 重新发送
+        self._input_panel.get_mute_button().clicked.connect(self._on_mute)
+        self._input_panel.get_resend_button().clicked.connect(self._on_resend)
         main_layout.addWidget(self._input_panel)
+
 
 
         # 音乐盒按钮连接
@@ -758,6 +774,7 @@ class MainWindow(QMainWindow):
 
         if text.strip():
             self._chat_widget.add_user_message(text)
+            play_sound("ButtonAll.mp3") 
 
         self._set_thinking_state()
 
@@ -923,7 +940,9 @@ class MainWindow(QMainWindow):
         else:
             self._speaker_worker = SpeakerWorker(self._speaker, display_text, self)
             self._speaker_worker.speaking_started.connect(self._char_widget.set_talking)
+            self._speaker_worker.speaking_started.connect(lambda: self._input_panel.set_mute_visible(True))
             self._speaker_worker.speaking_finished.connect(self._char_widget.set_normal)
+            self._speaker_worker.speaking_finished.connect(lambda: self._input_panel.set_mute_visible(False))
             self._speaker_worker.speaking_finished.connect(self._restart_listening)
             self._speaker_worker.start()
 
@@ -1005,8 +1024,8 @@ class MainWindow(QMainWindow):
 
     def _on_galgame_message(self, text: str):
         """Galgame 对话框发送消息。"""
-        self._chat_widget.add_user_message(text)
         self._send_user_text_to_agent(text)
+
 
     def _on_galgame_expression(self, emotion: str):
         """set_expression 工具回调：切换立绘表情。"""
@@ -1070,8 +1089,11 @@ class MainWindow(QMainWindow):
             return
         self._speaker_worker = SpeakerWorker(self._speaker, text, self)
         self._speaker_worker.speaking_started.connect(self._char_widget.set_talking)
+        self._speaker_worker.speaking_started.connect(lambda: self._input_panel.set_mute_visible(True))
         self._speaker_worker.speaking_finished.connect(self._char_widget.set_normal)
+        self._speaker_worker.speaking_finished.connect(lambda: self._input_panel.set_mute_visible(False))
         self._speaker_worker.start()
+
 
     # ── 状态管理 ─────────────────────────────────────────────
 
@@ -1086,10 +1108,48 @@ class MainWindow(QMainWindow):
             # 非待机模式：使用思考动画（拿起手机 -> 打字）
             self._char_widget.start_thinking()
             self._chat_widget.show_thinking()
+            self._input_panel.set_resend_visible(True)
+
 
     def _set_idle_state(self):
         self._char_widget.set_normal()
         self._input_panel.set_enabled(True)
+        self._input_panel.set_resend_visible(False)
+        self._input_panel.set_mute_visible(False)
+
+    def _on_mute(self):
+        """停止莲心朗读。"""
+        try:
+            from skills.语音合成.tools import stop_voice_playback
+            stop_voice_playback()
+        except Exception:
+            pass
+        if self._speaker_worker and self._speaker_worker.isRunning():
+            self._speaker.stop()
+        try:
+            import pygame
+            if pygame.mixer.get_init():
+                pygame.mixer.stop()
+        except Exception:
+            pass
+        self._input_panel.set_mute_visible(False)
+
+    def _on_resend(self):
+        """打断思考，回填上一条用户消息到输入框。"""
+        if self._agent_worker and self._agent_worker.isRunning():
+            self._agent_worker.terminate()
+            self._agent_worker = None
+        self._input_panel.hide_interrupt_bar()
+        self._char_widget.stop_thinking()
+        # 回填最后一条用户消息
+        last_text = ""
+        for m in reversed(self._agent.history):
+            if m["role"] == "user":
+                last_text = m["content"]
+                break
+        self._input_panel.set_text(last_text)
+        self._set_idle_state()
+
 
     # ── 历史记录 ─────────────────────────────────────────────
 
@@ -2019,9 +2079,11 @@ class MainWindow(QMainWindow):
         self._chat_widget.add_system_tip(f"图片分析失败：{err}")
         self._send_user_text_to_agent(f"[图片分析失败] {err}，请告知用户。", skip_bubble=True)
 
+
+
+
+
     def _send_user_text_to_agent(self, text: str, skip_bubble: bool = False):
-        """内部方法：将文字作为用户消息发送给 AI，并可选择跳过添加用户气泡"""
-        # 停止任何正在播放的语音
         try:
             from skills.语音合成.tools import stop_voice_playback
             stop_voice_playback()
@@ -2030,20 +2092,24 @@ class MainWindow(QMainWindow):
         self._speak_voice_used = False
         from brain.tools import set_diary_message_source
         set_diary_message_source(self._get_today_messages)
-        from brain.intent_router import get_router
-        route_result = get_router().route(text)
-        is_chat = route_result.route == "chat"
+        
+        if not skip_bubble and text.strip():
+            self._chat_widget.add_user_message(text)
+            play_sound("ButtonAll.mp3")
+        
         self._proactive_scheduler.notify_user_active()
         self._reset_heartbeat_timer()
         self._set_thinking_state()
-        self._agent_worker = AgentWorker(self._agent, text, self, disable_tools=is_chat)
-        self._last_route_result = route_result
-        self._agent_worker.response_ready.connect(self._on_ai_response)
-        self._agent_worker.progress_update.connect(self._on_progress_update)
-        self._agent_worker.tool_called.connect(self._on_tool_called)
-        self._agent_worker.error_occurred.connect(self._on_error)
-        self._agent_worker.start()
-        self._input_panel.show_interrupt_bar(self._agent_worker)
+        
+        from threading import Thread
+        def route_and_start():
+            from brain.intent_router import get_router
+            route_result = get_router().route(text)
+            is_chat = route_result.route == "chat"
+            self._route_ready.emit(text, is_chat, route_result)
+        
+        Thread(target=route_and_start, daemon=True).start()
+
 
 
 
