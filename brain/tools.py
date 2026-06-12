@@ -6,6 +6,7 @@
 """
 
 import json
+import re
 import subprocess
 import threading
 import time
@@ -14,6 +15,19 @@ from datetime import datetime
 from typing import Optional
 import sys
 import logging
+import fnmatch
+import difflib
+import os
+import litellm
+
+# ── 子代理可用工具白名单（第二阶段） ──────────────────────
+# delegate_task 生成的子代理只能使用这些工具
+_SUBAGENT_ALLOWED_TOOLS = {
+    "read_file", "read_file_lines", "read_file_chunk",
+    "grep_file", "search_code", "glob_files", "search_files",
+    "list_directory", "edit_file", "code_structure",
+    "run_shell", "run_python_code", "diff_files", "git_status",
+}
 
 logger = logging.getLogger("brain.tools")
 
@@ -1315,6 +1329,237 @@ TOOL_DEFINITIONS = [
             }
         }
     },
+        # ── 第一阶段新增：编程工具增强 ─────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "search_code",
+            "description": (
+                "在目录中搜索代码内容（正则表达式匹配），支持多文件、上下文行。\n"
+                "比 grep_file 更强大：支持文件类型过滤、大小写不敏感、上下文行显示。\n"
+                "用于：查找函数定义、变量引用、TODO 注释、跨文件模式搜索。\n"
+                "提示：简单单文件搜索直接用 grep_file 更快。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "搜索的正则表达式模式，如 'def main' 或 'TODO'"
+                    },
+                    "directory": {
+                        "type": "string",
+                        "description": "搜索目录的绝对路径，默认当前工作目录"
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": "文件名匹配模式（glob），如 '*.py'、'*.{js,ts}'。不指定则搜索所有文本文件"
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "显示匹配行前后的上下文行数，默认 0"
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "description": "是否大小写敏感，默认 true"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "最多返回几条结果，默认 30"
+                    },
+                    "exclude_pattern": {
+                        "type": "string",
+                        "description": "额外排除的目录/文件 glob 模式。默认自动排除 .git、node_modules 等"
+                    }
+                },
+                "required": ["pattern"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "diff_files",
+            "description": (
+                "对比两个文本文件的差异（类似 Git diff 格式）。\n"
+                "用于：查看修改前后的变化、验证编辑结果、对比代码版本。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_a": {
+                        "type": "string",
+                        "description": "第一个文件的绝对路径"
+                    },
+                    "file_b": {
+                        "type": "string",
+                        "description": "第二个文件的绝对路径"
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "差异周围显示几行上下文，默认 3"
+                    }
+                },
+                "required": ["file_a", "file_b"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_shell",
+            "description": (
+                "执行 Shell 命令并返回输出。比 run_command 更强大。\n"
+                "支持：指定工作目录、超时控制、输出行数限制。\n"
+                "用于：编译代码、运行测试、安装依赖、Git 操作等。\n"
+                "安全注意：不会自动执行危险命令。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "要执行的 Shell 命令"
+                    },
+                    "working_dir": {
+                        "type": "string",
+                        "description": "工作目录的绝对路径，默认当前目录"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "超时秒数，默认 60"
+                    },
+                    "max_output_lines": {
+                        "type": "integer",
+                        "description": "最大输出行数，超出截断。默认 200"
+                    }
+                },
+                "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_status",
+            "description": (
+                "查看 Git 仓库的状态信息。\n"
+                "用于：查看修改了哪些文件、当前分支、最近提交记录等。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo_path": {
+                        "type": "string",
+                        "description": "Git 仓库的绝对路径，默认当前工作目录"
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": ["status", "diff", "log", "branch"],
+                        "description": "操作类型：status（文件状态）、diff（查看改动）、log（最近提交）、branch（分支列表）"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "对于 log 操作，限制显示的提交数，默认 10"
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "code_structure",
+            "description": (
+                "快速列出代码文件中定义的函数、类、方法等结构。\n"
+                "支持：Python、JavaScript、TypeScript、Java、Go、Rust 等语言。\n"
+                "用于：快速了解文件结构、定位函数定义位置。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "要分析的代码文件的绝对路径"
+                    }
+                },
+                "required": ["file_path"]
+            }
+        }
+    },
+    # ── 第二阶段：子代理任务分解系统 ─────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "plan_tasks",
+            "description": (
+                "将复杂任务分解为可并行执行的子任务列表。\n"
+                "使用内置 LLM 分析任务，生成结构化的子任务计划。\n"
+                "返回的子任务可逐个交给 delegate_task 并行执行。\n"
+                "用于：复杂重构、多文件修改、多步骤操作等需要分步执行的任务。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_description": {
+                        "type": "string",
+                        "description": "要分解的复杂任务描述"
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "额外上下文信息，如项目结构、相关文件列表等"
+                    },
+                    "max_subtasks": {
+                        "type": "integer",
+                        "description": "最多拆分为几个子任务，默认 5"
+                    }
+                },
+                "required": ["task_description"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_task",
+            "description": (
+                "将子任务委派给一个独立的子代理执行。子代理拥有受限的工具集，\n"
+                "专注于完成单一任务，完成后返回结果。\n"
+                "多个 delegate_task 调用会自动并行执行。\n\n"
+                "【子代理可用工具】read_file, read_file_lines, grep_file, search_code,\n"
+                "glob_files, list_directory, edit_file, code_structure, run_shell,\n"
+                "run_python_code, diff_files, git_status\n\n"
+                "【使用场景】\n"
+                "- 同时修改多个文件时，每个文件委派一个子代理\n"
+                "- 搜索分析类任务与修改类任务并行执行\n"
+                "- 需要独立上下文执行的分析任务"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "子代理要执行的具体任务描述，越具体越好"
+                    },
+                    "working_dir": {
+                        "type": "string",
+                        "description": "子代理的工作目录，默认继承主代理的目录"
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "超时秒数，默认 120"
+                    },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": "子代理最多调用几轮工具，默认 10"
+                    }
+                },
+                "required": ["task"]
+            }
+        }
+    },
+
 ]
 
 # ── 工具执行函数 ─────────────────────────────────────────────
@@ -2676,7 +2921,13 @@ def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = F
 
         content = raw.decode(encoding, errors="replace")
 
-        if old_string not in content:
+        # 统一换行符：将 \r\n 转为 \n，避免 LLM 生成的 Unix 风格字符串
+        # 与 Windows 文件的 \r\n 不匹配
+        content_norm = content.replace('\r\n', '\n')
+        old_norm = old_string.replace('\r\n', '\n')
+        new_norm = new_string.replace('\r\n', '\n')
+
+        if old_norm not in content_norm:
             # 给出有用的诊断信息
             preview = old_string[:60].replace("\n", "\\n")
             return (
@@ -2685,12 +2936,12 @@ def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = F
                 f"提示：请用 read_file 重新确认文件内容后再尝试，注意空格、换行、缩进必须完全一致。"
             )
 
-        count = content.count(old_string)
+        count = content_norm.count(old_norm)
         if replace_all:
-            new_content = content.replace(old_string, new_string)
+            new_content = content_norm.replace(old_norm, new_norm)
             replaced = count
         else:
-            new_content = content.replace(old_string, new_string, 1)
+            new_content = content_norm.replace(old_norm, new_norm, 1)
             replaced = 1
 
         p.write_text(new_content, encoding=encoding)
@@ -3289,6 +3540,383 @@ def _set_user_city_tool(city: str) -> str:
     return f"记住啦，你在{city}~ 以后问天气就不用每次都说城市名啦 (｡･ω･｡)"
 
 
+# ── 第一阶段新增：编程工具实现 ─────────────────────────────
+
+_STRUCTURE_PATTERNS = {
+    ".py": [
+        (r'^\s*class\s+(\w+)', 'class'),
+        (r'^\s*def\s+(\w+)', 'def'),
+        (r'^\s*async\s+def\s+(\w+)', 'async def'),
+    ],
+    ".js": [
+        (r'^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)', 'function'),
+        (r'^\s*(?:export\s+)?class\s+(\w+)', 'class'),
+        (r'^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(', 'arrow'),
+    ],
+    ".ts": [
+        (r'^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)', 'function'),
+        (r'^\s*(?:export\s+)?class\s+(\w+)', 'class'),
+        (r'^\s*(?:export\s+)?interface\s+(\w+)', 'interface'),
+    ],
+    ".java": [
+        (r'^\s*(?:public|private|protected)\s+(?:static\s+)?(?:[\w<>\[\]]+\s+)(\w+)\s*\(', 'method'),
+        (r'^\s*(?:public\s+)?class\s+(\w+)', 'class'),
+    ],
+    ".go": [
+        (r'^\s*func\s+(?:\([^)]*\)\s+)?(\w+)', 'func'),
+        (r'^\s*type\s+(\w+)\s+struct', 'struct'),
+    ],
+    ".rs": [
+        (r'^\s*(?:pub\s+)?fn\s+(\w+)', 'fn'),
+        (r'^\s*(?:pub\s+)?struct\s+(\w+)', 'struct'),
+    ],
+}
+
+
+
+def search_code(pattern, directory=None, file_pattern=None,
+                context_lines=0, case_sensitive=True, max_results=30,
+                exclude_pattern=None):
+    """增强版代码搜索 — 借鉴 Claude Code GrepTool"""
+    directory = Path(directory).expanduser().resolve() if directory else Path.cwd()
+    if not directory.is_dir():
+        return f"错误：目录不存在 — {directory}"
+
+    auto_exclude = {'.git', 'node_modules', '__pycache__', '.venv', 'venv',
+                    '.idea', '.vscode', 'dist', 'build', '.next', '.nuxt'}
+    if exclude_pattern:
+        auto_exclude.add(exclude_pattern)
+
+    flags = 0 if case_sensitive else re.IGNORECASE
+    results = []
+    files_searched = 0
+
+    for file_path in directory.rglob('*'):
+        if any(part in auto_exclude for part in file_path.parts):
+            continue
+        if not file_path.is_file():
+            continue
+        if file_pattern and not fnmatch.fnmatch(file_path.name, file_pattern):
+            continue
+        try:
+            content = file_path.read_text(encoding='utf-8')
+        except (UnicodeDecodeError, PermissionError, OSError):
+            continue
+
+        files_searched += 1
+        lines = content.split('\n')
+        for line_idx, line in enumerate(lines, start=1):
+            if re.search(pattern, line, flags):
+                if context_lines > 0:
+                    start_l = max(0, line_idx - context_lines - 1)
+                    end_l = min(len(lines), line_idx + context_lines)
+                    ctx = []
+                    for i in range(start_l, end_l):
+                        prefix = '>' if i == line_idx - 1 else ' '
+                        ctx.append(f"{prefix}{i+1:4d}| {lines[i]}")
+                    snippet = '\n'.join(ctx)
+                else:
+                    snippet = f"  {line_idx:4d}| {line}"
+                results.append({
+                    "file": str(file_path.relative_to(directory)),
+                    "line": line_idx,
+                    "snippet": snippet,
+                })
+                if len(results) >= max_results:
+                    break
+        if len(results) >= max_results:
+            break
+
+    if not results:
+        return f"未找到匹配 '{pattern}' 的结果（搜索了 {files_searched} 个文件）"
+
+    output_parts = []
+    for r in results:
+        output_parts.append(f"\n{r['file']}:{r['line']}")
+        output_parts.append(r['snippet'])
+    if len(results) >= max_results:
+        output_parts.append(f"\n结果已截断（最多 {max_results} 条）")
+    output_parts.append(f"\n共搜索 {files_searched} 个文件，找到 {len(results)} 条匹配")
+    return '\n'.join(output_parts)
+
+
+def diff_files(file_a, file_b, context_lines=3):
+    """对比两个文件的差异 — 使用 unified diff 格式"""
+    path_a = Path(file_a).expanduser().resolve()
+    path_b = Path(file_b).expanduser().resolve()
+    if not path_a.exists():
+        return f"错误：文件不存在 — {path_a}"
+    if not path_b.exists():
+        return f"错误：文件不存在 — {path_b}"
+
+    try:
+        lines_a = path_a.read_text(encoding='utf-8').splitlines()
+        lines_b = path_b.read_text(encoding='utf-8').splitlines()
+    except UnicodeDecodeError:
+        return "错误：其中一个文件不是 UTF-8 文本格式"
+
+    diff = difflib.unified_diff(
+        lines_a, lines_b,
+        fromfile=str(path_a), tofile=str(path_b),
+        n=context_lines,
+    )
+    result = '\n'.join(list(diff)[:500])
+    if not result.strip():
+        return "两个文件内容完全相同，没有差异。"
+    return result
+
+
+def run_shell(command, working_dir=None, timeout=60, max_output_lines=200):
+    """增强版 Shell 执行 — 借鉴 Claude Code BashTool"""
+    cwd = str(Path(working_dir).expanduser().resolve()) if working_dir else None
+    try:
+        result = subprocess.run(
+            command, shell=True, cwd=cwd,
+            capture_output=True, text=True, timeout=timeout,
+            encoding='utf-8', errors='replace',
+        )
+        output_parts = [f"退出码: {result.returncode}"]
+        if result.stdout:
+            lines = result.stdout.splitlines()
+            if len(lines) > max_output_lines:
+                lines = lines[:max_output_lines]
+                lines.append(f"... (输出已截断，共 {len(result.stdout.splitlines())} 行)")
+            output_parts.append('\n'.join(lines))
+        if result.stderr:
+            output_parts.append(f"\n[stderr]\n{result.stderr[:2000]}")
+        return '\n'.join(output_parts)
+    except subprocess.TimeoutExpired:
+        return f"命令超时（>{timeout}秒）：{command[:100]}..."
+    except Exception as e:
+        return f"命令执行失败：{e}"
+
+
+def git_status(repo_path=None, action="status", limit=10):
+    """Git 仓库状态查询"""
+    cwd = str(Path(repo_path).expanduser().resolve()) if repo_path else str(Path.cwd())
+    commands = {
+        "status": ["git", "status", "--short"],
+        "diff": ["git", "diff", "--stat"],
+        "log": ["git", "log", f"-{limit}", "--oneline", "--decorate"],
+        "branch": ["git", "branch", "-a"],
+    }
+    cmd = commands.get(action)
+    if not cmd:
+        return f"不支持的操作：{action}。可选：status/diff/log/branch"
+    try:
+        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            return f"Git 命令失败: {result.stderr[:500]}"
+        return result.stdout.strip() or "(无输出)"
+    except FileNotFoundError:
+        return "错误：系统中未找到 Git。请安装 Git 后再使用此功能。"
+    except Exception as e:
+        return f"执行失败：{e}"
+
+
+def code_structure(file_path):
+    """代码结构概览 — 轻量替代 LSP"""
+    path = Path(file_path).expanduser().resolve()
+    if not path.exists():
+        return f"错误：文件不存在 — {path}"
+    ext = path.suffix.lower()
+    patterns = _STRUCTURE_PATTERNS.get(ext)
+    if not patterns:
+        return f"暂不支持 {ext} 文件类型。支持：{', '.join(_STRUCTURE_PATTERNS.keys())}"
+
+    try:
+        lines = path.read_text(encoding='utf-8').splitlines()
+    except UnicodeDecodeError:
+        return "错误：文件不是 UTF-8 文本格式"
+
+    results = []
+    for line_idx, line in enumerate(lines, start=1):
+        for pattern, kind in patterns:
+            match = re.match(pattern, line)
+            if match:
+                name = match.group(1)
+                results.append(f"  {line_idx:4d} | [{kind:10s}] {name}")
+                break
+
+    if not results:
+        return f"文件中未检测到已支持的代码结构（{path.name}）"
+    return f"{path.name} 代码结构：\n" + '\n'.join(results)
+
+
+# ── 第二阶段新增：子代理任务分解 ─────────────────────────
+
+def plan_tasks(task_description: str, context: str = "", max_subtasks: int = 5) -> str:
+    """使用 LLM 将复杂任务分解为子任务列表"""
+    prompt = (
+        f"你是一个任务规划专家。请将以下复杂任务分解为 {max_subtasks} 个以内的子任务。\n\n"
+        f"【规则】\n"
+        f"1. 每个子任务必须独立可执行、有明确产出\n"
+        f"2. 标注子任务之间是否有依赖关系\n"
+        f"3. 标注哪些子任务可以并行执行（parallel_group 相同的可并行）\n"
+        f"4. 每个子任务描述要具体，包含具体要操作的文件/函数\n\n"
+        f"【任务】\n{task_description}\n"
+    )
+    if context:
+        prompt += f"\n【上下文】\n{context}\n"
+    prompt += (
+        "\n请用 JSON 格式输出（只输出 JSON，不要其他文字）：\n"
+        '{"subtasks": [{"id": 1, "title": "...", "description": "...", '
+        '"depends_on": [], "parallel_group": "A"}]}'
+    )
+
+    try:
+        from config import get_api_config
+        cfg = get_api_config()
+        api_key = cfg["api_key"]
+        api_base = cfg["base_url"]
+        model = cfg["model"]
+        if "/" not in model:
+            model = f"deepseek/{model}"
+        response = litellm.completion(
+            model=model,
+            messages=[
+                {"role": "system", "content": "你是一个任务规划专家。只输出 JSON，不要其他文字。"},
+                {"role": "user", "content": prompt},
+            ],
+            api_key=api_key,
+            api_base=api_base,
+            max_tokens=1500,
+            timeout=30,
+        )
+        result = response.choices[0].message.content or ""
+        json_start = result.find('{')
+        json_end = result.rfind('}') + 1
+        if json_start >= 0 and json_end > json_start:
+            plan = json.loads(result[json_start:json_end])
+            subtasks = plan.get("subtasks", [])
+            if not subtasks:
+                return "未能分解出子任务，请更具体地描述任务。"
+            lines = [f"任务分解完成，共 {len(subtasks)} 个子任务：\n"]
+            for st in subtasks:
+                deps = f" (依赖: {st.get('depends_on', [])})" if st.get('depends_on') else ""
+                group = f" [并行组: {st.get('parallel_group', '-')}]"
+                lines.append(
+                    f"  {st['id']}. {st.get('title', '')}{deps}{group}\n"
+                    f"     {st.get('description', '')}"
+                )
+            return '\n'.join(lines)
+        return result
+    except json.JSONDecodeError:
+        return f"任务分解成功，但 JSON 解析失败。原始输出：\n{result[:1000]}"
+    except Exception as e:
+        return f"任务分解失败：{e}"
+
+
+def delegate_task(task: str, working_dir: str = "",
+                  timeout_seconds: int = 120, max_iterations: int = 10) -> str:
+    """生成子代理执行任务 — 借鉴 Claude Code AgentTool"""
+    from brain.agent import AgentCore
+
+    original_cwd = os.getcwd()
+    if working_dir:
+        wd = Path(working_dir).expanduser().resolve()
+        if wd.is_dir():
+            os.chdir(str(wd))
+        else:
+            return f"工作目录不存在：{working_dir}"
+
+    try:
+        from config import get_api_config
+        cfg = get_api_config()
+        api_key = cfg["api_key"]
+        api_base = cfg["base_url"]
+        model = cfg["model"]
+        if "/" not in model:
+            model = f"deepseek/{model}"
+
+        sub_agent = AgentCore(
+            disable_tools=True,
+        )
+
+        sub_prompt = (
+            "你是一个专注于执行单一任务的子代理。\n"
+            "你的任务已经明确指定，请专注于完成它，不要做额外的事。\n"
+            "你有文件读写、代码搜索、Shell 执行等工具。\n"
+            "完成任务后直接返回结果，不要继续调用不必要的工具。\n"
+            "如果遇到无法解决的问题，如实报告错误。"
+        )
+
+        sub_tools = [
+            t for t in TOOL_DEFINITIONS
+            if t["function"]["name"] in _SUBAGENT_ALLOWED_TOOLS
+        ]
+
+        messages = [
+            {"role": "system", "content": sub_prompt},
+            {"role": "user", "content": task},
+        ]
+
+        for iteration in range(max_iterations):
+            try:
+                response = litellm.completion(
+                    model=model,
+                    messages=messages,
+                    tools=sub_tools,
+                    api_key=api_key,
+                    api_base=api_base,
+                    max_tokens=4096,
+                    timeout=90,
+                )
+            except Exception as e:
+                return f"子代理 API 调用失败（第{iteration+1}轮）：{e}"
+
+            msg = response.choices[0].message
+
+            if not msg.tool_calls:
+                return msg.content or "（子代理完成任务，无额外输出）"
+
+            messages.append({
+                "role": "assistant",
+                "content": msg.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ],
+            })
+
+            for tc in msg.tool_calls:
+                name = tc.function.name
+                try:
+                    args = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    args = {}
+
+                if name not in _SUBAGENT_ALLOWED_TOOLS:
+                    result = f"子代理无权使用工具：{name}"
+                else:
+                    try:
+                        result = execute_tool(name, args)
+                        print(f"  [子代理] {name} → {str(result)[:120]}", flush=True)
+                    except Exception as e:
+                        result = f"工具执行错误：{e}"
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": str(result)[:4000],
+                })
+
+        return "（子代理达到最大迭代次数，任务未完成）"
+
+    except Exception as e:
+        return f"子代理执行失败：{e}"
+    finally:
+        if working_dir:
+            os.chdir(original_cwd)
+
+
 # ── 工具调度表 ───────────────────────────────────────────────
 TOOL_EXECUTORS = {
     "read_file":       lambda inp: read_file(inp["path"]),
@@ -3342,6 +3970,47 @@ TOOL_EXECUTORS = {
     "set_user_city":   lambda inp: _set_user_city_tool(inp["city"]),
     "add_graph_edge":  lambda inp: _add_graph_edge(inp["head"], inp["head_type"], inp["relation"], inp["tail"], inp["tail_type"]),
     "remove_graph_edge": lambda inp: _remove_graph_edge(inp["head"], inp["relation"], inp["tail"]),
+        # 第一阶段新增：编程增强工具
+    "search_code":     lambda inp: search_code(
+        pattern=inp["pattern"],
+        directory=inp.get("directory"),
+        file_pattern=inp.get("file_pattern"),
+        context_lines=inp.get("context_lines", 0),
+        case_sensitive=inp.get("case_sensitive", True),
+        max_results=inp.get("max_results", 30),
+    ),
+    "diff_files":      lambda inp: diff_files(
+        file_a=inp["file_a"],
+        file_b=inp["file_b"],
+        context_lines=inp.get("context_lines", 3),
+    ),
+    "run_shell":       lambda inp: run_shell(
+        command=inp["command"],
+        working_dir=inp.get("working_dir"),
+        timeout=inp.get("timeout", 60),
+        max_output_lines=inp.get("max_output_lines", 200),
+    ),
+    "git_status":      lambda inp: git_status(
+        repo_path=inp.get("repo_path"),
+        action=inp.get("action", "status"),
+        limit=inp.get("limit", 10),
+    ),
+    "code_structure":  lambda inp: code_structure(
+        file_path=inp["file_path"],
+    ),
+    # 第二阶段：子代理任务分解
+    "plan_tasks":      lambda inp: plan_tasks(
+        task_description=inp["task_description"],
+        context=inp.get("context", ""),
+        max_subtasks=inp.get("max_subtasks", 5),
+    ),
+    "delegate_task":   lambda inp: delegate_task(
+        task=inp["task"],
+        working_dir=inp.get("working_dir", ""),
+        timeout_seconds=inp.get("timeout_seconds", 120),
+        max_iterations=inp.get("max_iterations", 10),
+    ),
+
     }
 
 def execute_tool(name: str, tool_input: dict) -> str:

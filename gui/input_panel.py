@@ -89,6 +89,14 @@ TOOL_GROUP_MAP = {
     "glob_files": "📁 文件操作",
     "grep_file": "📁 文件操作",
     "read_file_lines": "📁 文件操作",
+    "edit_file": "📁 文件操作",
+    "search_code": "🔍 代码搜索",
+    "diff_files": "📁 文件操作",
+    "run_shell": "💻 系统命令",
+    "git_status": "🔧 开发工具",
+    "code_structure": "🔍 代码搜索",
+    "plan_tasks": "🧩 任务分解",
+    "delegate_task": "🧩 任务分解",
     "describe_image": "🔍 视觉理解",
     # 系统命令类
     "open_app": "💻 系统命令",
@@ -108,6 +116,8 @@ TOOL_GROUP_MAP = {
     "add_todo": "🧠 记忆与任务",
     "list_todos": "🧠 记忆与任务",
     "complete_todo": "🧠 记忆与任务",
+    
+
 }
 
 # ==================== 工具别名映射（用于搜索） ====================
@@ -132,6 +142,17 @@ TOOL_ALIASES = {
     "add_todo": ["添加待办", "记任务", "提醒我", "设置提醒"],
     "list_todos": ["待办列表", "查看待办", "有什么任务"],
     "complete_todo": ["完成待办", "任务完成", "做完了"],
+    # 编程工具别名
+    "edit_file": ["修改文件", "替换", "编辑代码", "改代码"],
+    "search_code": ["搜索代码", "查找代码", "代码搜索", "正则搜索"],
+    "diff_files": ["对比文件", "文件差异", "diff"],
+    "run_shell": ["执行shell", "命令行", "终端"],
+    "git_status": ["git状态", "查看git", "版本控制"],
+    "code_structure": ["代码结构", "函数列表", "类定义"],
+    "plan_tasks": ["分解任务", "任务规划", "拆分任务"],
+    "delegate_task": ["委派任务", "子代理", "并行执行"],
+
+
 }
 
 
