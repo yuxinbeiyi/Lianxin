@@ -134,8 +134,14 @@ def activate_all_skills():
         if not info.get("auto_activate", True):
             continue
         if name in _active_skills:
+            if not info.get("tool_definitions"):
+                if info["has_tools"]:
+                    err = _load_skill_tools(name, info["path"] / "tools.py")
+                    if err:
+                        logger.warning("重载技能「%s」工具失败: %s", name, err)
             activated += 1
             continue
+
         if info["has_tools"]:
             err = _load_skill_tools(name, info["path"] / "tools.py")
             if err:

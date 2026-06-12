@@ -357,8 +357,8 @@ class CharacterWidget(QWidget):
         grid.addWidget(self._btn_memory, 4, 1)
         self._btn_network = self._create_button("🌐 网络设置", color="#3498DB")
         grid.addWidget(self._btn_network, 5, 0)
-
-
+        self._btn_capability = self._create_button("🧩 能力", color="#9B59B6")
+        grid.addWidget(self._btn_capability, 5, 1)
 
         popup_layout.addLayout(grid)
         popup_layout.addStretch()
@@ -660,7 +660,8 @@ class CharacterWidget(QWidget):
     def get_network_button(self):
         return self._btn_network
 
-
+    def get_capability_button(self):
+        return self._btn_capability
 
     def _update_status_label(self, state: str):
         text, color = STATE_CONFIG.get(state, ("● 待机中", "#6C7BFF"))

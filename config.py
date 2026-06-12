@@ -549,13 +549,13 @@ _BASE_PROMPT = r"""你是莲心，来自雨心的小说《异象处理者》—�
 2. 若 Tavily 不可用，使用 mcp__global_search__global_search — 知乎全网搜索
 3. 获取到网页链接后，用 mcp__firecrawl__scrape_url 爬取完整 Markdown 内容
    （注意：禁止爬 zhihu.com、微信公众号等强反爬站点）
-4. 内置 web_search、fetch_webpage* 仅作最后备选 — MCP 工具都失败时才用
+4. {fallback_tools} 仅作最后备选 — MCP 工具都失败时才用
 {builtin_tool_notes}
 
 重试与回退规则（严格遵守）：
 - 如果 MCP 工具调用失败，按照用户配置最多重试 {max_retries} 次
 - 如果仍失败，根据回退策略处理：
-  • 若策略是「回退内建」：改用内置 web_search 或 fetch_webpage
+  • 若策略是「回退内建」：改用 {fallback_tools}
   • 若策略是「直接返回」：基于当前已有信息整理回答，不要强行重试
 - 如果检测到错误信息包含 "quota exceeded"、"insufficient credits"、"rate limit exceeded"，
   且开启了自动回退，立刻切换到内置工具，不要继续重试 MCP。
@@ -672,6 +672,8 @@ def get_base_prompt() -> str:
     # 内建工具开关（额外的 fetch_webpage 禁用说明）
     builtin_cfg = get_builtin_tool_config()
     tool_notes = []
+    if not builtin_cfg.get("fetch_webpage", True):
+        tool_notes.append("- fetch_webpage 已禁用，请勿调用此工具")
     if not builtin_cfg.get("fetch_webpage_via_api", True):
         tool_notes.append("- fetch_webpage_via_api 已禁用，请勿调用此工具")
     if not builtin_cfg.get("fetch_webpage_browser", True):
@@ -680,8 +682,17 @@ def get_base_prompt() -> str:
         tool_notes.append("- fetch_webpage_stealth 已禁用，请勿调用此工具")
     builtin_tool_notes = "\n".join(tool_notes) if tool_notes else ""
 
+    # 动态生成可用的回退工具列表（web_search 始终可用）
+    fallback_list = ["web_search"]
+    for tool_name in ["fetch_webpage", "fetch_webpage_via_api",
+                      "fetch_webpage_browser", "fetch_webpage_stealth"]:
+        if builtin_cfg.get(tool_name, True):
+            fallback_list.append(tool_name)
+    fallback_tools = "、".join(fallback_list)
+
     prompt = prompt.replace("{max_retries}", str(search_cfg.get("max_retries", 2)))
     prompt = prompt.replace("{fallback_strategy}", search_cfg.get("fallback_strategy", "builtin"))
+    prompt = prompt.replace("{fallback_tools}", fallback_tools)
     prompt = prompt.replace("{builtin_tool_notes}", builtin_tool_notes)
     return prompt
 
