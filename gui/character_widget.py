@@ -348,9 +348,7 @@ class CharacterWidget(QWidget):
         grid.addWidget(self._btn_api_config, 1, 1)
         grid.addWidget(self._btn_alarm, 2, 0)
         grid.addWidget(self._btn_camera, 2, 1)
-        self._btn_avatar = self._create_button("🎨 头像设置", color="#2E86AB")
         grid.addWidget(self._btn_emotion, 3, 0)
-        grid.addWidget(self._btn_avatar, 3, 1)
         self._btn_sound = self._create_button("🔊 声音设置", color="#16A085")
         grid.addWidget(self._btn_sound, 4, 0)
         self._btn_memory = self._create_button("🧠 记忆系统", color="#5D6D7E")
@@ -358,7 +356,7 @@ class CharacterWidget(QWidget):
         self._btn_network = self._create_button("🌐 网络设置", color="#3498DB")
         grid.addWidget(self._btn_network, 5, 0)
         self._btn_capability = self._create_button("🧩 能力", color="#9B59B6")
-        grid.addWidget(self._btn_capability, 5, 1)
+        grid.addWidget(self._btn_capability, 3, 1)
 
         popup_layout.addLayout(grid)
         popup_layout.addStretch()
@@ -650,8 +648,7 @@ class CharacterWidget(QWidget):
 
     def get_emotion_button(self):
         return self._btn_emotion
-    def get_avatar_button(self):
-        return self._btn_avatar
+
     def get_sound_button(self):
         return self._btn_sound
     def get_memory_button(self):

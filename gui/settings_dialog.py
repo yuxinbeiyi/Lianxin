@@ -284,7 +284,62 @@ class SettingsDialog(QDialog):
         first_meet_layout.addWidget(date_tip)
         scroll_layout.addWidget(first_meet_group)
 
+        # ----- 头像显示设置 -----
+        avatar_frame = self._create_frame()
+        avatar_layout = QVBoxLayout(avatar_frame)
+        avatar_layout.setSpacing(8)
+
+        avatar_title = QLabel("🎨 头像显示设置")
+        avatar_title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        avatar_layout.addWidget(avatar_title)
+
+        from PyQt5.QtWidgets import QRadioButton, QButtonGroup
+
+        group = QButtonGroup(self)
+        self._avatar_radio_animated = QRadioButton("动画状态机（动态GIF）")
+        self._avatar_radio_static = QRadioButton("静态头像（本地图片）")
+        self._avatar_radio_animated.setFont(QFont("Microsoft YaHei UI", 9))
+        self._avatar_radio_static.setFont(QFont("Microsoft YaHei UI", 9))
+        group.addButton(self._avatar_radio_animated, 0)
+        group.addButton(self._avatar_radio_static, 1)
+        avatar_layout.addWidget(self._avatar_radio_animated)
+        avatar_layout.addWidget(self._avatar_radio_static)
+
+        path_row = QHBoxLayout()
+        self._avatar_path_edit = QLineEdit()
+        self._avatar_path_edit.setPlaceholderText("选择本地图片...")
+        self._avatar_path_edit.setFont(QFont("Microsoft YaHei UI", 9))
+        self._avatar_path_edit.setReadOnly(True)
+        self._avatar_path_edit.setStyleSheet("background: white; border: 1px solid #D0D0E0; border-radius: 6px; padding: 4px 8px;")
+        self._avatar_path_edit.setEnabled(False)
+        path_row.addWidget(self._avatar_path_edit)
+
+        browse_btn = QPushButton("浏览")
+        browse_btn.setFixedWidth(60)
+        browse_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        browse_btn.setCursor(Qt.PointingHandCursor)
+        browse_btn.setStyleSheet("background: #6C7BFF; color: white; border-radius: 6px; border: none; padding: 4px;")
+        browse_btn.setEnabled(False)
+        path_row.addWidget(browse_btn)
+        avatar_layout.addLayout(path_row)
+
+        self._avatar_radio_static.toggled.connect(lambda checked: [
+            self._avatar_path_edit.setEnabled(checked),
+            browse_btn.setEnabled(checked)
+        ])
+
+        browse_btn.clicked.connect(self._browse_avatar_image)
+
+        tip = QLabel("💡 选择静态头像可避免动画卡顿，节省 CPU 资源。")
+        tip.setFont(QFont("Microsoft YaHei UI", 8))
+        tip.setStyleSheet("color: #888; background: #F0F0F8; padding: 8px; border-radius: 6px;")
+        tip.setWordWrap(True)
+        avatar_layout.addWidget(tip)
+
+        scroll_layout.addWidget(avatar_frame)
+
         scroll_layout.addStretch()
+
         scroll_area.setWidget(scroll_content)
         general_layout.addWidget(scroll_area)
         tab_widget.addTab(general_tab, "常规")
@@ -442,6 +497,17 @@ class SettingsDialog(QDialog):
        
         self.emotion_prob_slider.setValue(int(self._settings.emotion_probability * 100))
         self.emotion_prob_value.setText(f"{int(self._settings.emotion_probability * 100)}%")
+        # 头像设置
+        from config import get_avatar_config
+        avatar_cfg = get_avatar_config()
+        mode = avatar_cfg.get("mode", "animated")
+        if mode == "static":
+            self._avatar_radio_static.setChecked(True)
+            path = avatar_cfg.get("static_image_path", "")
+            if path:
+                self._avatar_path_edit.setText(path)
+        else:
+            self._avatar_radio_animated.setChecked(True)
 
         self._user_name_edit.setText(self._settings.user_name)
 
@@ -478,6 +544,26 @@ class SettingsDialog(QDialog):
 
         # ── 保存用户称呼 ──
         self._settings.user_name = self._user_name_edit.text()
+        # ── 保存头像设置 ──
+        char_widget = self.parent()._char_widget
+        if self._avatar_radio_static.isChecked():
+            path = self._avatar_path_edit.text().strip()
+            if not path or not os.path.exists(path):
+                from PyQt5.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "提示", "请先选择一张图片作为静态头像。")
+                return
+            from config import save_avatar_config
+            save_avatar_config({"mode": "static", "static_image_path": path})
+            char_widget._avatar_mode = "static"
+            char_widget._static_image_path = path
+            char_widget._apply_static_avatar(path)
+        else:
+            from config import save_avatar_config
+            save_avatar_config({"mode": "animated", "static_image_path": char_widget._static_image_path})
+            char_widget._avatar_mode = "animated"
+            char_widget._switch_to_animated()
+
+        self.accept()
 
         self.accept()
 
@@ -528,3 +614,11 @@ class SettingsDialog(QDialog):
             del self._ql_apps[row]
             save_quick_launch_apps(self._ql_apps)
             self._refresh_ql_table()
+
+    def _browse_avatar_image(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择莲心头像", "",
+            "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif)"
+        )
+        if file_path:
+            self._avatar_path_edit.setText(file_path)

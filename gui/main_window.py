@@ -602,7 +602,6 @@ class MainWindow(QMainWindow):
         self._char_widget.get_alarm_button().clicked.connect(self._on_alarm_clicked)
         self._char_widget.get_camera_button().clicked.connect(self._on_camera_capture)
         self._char_widget.get_emotion_button().clicked.connect(self._on_open_emotion_debug)
-        self._char_widget.get_avatar_button().clicked.connect(self._on_avatar_settings)
         self._char_widget.get_sound_button().clicked.connect(self._on_sound_settings)
         self._char_widget.get_memory_button().clicked.connect(self._on_memory_settings)
         self._char_widget.get_network_button().clicked.connect(self._show_network_settings)
@@ -1266,11 +1265,6 @@ class MainWindow(QMainWindow):
         dlg = ApiConfigDialog(self)
         dlg.config_saved.connect(self._on_api_config_saved)
         dlg.exec_()
-        
-    def _on_avatar_settings(self):
-        from utils.sound import play_sound
-        play_sound("ButtonAll.mp3")
-        self._char_widget._show_avatar_dialog()
     
     def _on_sound_settings(self):
         from utils.sound import play_sound
