@@ -63,7 +63,7 @@
 
 
 ## 快速开始
-```bash
+
 # 克隆仓库
 git clone https://gitee.com/luke23334/lianxin-ai.git
 cd lianxin-ai
