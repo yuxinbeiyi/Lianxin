@@ -28,7 +28,7 @@ class ExpressionManager:
 
     def __init__(self, assets_dir: str | Path):
         self._assets_dir = Path(assets_dir)
-        self._fallback_image = "莲心形象.jpg"
+        self._fallback_image = "莲心形象透明背景.png"
 
     def match(self, text: str) -> str:
         """从 AI 回复文本中匹配情绪关键词，返回情绪名称。"""

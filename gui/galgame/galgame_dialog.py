@@ -5,20 +5,22 @@ GalgameDialog：莲心 Galgame 模式 — 对话窗口
 """
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QTextEdit, QPushButton, QSizeGrip
+    QTextEdit, QPushButton,
+    QSpinBox, QCheckBox, QDialog, QFormLayout, QDialogButtonBox
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QEvent
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QEvent, QRect
 from PyQt5.QtGui import (
     QFont, QPainter, QPainterPath, QColor, QKeyEvent
 )
 
 
 class GalgameDialog(QWidget):
+
     """Galgame 风格对话窗口，附着在立绘窗口旁。"""
 
     # 用户发送消息时发射（文本内容）
     message_submitted = pyqtSignal(str)
-
+    mute_toggled = pyqtSignal(bool)        # ← 新增：静音状态变化信号
     def __init__(self, parent=None):
         super().__init__(parent)
         self._name = "莲心"
@@ -28,7 +30,9 @@ class GalgameDialog(QWidget):
 
         self._init_window()
         self._init_ui()
+        self._apply_font_settings()
         self._init_typing_timer()
+
 
     def _init_window(self):
         """窗口基础设置。"""
@@ -41,7 +45,9 @@ class GalgameDialog(QWidget):
         )
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setWindowOpacity(0.92)
+        self.setMouseTracking(True)   # ← 新增：启用鼠标追踪
         self.resize(360, 300)
+
 
     def _init_ui(self):
         """创建 UI 组件。"""
@@ -49,21 +55,15 @@ class GalgameDialog(QWidget):
         layout.setContentsMargins(16, 12, 16, 8)
         layout.setSpacing(4)
 
-        # ── 角色名标签 ──
-        self._name_label = QLabel(self._name)
-        self._name_label.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
-        self._name_label.setStyleSheet("color: #5060DD; background: transparent;")
-        layout.addWidget(self._name_label)
-
         # ── 回复文本区（只读，可滚动） ──
         self._reply_area = QTextEdit()
         self._reply_area.setReadOnly(True)
-        self._reply_area.setFont(QFont("Microsoft YaHei UI", 10))
+        self._reply_area.setFont(QFont("Microsoft YaHei UI", 12, QFont.Bold))  # 加 QFont.Bold
         self._reply_area.setStyleSheet("""
             QTextEdit {
                 background: transparent;
                 border: none;
-                color: #333;
+                color: #000000;  # #333 → #000000 纯黑
                 padding: 2px 0;
             }
             QScrollBar:vertical {
@@ -83,16 +83,17 @@ class GalgameDialog(QWidget):
 
         # ── 输入框 ──
         self._input_edit = QTextEdit()
-        self._input_edit.setFont(QFont("Microsoft YaHei UI", 10))
+        self._input_edit.setFont(QFont("Microsoft YaHei UI", 12, QFont.Bold))
         self._input_edit.setPlaceholderText("说点什么吧（Enter发送 Shift+Enter换行）")
-        self._input_edit.setFixedHeight(52)
+        self._input_edit.setFixedHeight(36)  # 初始1行高度
+        self._input_edit.textChanged.connect(self._auto_resize_input)
         self._input_edit.setStyleSheet("""
             QTextEdit {
                 background: rgba(255,255,255,200);
                 border: 1px solid #d0d0e8;
                 border-radius: 8px;
                 padding: 6px 10px;
-                color: #333;
+                color: #000000;
             }
             QTextEdit:focus {
                 border-color: #6C7BFF;
@@ -103,8 +104,47 @@ class GalgameDialog(QWidget):
         self._input_edit.installEventFilter(self)
         layout.addWidget(self._input_edit)
 
-        # ── 发送按钮 ──
+
+        # ── 底部按钮栏 ──
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(6)
+
+        # 设置按钮
+        self._settings_btn = QPushButton("⚙")
+        self._settings_btn.setFont(QFont("Segoe UI Emoji", 12))
+        self._settings_btn.setFixedSize(28, 28)
+        self._settings_btn.setCursor(Qt.PointingHandCursor)
+        self._settings_btn.setToolTip("字体设置")
+        self._settings_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(200,200,210,120);
+                color: #555;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton:hover  { background: rgba(180,180,200,160); }
+        """)
+        self._settings_btn.clicked.connect(self._on_font_settings)
+        btn_layout.addWidget(self._settings_btn)
+
+        # 静音按钮
+        self._mute_btn = QPushButton("🔊")
+        self._mute_btn.setFont(QFont("Segoe UI Emoji", 12))
+        self._mute_btn.setFixedSize(28, 28)
+        self._mute_btn.setCursor(Qt.PointingHandCursor)
+        self._mute_btn.setToolTip("点击静音")
+        self._mute_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(200,200,210,120);
+                color: #555;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton:hover  { background: rgba(180,180,200,160); }
+        """)
+        self._mute_btn.clicked.connect(self._on_mute_toggle)
+        btn_layout.addWidget(self._mute_btn)
+
         btn_layout.addStretch()
 
         self._send_btn = QPushButton("发送")
@@ -125,7 +165,9 @@ class GalgameDialog(QWidget):
         btn_layout.addWidget(self._send_btn)
         layout.addLayout(btn_layout)
 
+        self._update_mute_button()
         self.setLayout(layout)
+
 
     def _init_typing_timer(self):
         """逐字显示定时器。"""
@@ -198,18 +240,64 @@ class GalgameDialog(QWidget):
         else:
             super().keyPressEvent(event)
 
-    # ── 窗口大小调整手柄 ──
-    def _init_resize_grip(self):
-        self._size_grip = QSizeGrip(self)
-        self._size_grip.resize(16, 16)
-        self._size_grip.move(self.width() - self._size_grip.width(),
-                              self.height() - self._size_grip.height())
+    # ── 字体设置 ──
+    def _apply_font_settings(self):
+        from utils.settings import get_settings
+        s = get_settings()
+        size = s.galgame_font_size
+        bold = s.galgame_font_bold
+        weight = QFont.Bold if bold else QFont.Normal
+        font = QFont("Microsoft YaHei UI", size, weight)
+        self._reply_area.setFont(font)
+        self._input_edit.setFont(font)
+        self._auto_resize_input()
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if hasattr(self, '_size_grip'):
-            self._size_grip.move(self.width() - self._size_grip.width(),
-                                  self.height() - self._size_grip.height())
+
+    def _auto_resize_input(self):
+        """根据内容自动调整输入框高度（1~3行）。"""
+        QTimer.singleShot(0, self._do_auto_resize)
+
+    def _do_auto_resize(self):
+        doc = self._input_edit.document()
+        doc_height = doc.size().height()
+        margins = self._input_edit.contentsMargins()
+        extra = self._input_edit.frameWidth() * 2 + margins.top() + margins.bottom() + 4
+        height = doc_height + extra
+        height = max(36, min(height, 100))
+        self._input_edit.setFixedHeight(int(height))
+
+
+    def _on_font_settings(self):
+        dlg = GalgameFontSettingsDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            self._apply_font_settings()
+
+    # ── 静音切换 ──
+    def _on_mute_toggle(self):
+        from utils.settings import get_settings
+        s = get_settings()
+        s.silent_mode = not s.silent_mode
+        self._update_mute_button()
+        if s.silent_mode:
+            try:
+                from skills.语音合成.tools import stop_voice_playback
+                stop_voice_playback()
+            except Exception:
+                pass
+        self.mute_toggled.emit(s.silent_mode)   # ← 新增：通知主窗口
+
+
+
+    def _update_mute_button(self):
+        from utils.settings import get_settings
+        s = get_settings()
+        if s.silent_mode:
+            self._mute_btn.setText("🔇")
+            self._mute_btn.setToolTip("已静音，点击取消静音")
+        else:
+            self._mute_btn.setText("🔊")
+            self._mute_btn.setToolTip("点击静音")
+
 
     # ── 自定义圆角绘制 ──
     def paintEvent(self, event):
@@ -231,17 +319,126 @@ class GalgameDialog(QWidget):
             painter.drawPath(sp)
 
     # ── 鼠标拖拽 ──
+    def _get_resize_edge(self, pos):
+        """返回鼠标所在的边缘方向，不在边缘返回 None。"""
+        b = 8
+        r = self.rect()
+
+        left = pos.x() < b
+        right = pos.x() > r.width() - b
+        top = pos.y() < b
+        bottom = pos.y() > r.height() - b
+        if top and left:     return 'topleft'
+        if top and right:    return 'topright'
+        if bottom and left:  return 'bottomleft'
+        if bottom and right: return 'bottomright'
+        if top:              return 'top'
+        if bottom:           return 'bottom'
+        if left:             return 'left'
+        if right:            return 'right'
+        return None
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
+            edge = self._get_resize_edge(event.pos())
+            if edge:
+                self._resize_edge = edge
+                self._resize_start_geometry = self.geometry()
+                self._resize_start_pos = event.globalPos()
+            else:
+                self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
             event.accept()
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.LeftButton and hasattr(self, '_drag_pos'):
-            self.move(event.globalPos() - self._drag_pos)
+        if event.buttons() == Qt.LeftButton:
+            if hasattr(self, '_resize_edge') and self._resize_edge:
+                self._do_resize(event.globalPos())
+            elif hasattr(self, '_drag_pos'):
+                self.move(event.globalPos() - self._drag_pos)
             event.accept()
+        else:
+            edge = self._get_resize_edge(event.pos())
+            if edge in ('top', 'bottom'):
+                self.setCursor(Qt.SizeVerCursor)
+            elif edge in ('left', 'right'):
+                self.setCursor(Qt.SizeHorCursor)
+            elif edge in ('topleft', 'bottomright'):
+                self.setCursor(Qt.SizeFDiagCursor)
+            elif edge in ('topright', 'bottomleft'):
+                self.setCursor(Qt.SizeBDiagCursor)
+            else:
+                self.setCursor(Qt.ArrowCursor)
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and hasattr(self, '_drag_pos'):
-            del self._drag_pos
+        if event.button() == Qt.LeftButton:
+            if hasattr(self, '_resize_edge'):
+                del self._resize_edge
+            if hasattr(self, '_drag_pos'):
+                del self._drag_pos
             event.accept()
+
+    def _do_resize(self, global_pos):
+        """根据拖拽边缘调整窗口大小和位置。"""
+        delta = global_pos - self._resize_start_pos
+        geo = QRect(self._resize_start_geometry)
+        edge = self._resize_edge
+        min_w, min_h = 200, 150
+
+        if 'left' in edge:
+            new_left = geo.left() + delta.x()
+            new_width = geo.width() - delta.x()
+            if new_width >= min_w:
+                geo.setLeft(new_left)
+        if 'right' in edge:
+            new_width = geo.width() + delta.x()
+            if new_width >= min_w:
+                geo.setRight(geo.right() + delta.x())
+        if 'top' in edge:
+            new_top = geo.top() + delta.y()
+            new_height = geo.height() - delta.y()
+            if new_height >= min_h:
+                geo.setTop(new_top)
+        if 'bottom' in edge:
+            new_height = geo.height() + delta.y()
+            if new_height >= min_h:
+                geo.setBottom(geo.bottom() + delta.y())
+
+        self.setGeometry(geo)
+
+
+
+class GalgameFontSettingsDialog(QDialog):
+    """Galgame 模式字体设置小弹窗。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from utils.settings import get_settings
+        self._settings = get_settings()
+        self.setWindowTitle("Galgame 字体设置")
+        self.setFixedSize(260, 120)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowStaysOnTopHint)
+        self.setStyleSheet("background-color: #F8F8FC;")
+
+        layout = QFormLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 16, 20, 16)
+
+        self._size_spin = QSpinBox()
+        self._size_spin.setRange(8, 24)
+        self._size_spin.setValue(self._settings.galgame_font_size)
+        self._size_spin.setSuffix(" pt")
+        layout.addRow("字体大小:", self._size_spin)
+
+        self._bold_cb = QCheckBox("加粗")
+        self._bold_cb.setChecked(self._settings.galgame_font_bold)
+        layout.addRow("字体粗细:", self._bold_cb)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self._on_accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addRow(btn_box)
+
+    def _on_accept(self):
+        self._settings.galgame_font_size = self._size_spin.value()
+        self._settings.galgame_font_bold = self._bold_cb.isChecked()
+        self.accept()

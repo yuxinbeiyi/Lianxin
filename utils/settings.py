@@ -23,6 +23,9 @@ _DEFAULT_SETTINGS = {
     "music_position": 0.0,          # 新增：播放位置（秒）
     "emotion_probability": 0.6,   # 发表情包概率    默认 60%
     "user_name": "雨心",           # 用户称呼（莲心对用户的称呼）
+    "galgame_font_size": 12,       # Galgame 模式字体大小
+    "galgame_font_bold": True,     # Galgame 模式字体加粗
+
 }
 
 
@@ -83,6 +86,26 @@ class SettingsManager:
     def font_size(self, val: int):
         self._settings["font_size"] = val
         self.save()
+    
+        # ========== Galgame 字体设置 ==========
+    @property
+    def galgame_font_size(self) -> int:
+        return self._settings.get("galgame_font_size", 12)
+
+    @galgame_font_size.setter
+    def galgame_font_size(self, val: int):
+        self._settings["galgame_font_size"] = val
+        self.save()
+
+    @property
+    def galgame_font_bold(self) -> bool:
+        return self._settings.get("galgame_font_bold", True)
+
+    @galgame_font_bold.setter
+    def galgame_font_bold(self, val: bool):
+        self._settings["galgame_font_bold"] = val
+        self.save()
+
 
     # ========== 小纸条路径 ==========
     @property

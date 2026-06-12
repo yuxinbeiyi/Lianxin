@@ -10,10 +10,10 @@ import os
 import math
 from pathlib import Path
 from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout
-from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal, QPropertyAnimation, QSequentialAnimationGroup, QParallelAnimationGroup
+from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal, QPropertyAnimation, QSequentialAnimationGroup, QParallelAnimationGroup, QAbstractAnimation, pyqtProperty, QEasingCurve
+
 from PyQt5.QtGui import QPixmap, QMouseEvent
-from PyQt5.QtCore import QAbstractAnimation
-from PyQt5.QtWidgets import QGraphicsOpacityEffect
+
 
 
 class TachieWindow(QWidget):
@@ -32,6 +32,10 @@ class TachieWindow(QWidget):
         self._in_animation = False
         self._scale = 1.0
         self._original_pixmap = None
+        self._breath_offset = 0.0
+        self._breath_anim = None
+        self._bounce_timer = None
+        self._bounce_anim = None
 
         self._init_window()
         self._init_ui()
@@ -93,12 +97,13 @@ class TachieWindow(QWidget):
 
 
     def _apply_scale(self):
-        """按当前缩放比例渲染图片（以图像中心为原点）。"""
         if self._original_pixmap is None:
             return
         old_center = self.geometry().center()
-        w = max(50, int(self._original_pixmap.width() * self._scale))
-        h = max(50, int(self._original_pixmap.height() * self._scale))
+        effective_scale = self._scale * (1.0 + self._breath_offset * 0.02)
+
+        w = max(50, int(self._original_pixmap.width() * effective_scale))
+        h = max(50, int(self._original_pixmap.height() * effective_scale))
         scaled = self._original_pixmap.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self._image_label.setPixmap(scaled)
         self._image_label.resize(scaled.size())
@@ -107,75 +112,111 @@ class TachieWindow(QWidget):
         self.move(self.pos() + delta)
 
 
+    # ── 呼吸动画 ─────────────────────────────────────────
+
+    def _get_breath_offset(self):
+        return self._breath_offset
+
+    def _set_breath_offset(self, value):
+        self._breath_offset = value
+        self._apply_scale()
+
+    breath_offset = pyqtProperty(float, _get_breath_offset, _set_breath_offset)
+
+    def start_breathing(self):
+        if self._breath_anim is not None:
+            return
+        # 0 → 1 (吸气扩大): 末尾减速
+        a1 = QPropertyAnimation(self, b"breath_offset")
+        a1.setDuration(1500)
+        a1.setStartValue(0.0)
+        a1.setEndValue(1.0)
+        a1.setEasingCurve(QEasingCurve.OutCubic)
+
+        # 1 → 0 (回中): 开头加速
+        a2 = QPropertyAnimation(self, b"breath_offset")
+        a2.setDuration(1500)
+        a2.setStartValue(1.0)
+        a2.setEndValue(0.0)
+        a2.setEasingCurve(QEasingCurve.InCubic)
+
+        # 0 → -1 (呼气缩小): 末尾减速
+        a3 = QPropertyAnimation(self, b"breath_offset")
+        a3.setDuration(1500)
+        a3.setStartValue(0.0)
+        a3.setEndValue(-1.0)
+        a3.setEasingCurve(QEasingCurve.OutCubic)
+
+        # -1 → 0 (回中): 开头加速
+        a4 = QPropertyAnimation(self, b"breath_offset")
+        a4.setDuration(1500)
+        a4.setStartValue(-1.0)
+        a4.setEndValue(0.0)
+        a4.setEasingCurve(QEasingCurve.InCubic)
+
+        self._breath_anim = QSequentialAnimationGroup(self)
+        self._breath_anim.addAnimation(a1)
+        self._breath_anim.addAnimation(a2)
+        self._breath_anim.addAnimation(a3)
+        self._breath_anim.addAnimation(a4)
+        self._breath_anim.setLoopCount(-1)   # ← 关键：自动循环，无延迟
+        self._breath_anim.start()
+
+
+    def stop_breathing(self):
+        if self._breath_anim:
+            self._breath_anim.stop()
+            self._breath_anim = None
+        self._breath_offset = 0.0
+        self._apply_scale()
+
+    # ── 说话跳动 ─────────────────────────────────────────
+
+    def start_talking(self):
+        if self._bounce_timer is not None:
+            return
+        self._bounce_timer = QTimer(self)
+        self._bounce_timer.timeout.connect(self._play_bounce)
+        self._bounce_timer.start(450)
+
+    def stop_talking(self):
+        if self._bounce_timer:
+            self._bounce_timer.stop()
+            self._bounce_timer = None
+
 
     def set_image(self, image_path: str):
         """切换立绘图片。"""
-
-
-        current_pixmap = self._image_label.pixmap()
-        if current_pixmap and not current_pixmap.isNull():
-            self._old_label.setPixmap(current_pixmap)
-            self._old_label.resize(self._image_label.size())
-            self._old_label.show()
-        else:
-            self._old_label.hide()
-
+        self._old_label.hide()
         self._image_path = image_path
         new_pixmap = QPixmap(image_path)
-        self._load_image(new_pixmap)
-
-        # ── 淡入淡出动画 ──
-        opacity_new = QGraphicsOpacityEffect(self._image_label)
-        self._image_label.setGraphicsEffect(opacity_new)
-        opacity_new.setOpacity(0.0)
-
-        opacity_old = QGraphicsOpacityEffect(self._old_label)
-        self._old_label.setGraphicsEffect(opacity_old)
-        opacity_old.setOpacity(1.0)
-
-        self._in_animation = True
-
-        fade_in = QPropertyAnimation(opacity_new, b"opacity")
-        fade_in.setDuration(250)
-        fade_in.setStartValue(0.0)
-        fade_in.setEndValue(1.0)
-
-        fade_out = QPropertyAnimation(opacity_old, b"opacity")
-        fade_out.setDuration(250)
-        fade_out.setStartValue(1.0)
-        fade_out.setEndValue(0.0)
-
-        group = QParallelAnimationGroup()
-        group.addAnimation(fade_in)
-        group.addAnimation(fade_out)
-        group.finished.connect(self._on_fade_done)
-        group.start(QAbstractAnimation.DeleteWhenStopped)
-
-    def _on_fade_done(self):
-        """淡入淡出完成后播放弹动动画。"""
-        self._old_label.hide()
-        self._image_label.setGraphicsEffect(None)
-        self._in_animation = False
+        if new_pixmap.isNull():
+            return
+        self._original_pixmap = new_pixmap
+        self._apply_scale()
         self._play_bounce()
 
+
     def _play_bounce(self):
-        """轻微的上下弹动，模拟 ZcChat 的二次动画效果。"""
+        if self._bounce_anim is not None and self._bounce_anim.state() == QAbstractAnimation.Running:
+            return
         pos = self._image_label.pos()
         anim = QSequentialAnimationGroup(self)
-
         up = QPropertyAnimation(self._image_label, b"pos")
-        up.setDuration(120)
+        up.setDuration(100)
         up.setStartValue(pos)
-        up.setEndValue(pos + QPoint(0, -8))
-
+        up.setEndValue(pos + QPoint(0, -16))
         down = QPropertyAnimation(self._image_label, b"pos")
-        down.setDuration(120)
-        down.setStartValue(pos + QPoint(0, -8))
+        down.setDuration(100)
+        down.setStartValue(pos + QPoint(0, -16))
         down.setEndValue(pos)
-
         anim.addAnimation(up)
         anim.addAnimation(down)
-        anim.start(QAbstractAnimation.DeleteWhenStopped)
+        anim.finished.connect(lambda: setattr(self, '_bounce_anim', None))
+        self._bounce_anim = anim
+        anim.start()
+
+
 
     # ── Live2D 控制代理 ─────────────────────────────────────
 

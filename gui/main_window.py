@@ -972,6 +972,7 @@ class MainWindow(QMainWindow):
             self._galgame_dialog = GalgameDialog()
             # 连接对话框发送信号
             self._galgame_dialog.message_submitted.connect(self._on_galgame_message)
+            self._galgame_dialog.mute_toggled.connect(self._on_mute)
             # 连接立绘拖拽 → 对话框跟随移动
             self._tachie_win.position_changed.connect(self._on_tachie_moved)
             # 连接立绘右键 → 切换对话框显示
@@ -995,6 +996,8 @@ class MainWindow(QMainWindow):
 
         self._galgame_visible = True
         self._galgame_btn.setText("🎮 Galgame ●")
+        self._tachie_win.start_breathing()
+
 
     def _hide_galgame(self):
         """隐藏 Galgame 窗口。"""
@@ -1004,6 +1007,10 @@ class MainWindow(QMainWindow):
             self._galgame_dialog.hide()
         self._galgame_visible = False
         self._galgame_btn.setText("🎮 Galgame")
+        self._tachie_win.stop_breathing()
+        self._tachie_win.stop_talking()
+
+
 
     def _on_tachie_moved(self, tx: int, ty: int):
         """立绘拖拽时，对话框保持相对偏移跟随移动。"""
@@ -1033,6 +1040,15 @@ class MainWindow(QMainWindow):
             img_path = self._expression_mgr.get_image_path(emotion)
             if img_path:
                 self._tachie_win.set_image(img_path)
+    def _on_galgame_speaking_start(self):
+        if self._galgame_visible and self._tachie_win:
+            self._tachie_win.stop_breathing()
+            self._tachie_win.start_talking()
+
+    def _on_galgame_speaking_stop(self):
+        if self._galgame_visible and self._tachie_win:
+            self._tachie_win.stop_talking()
+            self._tachie_win.start_breathing()
 
     def _setup_galgame_hotkey(self, register: bool = True):
         """注册/注销全局热键 Ctrl+Alt+X（Win32 RegisterHotKey）。"""
@@ -1090,6 +1106,8 @@ class MainWindow(QMainWindow):
         self._speaker_worker = SpeakerWorker(self._speaker, text, self)
         self._speaker_worker.speaking_started.connect(self._char_widget.set_talking)
         self._speaker_worker.speaking_started.connect(lambda: self._input_panel.set_mute_visible(True))
+        self._speaker_worker.speaking_started.connect(self._on_galgame_speaking_start)
+        self._speaker_worker.speaking_finished.connect(self._on_galgame_speaking_stop)
         self._speaker_worker.speaking_finished.connect(self._char_widget.set_normal)
         self._speaker_worker.speaking_finished.connect(lambda: self._input_panel.set_mute_visible(False))
         self._speaker_worker.start()
