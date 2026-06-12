@@ -622,8 +622,25 @@ class MainWindow(QMainWindow):
 
         top_layout.addWidget(self._char_widget)
 
+        # 聊天区（右侧）：进度条 + 滚动消息区
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+
+        from gui.task_progress_bar import TaskProgressBar
+        self._task_progress = TaskProgressBar()
+        self._task_progress.hide()
+        right_layout.addWidget(self._task_progress)
+
         self._chat_widget = ChatWidget()
-        top_layout.addWidget(self._chat_widget)
+        right_layout.addWidget(self._chat_widget)
+
+        top_layout.addWidget(right_widget)
+
+        # 注册任务追踪观察者 → 进度条实时刷新
+        from brain.task_tracker import get_task_tracker
+        get_task_tracker().observe(self._refresh_task_progress)
 
         main_layout.addWidget(top_widget)
 
@@ -745,6 +762,15 @@ class MainWindow(QMainWindow):
         threading.Thread(target=_warmup, daemon=True).start()
 
     # ── 文字对话 ─────────────────────────────────────────────
+    def _refresh_task_progress(self):
+        """进度条刷新（线程安全）。"""
+        QTimer.singleShot(0, self._do_refresh_task_progress)
+
+    def _do_refresh_task_progress(self):
+        from brain.task_tracker import get_task_tracker
+        c, t, label = get_task_tracker().get_progress()
+        self._task_progress.refresh(c, t, label)
+
     def _on_user_message(self, text: str, images: list = None):
         # 用户发消息 → 立即停止语音播放、重置语音标记
         try:
@@ -1203,6 +1229,8 @@ class MainWindow(QMainWindow):
                     self._chat_widget.add_ai_message(clean or m["content"])
             self._chat_widget.add_system_tip("—— 当前会话已删除，已自动切换到最近的其他会话 ——")
         else:
+            from brain.task_tracker import reset_task_tracker
+            reset_task_tracker()
             self._agent.new_session()
             self._chat_widget.clear_messages()
             self._chat_widget.add_ai_message("通讯设备正在启动...这里是助手莲心（埋头调试ing...）")
@@ -1217,6 +1245,10 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
+        from brain.task_tracker import reset_task_tracker
+        reset_task_tracker()
+        from brain.task_tracker import reset_task_tracker
+        reset_task_tracker()
         self._agent.new_session()
         self._chat_widget.clear_messages()
         self._chat_widget.add_ai_message("这里是助手莲心，现实稳定锚就绪，坐标稳定...收到请回复~")

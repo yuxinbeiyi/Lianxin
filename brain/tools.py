@@ -1559,6 +1559,46 @@ TOOL_DEFINITIONS = [
             }
         }
     },
+    # 第三阶段：任务进度追踪
+    {
+        "type": "function",
+        "function": {
+            "name": "track_tasks",
+            "description": "更新当前会话的任务清单。用于追踪复杂多步骤任务的进度。"
+                           "每次调用会全量替换整个列表，不是增量追加。\n"
+                           "规则：同一时刻最多一个任务 in_progress，完成后立即标记 completed，"
+                           "全部完成时传空列表清除。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "description": "任务列表，全量替换。空列表表示清除所有任务。",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "content": {
+                                    "type": "string",
+                                    "description": "任务描述（祈使句，如'添加用户登录功能'）"
+                                },
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["pending", "in_progress", "completed"],
+                                    "description": "任务状态：pending=待做 in_progress=进行中 completed=已完成"
+                                },
+                                "activeForm": {
+                                    "type": "string",
+                                    "description": "进行时描述（如'正在添加用户登录功能...'）"
+                                }
+                            },
+                            "required": ["content", "status", "activeForm"]
+                        }
+                    }
+                },
+                "required": ["todos"]
+            }
+        }
+    },
 
 ]
 
@@ -3912,9 +3952,14 @@ def delegate_task(task: str, working_dir: str = "",
 
     except Exception as e:
         return f"子代理执行失败：{e}"
-    finally:
-        if working_dir:
-            os.chdir(original_cwd)
+
+
+# ── 任务进度追踪（第三阶段）────────────────────────────────────
+def track_tasks(todos: list) -> str:
+    """更新当前会话的任务清单，全量替换。"""
+    from brain.task_tracker import get_task_tracker
+    tracker = get_task_tracker()
+    return tracker.update(todos)
 
 
 # ── 工具调度表 ───────────────────────────────────────────────
@@ -4009,6 +4054,10 @@ TOOL_EXECUTORS = {
         working_dir=inp.get("working_dir", ""),
         timeout_seconds=inp.get("timeout_seconds", 120),
         max_iterations=inp.get("max_iterations", 10),
+    ),
+    # 第三阶段：任务进度追踪
+    "track_tasks":     lambda inp: track_tasks(
+        todos=inp["todos"],
     ),
 
     }

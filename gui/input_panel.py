@@ -97,6 +97,7 @@ TOOL_GROUP_MAP = {
     "code_structure": "🔍 代码搜索",
     "plan_tasks": "🧩 任务分解",
     "delegate_task": "🧩 任务分解",
+    "track_tasks": "📋 任务追踪",
     "describe_image": "🔍 视觉理解",
     # 系统命令类
     "open_app": "💻 系统命令",
@@ -151,6 +152,7 @@ TOOL_ALIASES = {
     "code_structure": ["代码结构", "函数列表", "类定义"],
     "plan_tasks": ["分解任务", "任务规划", "拆分任务"],
     "delegate_task": ["委派任务", "子代理", "并行执行"],
+    "track_tasks": ["任务进度", "追踪任务", "更新任务", "任务清单"],
 
 
 }
