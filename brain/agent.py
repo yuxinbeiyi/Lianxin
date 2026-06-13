@@ -1227,8 +1227,20 @@ class AgentCore:
                     on_tool_result=on_tool_result,
                 )
 
+
+                # ── speak_voice 终结技：调用后立即返回语音文本，不再继续生成 ──
+                if any(tc.function.name == "speak_voice" for tc in fake_tool_calls):
+                    try:
+                        from skills.语音合成.tools import _last_spoken_text
+                        if _last_spoken_text:
+                            return _last_spoken_text
+                    except Exception:
+                        pass
+
                 if forced_tool:
                     forced_tool = None
+
+                # ── 死循环检测 ────────────────────────────
 
                 # ── 死循环检测 ────────────────────────────
                 prev_msg_count = len(messages) - len(fake_tool_calls)

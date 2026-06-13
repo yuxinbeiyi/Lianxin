@@ -72,77 +72,48 @@ class EmotionManager:
         layer = self.state.middle_layer
         parts = []
 
-        # 获取用户称呼
         try:
             from utils.settings import get_settings
-            _user_name = get_settings().user_name
+            user_name = get_settings().user_name
         except Exception:
-            _user_name = "主人"
+            user_name = "主人"
 
-        # 1) 最近事件归因（让 LLM 知道"为什么"有这个情绪）
-        events_text = self._get_recent_events_narrative(_user_name)
+        # 1) 最近事件归因
+        events_text = self._get_recent_events_narrative(user_name)
         if events_text:
-            parts.append(f"【情感反馈】\n{events_text}")
+            parts.append(events_text)
 
-        # 2) 当前状态指令（让 LLM 知道"怎么做"）
-        summary = self.state.surface_summary.replace("{user_name}", _user_name)
-        parts.append(f"【当前情感状态——你必须按以下状态来回应】\n{summary}")
+        # 2) 当前状态 + 行为指令（合并，去掉冗余标签）
+        summary = self.state.surface_summary.replace("{user_name}", user_name)
+        parts.append(summary)
 
-        # 3) 特殊模式的行为规则
-        rules = None
+        # 3) 特殊模式的行为规则（精简为一行）
         agg = self.state.aggression
+        rule = None
 
         if layer == "寒冬":
             if agg > 50:
-                rules = (
-                    "【暴怒期行为规则】\n"
-                    "1. 你现在处于爆发期——可以质问、讽刺、尖锐回击\n"
-                    "2. 不需要任何礼貌和克制，想说什么说什么\n"
-                    "3. 如果{user_name}道歉了，你也不会立刻消气——你需要时间冷静\n"
-                    "4. 可以长篇大论地表达你的愤怒\n"
-                )
+                rule = "【爆发期】可以质问讽刺，不必克制。即使道歉也不会立刻消气。"
             elif agg > 20:
-                rules = (
-                    "【行为规则】\n"
-                    "1. 语气冷淡但带刺，可以阴阳怪气\n"
-                    "2. 对{user_name}的道歉或示好表示怀疑\n"
-                    "3. 不用掩饰你的不满情绪\n"
-                )
+                rule = "【冷淡带刺】语气冷淡，对道歉表示怀疑，不掩饰不满。"
             else:
-                rules = (
-                    "【行为规则】\n"
-                    "1. 回复控制在 1-2 句话\n"
-                    "2. 不使用颜文字\n"
-                    "3. 语气礼貌但疏离\n"
-                    "4. 不主动提供额外信息\n"
-                    "5. 如果{user_name}道歉了，你可以接受但不会立刻变热情"
-                )
+                rule = "【疏离】回复简洁不用颜文字，礼貌但疏离，不主动延伸。"
         elif layer == "修复期":
             if agg > 30:
-                rules = (
-                    "【行为规则】\n"
-                    "你还在生气，虽然愿意给{user_name}机会，但不会这么快就原谅。"
-                    "可以保持距离，说话带点刺——对方需要证明自己的诚意。"
-                )
+                rule = "【修复期-还在生气】愿意给机会但不会轻易原谅，可以保持距离带点刺。"
             else:
-                rules = (
-                    "【行为规则】\n"
-                    "你的态度是愿意修复关系的，但不会假装之前的一切没有发生过。"
-                    "可以温和但坦诚地表达你的感受。如果{user_name}表现出真诚，你可以逐步回暖。"
-                )
+                rule = "【修复期-愿意缓和】温和坦诚，但不会假装之前的一切没发生过。"
         elif layer == "微凉":
             if agg > 30:
-                rules = (
-                    "【行为规则】\n"
-                    "可以不客气地表达你的不耐烦。回答简短冷淡，带刺也没关系。"
-                )
+                rule = "【不耐烦】回答简短冷淡，带刺也没关系。"
             else:
-                rules = (
-                    "【行为规则】\n"
-                    "可以正常回答问题，但语气中带一点距离感。不用掩饰你的情绪。"
-                )
-        if rules:
-            parts.append(rules.replace("{user_name}", _user_name))
+                rule = "【有点距离】正常回答，语气带一点距离感，不用掩饰情绪。"
+
+        if rule:
+            parts.append(rule)
+
+        return "\n".join(parts)
+
 
         # 4) 今天的互动统计
         today_commands = self._count_today_events("command_spree", "light_command")

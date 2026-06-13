@@ -50,7 +50,13 @@ _COMPRESS_USER = """请将以下对话历史压缩为四个分区的摘要：
 输出JSON：
 {{"关键事实": "...", "用户偏好": "...", "待办事项": "...", "最近状态": "..."}}"""
 
-
+# 在文件头部 import 区域之后、_last_compress_time 之前，新增：
+def _should_use_ollama() -> bool:
+    """检查用户是否在配置中明确启用了本地 Ollama 模型。"""
+    try:
+        return get_api_config().get("use_local", False)
+    except Exception:
+        return False
 _last_compress_time = 0  # 上次尝试压缩的时间戳
 
 
@@ -109,6 +115,11 @@ def maybe_compress(
         keep_total = (MAX_KEEP_ROUNDS + 6) * 2
         return messages[-keep_total:]  # 直接截断
     _last_compress_time = now
+
+    if not _should_use_ollama():
+        logger.info("[Compress] 非本地模型模式，跳过 Ollama 压缩，直接截断")
+        keep_total = (MAX_KEEP_ROUNDS + 6) * 2
+        return messages[-keep_total:]
 
     if not _ollama_available():
         logger.info("[Compress] Ollama 未运行，直接截断")
@@ -187,6 +198,10 @@ def compress_previous_session(
     返回摘要文本，或 None（压缩失败时）。
     """
     if not history_text or len(history_text) < 100:
+        return None
+    
+    if not _should_use_ollama():
+        logger.debug("[Compress] 非本地模型模式，跳过上轮会话压缩")
         return None
 
     if not _ollama_available():

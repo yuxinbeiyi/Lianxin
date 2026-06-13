@@ -216,16 +216,8 @@ class ProactiveWorker(QThread):
             if recent:
                 # 转为 OpenAI 消息格式，超长时自动压缩
                 recent_msgs = [{"role": m["role"], "content": m["content"]} for m in recent]
-                try:
-                    from brain.context_compressor import maybe_compress
-                    recent_msgs = maybe_compress(
-                        recent_msgs,
-                        model="ollama/my-qwen",
-                        api_base="http://localhost:11434/v1",
-                        max_tokens=6000,  # 主动消息上下文上限
-                    )
-                except Exception:
-                    pass  # 压缩失败就用原始消息
+                 # 压缩在非本地模式下跳过，直接使用原始消息
+
                 lines = []
                 user_name = _get_user_name()
                 for m in recent_msgs:
