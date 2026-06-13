@@ -98,6 +98,10 @@ TOOL_GROUP_MAP = {
     "plan_tasks": "🧩 任务分解",
     "delegate_task": "🧩 任务分解",
     "track_tasks": "📋 任务追踪",
+    "notebook_write": "📝 草稿本",
+    "notebook_read": "📝 草稿本",
+    "notebook_delete": "📝 草稿本",
+
     "describe_image": "🔍 视觉理解",
     # 系统命令类
     "open_app": "💻 系统命令",
@@ -153,6 +157,10 @@ TOOL_ALIASES = {
     "plan_tasks": ["分解任务", "任务规划", "拆分任务"],
     "delegate_task": ["委派任务", "子代理", "并行执行"],
     "track_tasks": ["任务进度", "追踪任务", "更新任务", "任务清单"],
+    "notebook_write": ["写入草稿", "保存草稿", "记录笔记"],
+    "notebook_read": ["读取草稿", "查看草稿", "列出笔记"],
+    "notebook_delete": ["删除草稿", "清除笔记", "移除记录"],
+
 
 
 }
