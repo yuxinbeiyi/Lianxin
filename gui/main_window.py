@@ -129,7 +129,7 @@ class MainWindow(QMainWindow):
         self._proactive_worker:  ProactiveWorker  | None = None
         self._ocr_worker = None
         self._is_recording = False
-        self._speak_voice_used = False  # 标记本回合是否已调用了 speak_voice 工具
+    
 
         # ── QQ 桥接 ──────────────────────────────────────────
         self._qq_bridge = None
@@ -168,6 +168,7 @@ class MainWindow(QMainWindow):
         # ── 待机模式（文件中转模式）──────────────────────────────────────────
         self._standby_state = "IDLE"              # IDLE / STANDBY
         self._is_waiting_for_response = False
+        self._last_note_content = ""    
         self._note_poll_timer = None
         self._note_timeout_timer = None
         self._note_file = None
@@ -780,7 +781,7 @@ class MainWindow(QMainWindow):
             stop_voice_playback()
         except Exception:
             pass
-        self._speak_voice_used = False
+       
         if images is None:
             images = []
         selected_tool = self._input_panel.get_selected_tool()
@@ -873,8 +874,8 @@ class MainWindow(QMainWindow):
         self._input_panel.show_interrupt_bar(self._agent_worker)
 
     def _on_tool_called(self, tool_name: str):
-        if tool_name == "speak_voice":
-            self._speak_voice_used = True
+        
+        
         self._chat_widget.show_thinking(tool_name)
         self._task_progress.set_subtitle(f"🔧 {tool_name} 执行中…")
         self._pending_arms_cross = random.random() < 0.03
@@ -924,14 +925,6 @@ class MainWindow(QMainWindow):
         # text 已经是 agent 剥离标签后的干净文本
         display_text = text
 
-        # 如果本回合 speak_voice 工具已播放语音，强制消息框内容与之匹配
-        if self._speak_voice_used:
-            try:
-                from skills.语音合成.tools import _last_spoken_text
-                if _last_spoken_text:
-                    display_text = _last_spoken_text
-            except Exception:
-                pass
 
         # 播放音效
         play_sound("lianxinSend.mp3")
@@ -964,9 +957,6 @@ class MainWindow(QMainWindow):
         if self.isMinimized():
             self.flash_taskbar(flash_count=0)
         if self._global_settings.silent_mode:
-            self._restart_listening()
-        elif self._speak_voice_used:
-            self._speak_voice_used = False  # 已由 speak_voice 工具播放，不再重复
             self._restart_listening()
         else:
             self._speaker_worker = SpeakerWorker(self._speaker, display_text, self)
@@ -1952,7 +1942,8 @@ class MainWindow(QMainWindow):
         self._note_timeout_timer.timeout.connect(self._on_note_timeout)
 
         self._update_standby_button()
-        self._chat_widget.add_system_tip('—— 待机模式已开启，直接说话，说完请说「完毕」——')
+        self._chat_widget.add_system_tip('—— 待机模式已开启，直接说话，说完稍等即可——')
+
 
     def _exit_standby(self):
         """关闭待机模式：终止阿里云子进程并停止监听"""
@@ -2002,59 +1993,72 @@ class MainWindow(QMainWindow):
             """)
 
     def _check_note_file(self):
-        """轮询检查小纸条.txt"""
+        """轮询检查小纸条.txt。内容有变化时重置 5 秒倒计时，
+        超时自动发送，或检测到「完毕」立即发送。"""
         if self._is_waiting_for_response:
             return
-        
+
         if not self._note_file or not self._note_file.exists():
             return
-        
+
         content = self._note_file.read_text(encoding="utf-8").strip()
         if not content:
+            self._last_note_content = ""
             return
-        
-        # 检测「完毕」关键词
+
+        # 内容没变化 → 不重置计时器，等它自然到期
+        if content == self._last_note_content:
+            return
+
+        # 内容有变化 → 记录新内容，重置倒计时
+        self._last_note_content = content
+
+        # 检测「完毕」关键词 → 立即发送
         if "完毕" in content:
-            # 取最后一个「完毕」，避免前面的空"完毕"吞掉后面的有效内容
-            # 例："完毕。\n今天是几月几号完毕？" → query = "今天是几月几号"
             last_idx = content.rfind("完毕")
             query = content[:last_idx].replace("完毕", "")
 
-            # 行级去重：Aliyun STT 的 on_sentence_end 可能对同一句话触发两次，
-            # 导致内容重复写入小纸条。用 dict.fromkeys 保持顺序去重。
             lines = query.split("\n")
             deduped_lines = list(dict.fromkeys(lines))
             query = "\n".join(deduped_lines).strip()
 
             if query:
                 self._is_waiting_for_response = True
-                if hasattr(self, '_note_timeout_timer') and self._note_timeout_timer:
+                if self._note_timeout_timer:
                     self._note_timeout_timer.stop()
-
                 self._note_file.write_text("", encoding="utf-8")
+                self._last_note_content = ""
                 self._on_user_message(query)
             else:
-                # 纯"完毕"不含有效内容，清空本次累积继续监听
                 self._note_file.write_text("", encoding="utf-8")
                 self._is_waiting_for_response = False
-                if hasattr(self, '_note_timeout_timer') and self._note_timeout_timer:
+                self._last_note_content = ""
+                if self._note_timeout_timer:
                     self._note_timeout_timer.stop()
                 self._chat_widget.add_system_tip("没有识别到内容，请重新说话")
         else:
-            if hasattr(self, '_note_timeout_timer') and not self._note_timeout_timer.isActive():
-                self._note_timeout_timer.start(30000)
-                self._chat_widget.add_system_tip("🎤 正在收听，说完请说「完毕」")
+            # 无「完毕」→ 重置 5 秒倒计时
+            if self._note_timeout_timer:
+                self._note_timeout_timer.stop()
+                self._note_timeout_timer.start(5000)
+
 
     def _on_note_timeout(self):
-        """用户 30 秒内没说「发送」，自动清空重新监听"""
+        """5 秒无新内容，自动发送当前累积的消息"""
         if self._standby_state != "STANDBY":
             return
 
-        if self._note_file:
-            self._note_file.write_text("", encoding="utf-8")
+        if not self._note_file or not self._note_file.exists():
+            return
 
-        self._is_waiting_for_response = False
-        self._chat_widget.add_system_tip("⏰ 超时未收到「完毕」，已清空，请重新说话")
+        content = self._note_file.read_text(encoding="utf-8").strip()
+        self._note_file.write_text("", encoding="utf-8")
+        self._last_note_content = ""
+
+        if content:
+            self._is_waiting_for_response = True
+            self._on_user_message(content)
+
         
     def _restart_listening(self):
         """回复完成后，重新启动监听"""
@@ -2070,7 +2074,8 @@ class MainWindow(QMainWindow):
             self._note_file.write_text("", encoding="utf-8")
         self._is_waiting_for_response = False
         # 轮询定时器已经在运行，无需额外操作
-        self._chat_widget.add_system_tip("🎤 继续监听中，说完请说「完毕」")
+        self._chat_widget.add_system_tip("🎤 继续监听中...")
+
 
 
     def _on_clear_note(self):
@@ -2144,7 +2149,7 @@ class MainWindow(QMainWindow):
             stop_voice_playback()
         except Exception:
             pass
-        self._speak_voice_used = False
+
         from brain.tools import set_diary_message_source
         set_diary_message_source(self._get_today_messages)
         
