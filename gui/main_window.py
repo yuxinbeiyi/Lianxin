@@ -1923,6 +1923,7 @@ class MainWindow(QMainWindow):
         # 确保目录存在
         self._note_file.parent.mkdir(parents=True, exist_ok=True)
         self._note_file.write_text("", encoding="utf-8")
+      
 
         # 启动阿里云语音识别子进程
         import subprocess
@@ -1942,7 +1943,11 @@ class MainWindow(QMainWindow):
         self._note_timeout_timer.timeout.connect(self._on_note_timeout)
 
         self._update_standby_button()
-        self._chat_widget.add_system_tip('—— 待机模式已开启，直接说话，说完稍等即可——')
+        if self._global_settings.standby_auto_send:
+            self._chat_widget.add_system_tip('—— 待机模式已开启，直接说话，说完稍等即可——')
+        else:
+            end_word = self._global_settings.standby_end_word or "完毕"
+            self._chat_widget.add_system_tip(f'—— 待机模式已开启，直接说话，说完请说「{end_word}」——')
 
 
     def _exit_standby(self):
@@ -1960,7 +1965,7 @@ class MainWindow(QMainWindow):
             self._note_poll_timer.stop()
         if self._note_timeout_timer:
             self._note_timeout_timer.stop()
-        
+  
         self._update_standby_button()
         self._chat_widget.add_system_tip("—— 待机模式已关闭 ——")
 
@@ -1993,8 +1998,8 @@ class MainWindow(QMainWindow):
             """)
 
     def _check_note_file(self):
-        """轮询检查小纸条.txt。内容有变化时重置 5 秒倒计时，
-        超时自动发送，或检测到「完毕」立即发送。"""
+        """轮询检查小纸条.txt。内容有变化时重置倒计时，
+        超时自动发送，或检测到结束词立即发送。"""
         if self._is_waiting_for_response:
             return
 
@@ -2013,10 +2018,12 @@ class MainWindow(QMainWindow):
         # 内容有变化 → 记录新内容，重置倒计时
         self._last_note_content = content
 
-        # 检测「完毕」关键词 → 立即发送
-        if "完毕" in content:
-            last_idx = content.rfind("完毕")
-            query = content[:last_idx].replace("完毕", "")
+        end_word = self._global_settings.standby_end_word or "完毕"
+
+        # 检测结束词 → 立即发送
+        if end_word in content:
+            last_idx = content.rfind(end_word)
+            query = content[:last_idx].replace(end_word, "")
 
             lines = query.split("\n")
             deduped_lines = list(dict.fromkeys(lines))
@@ -2037,10 +2044,12 @@ class MainWindow(QMainWindow):
                     self._note_timeout_timer.stop()
                 self._chat_widget.add_system_tip("没有识别到内容，请重新说话")
         else:
-            # 无「完毕」→ 重置 5 秒倒计时
-            if self._note_timeout_timer:
-                self._note_timeout_timer.stop()
-                self._note_timeout_timer.start(5000)
+            # 无结束词 → 按配置决定是否启动自动发送计时器
+            if self._global_settings.standby_auto_send:
+                delay_ms = self._global_settings.standby_auto_send_delay * 1000
+                if self._note_timeout_timer:
+                    self._note_timeout_timer.stop()
+                    self._note_timeout_timer.start(delay_ms)
 
 
     def _on_note_timeout(self):
@@ -2072,8 +2081,17 @@ class MainWindow(QMainWindow):
             return
         if self._note_file:
             self._note_file.write_text("", encoding="utf-8")
+        self._last_note_content = ""
+        # 3 秒后再次清空，兜底阿里云延迟回调
+        QTimer.singleShot(3000, self._second_clear_note)
+
+    def _second_clear_note(self):
+        if self._standby_state != "STANDBY":
+            return
+        if self._note_file:
+            self._note_file.write_text("", encoding="utf-8")
+        self._last_note_content = ""
         self._is_waiting_for_response = False
-        # 轮询定时器已经在运行，无需额外操作
         self._chat_widget.add_system_tip("🎤 继续监听中...")
 
 

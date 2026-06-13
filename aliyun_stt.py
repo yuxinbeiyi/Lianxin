@@ -4,6 +4,7 @@
 """
 
 import time
+
 import threading
 import json
 import sounddevice as sd
@@ -77,6 +78,7 @@ def record_and_send(transcriber, stop_event):
     with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, blocksize=CHUNK_SIZE, dtype="int16") as stream:
         while not stop_event.is_set():
             chunks = []
+
             silent_chunks = 0
             active = False
 

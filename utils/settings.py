@@ -15,6 +15,10 @@ _DEFAULT_SETTINGS = {
     "show_exit_confirmation": True,      # 退出时显示确认弹窗：True=显示，False=不显示
     "font_size": 12,                     # 聊天字体大小（像素）
     "note_file_path": "",                # 小纸条文件路径（空表示使用默认路径）
+    "standby_auto_send": True,           # 待机自动发送：True=说完自动发，False=仅结束词
+    "standby_auto_send_delay": 5,        # 自动发送等待秒数（1-30）
+    "standby_end_word": "完毕",          # 结束词
+
     "tts_volume": 1.0,                   # TTS 语音音量 0.0-1.0
     "sfx_volume": 1.0,                   # 音效音量 0.0-1.0
     "music_playlist_index": 0,
@@ -121,6 +125,34 @@ class SettingsManager:
     def note_file_path(self, val: str):
         self._settings["note_file_path"] = val
         self.save()
+    # ========== 待机模式设置 ==========
+    @property
+    def standby_auto_send(self) -> bool:
+        return self._settings.get("standby_auto_send", True)
+
+    @standby_auto_send.setter
+    def standby_auto_send(self, val: bool):
+        self._settings["standby_auto_send"] = val
+        self.save()
+
+    @property
+    def standby_auto_send_delay(self) -> int:
+        return self._settings.get("standby_auto_send_delay", 5)
+
+    @standby_auto_send_delay.setter
+    def standby_auto_send_delay(self, val: int):
+        self._settings["standby_auto_send_delay"] = val
+        self.save()
+
+    @property
+    def standby_end_word(self) -> str:
+        return self._settings.get("standby_end_word", "完毕")
+
+    @standby_end_word.setter
+    def standby_end_word(self, val: str):
+        self._settings["standby_end_word"] = val
+        self.save()
+
 
     # ========== 音量设置 ==========
     @property
