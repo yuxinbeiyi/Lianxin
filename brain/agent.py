@@ -92,6 +92,9 @@ def _get_group_lock(group: str) -> threading.Lock:
 
 class AgentCore:
     def __init__(self, session_id: int = None, user_desc: str = None, disable_tools: bool = False):
+        
+        self._cancel_event = threading.Event()
+
         # 每次实例化都从文件读取最新配置，支持热重载
         cfg = get_api_config()
         self._use_local = cfg.get("use_local", False)
@@ -722,7 +725,10 @@ class AgentCore:
                 on_tool_call(name, args)
             try:
                 print(f"\n  [工具调用] {name}({json.dumps(args, ensure_ascii=False)})", flush=True)
+                if name == "run_shell":
+                    args["cancel_event"] = self._cancel_event
                 result = _exec(name, args)
+
                 preview = result[:200].replace("\n", " ") + ("..." if len(result) > 200 else "")
                 print(f"  [工具结果] {name} → {preview}\n", flush=True)
             except Exception as e:
@@ -1267,6 +1273,7 @@ class AgentCore:
                     except Exception:
                         interrupt_msg = None
                     if interrupt_msg:
+                        self._cancel_event.set()
                         print(f"  [插话] 用户: {interrupt_msg}", flush=True)
                         try:
                             reply = on_interrupt(interrupt_msg)
@@ -1276,6 +1283,7 @@ class AgentCore:
                         on_progress(reply)
                         if "[终止]" in reply:
                             return "（任务已取消）"
+                        self._cancel_event.clear() 
             else:
                 return f"（意外停止: {finish}）"
 

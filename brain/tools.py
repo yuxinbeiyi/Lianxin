@@ -3757,29 +3757,67 @@ def diff_files(file_a, file_b, context_lines=3):
     return result
 
 
-def run_shell(command, working_dir=None, timeout=60, max_output_lines=200):
-    """增强版 Shell 执行 — 借鉴 Claude Code BashTool"""
+def run_shell(command, working_dir=None, timeout=60, max_output_lines=200, cancel_event=None):
+    """增强版 Shell 执行 — 借鉴 Claude Code BashTool，支持主动中断"""
     cwd = str(Path(working_dir).expanduser().resolve()) if working_dir else None
+    proc = None
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             command, shell=True, cwd=cwd,
-            capture_output=True, text=True, timeout=timeout,
-            encoding='utf-8', errors='replace',
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding='utf-8', errors='replace',
         )
-        output_parts = [f"退出码: {result.returncode}"]
-        if result.stdout:
-            lines = result.stdout.splitlines()
-            if len(lines) > max_output_lines:
-                lines = lines[:max_output_lines]
-                lines.append(f"... (输出已截断，共 {len(result.stdout.splitlines())} 行)")
-            output_parts.append('\n'.join(lines))
-        if result.stderr:
-            output_parts.append(f"\n[stderr]\n{result.stderr[:2000]}")
+        stdout_lines = []
+        stderr_lines = []
+        start = time.time()
+
+        while proc.poll() is None:
+            now = time.time()
+            if now - start > timeout:
+                proc.kill()
+                proc.wait()
+                return f"命令超时（>{timeout}秒）：{command[:100]}..."
+            if cancel_event and cancel_event.is_set():
+                proc.kill()
+                proc.wait()
+                return f"（用户中断）命令已终止：{command[:100]}..."
+
+            line = proc.stdout.readline()
+            if line and len(stdout_lines) < max_output_lines:
+                stdout_lines.append(line.rstrip('\n\r'))
+            err_line = proc.stderr.readline()
+            if err_line:
+                stderr_lines.append(err_line.rstrip('\n\r'))
+            if not line and not err_line:
+                time.sleep(0.05)
+
+        # 读完剩余输出
+        remaining_stdout, remaining_stderr = proc.communicate(timeout=5)
+        for line in remaining_stdout.splitlines():
+            if len(stdout_lines) < max_output_lines:
+                stdout_lines.append(line)
+        if len(stdout_lines) >= max_output_lines:
+            stdout_lines.append(f"... (输出已截断，共 {len(stdout_lines)} 行)")
+        for line in remaining_stderr.splitlines():
+            stderr_lines.append(line)
+
+        output_parts = [f"退出码: {proc.returncode}"]
+        if stdout_lines:
+            output_parts.append('\n'.join(stdout_lines))
+        if stderr_lines:
+            output_parts.append(f"\n[stderr]\n" + '\n'.join(stderr_lines[:50]))
         return '\n'.join(output_parts)
     except subprocess.TimeoutExpired:
+        if proc:
+            proc.kill()
+            proc.wait()
         return f"命令超时（>{timeout}秒）：{command[:100]}..."
     except Exception as e:
+        if proc and proc.poll() is None:
+            proc.kill()
+            proc.wait()
         return f"命令执行失败：{e}"
+
 
 
 def git_status(repo_path=None, action="status", limit=10):
