@@ -7,7 +7,7 @@ import sys
 import os
 import ctypes
 import warnings
-
+sys.stdout.reconfigure(line_buffering=True)
 # 屏蔽 pydub/TTS 临时文件未关闭的 ResourceWarning 刷屏
 warnings.simplefilter("ignore", ResourceWarning)
 

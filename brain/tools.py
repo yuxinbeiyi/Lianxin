@@ -19,6 +19,7 @@ import fnmatch
 import difflib
 import os
 import litellm
+from brain.code_intel import goto_definition, find_references, get_diagnostics
 
 # ── 子代理可用工具白名单（第二阶段） ──────────────────────
 # delegate_task 生成的子代理只能使用这些工具
@@ -1650,6 +1651,55 @@ TOOL_DEFINITIONS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "code_goto_def",
+            "description": "跳转到 Python 函数/类/变量的定义位置。给定文件和行号，精确返回定义的文件路径、行号和代码。支持跨文件追踪（如导入的函数）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "源文件路径，如 'brain/agent.py'"},
+                    "line": {"type": "integer", "description": "光标所在行号"},
+                    "symbol": {"type": "string", "description": "要查找的符号名（可选，不传则根据行号自动推断）"},
+                    "column": {"type": "integer", "description": "光标所在列号（可选，默认 0）"}
+                },
+                "required": ["file_path", "line"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "code_find_refs",
+            "description": "查找 Python 函数/类/变量在项目中的所有引用位置（调用处、赋值处等），返回精确的文件路径和行号列表。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "源文件路径"},
+                    "line": {"type": "integer", "description": "符号定义所在行号"},
+                    "symbol": {"type": "string", "description": "要查找引用的符号名（可选）"},
+                    "column": {"type": "integer", "description": "符号定义所在列号（可选，默认 0）"}
+                },
+                "required": ["file_path", "line"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "code_diagnostics",
+            "description": "检查 Python 文件的语法错误、未使用变量、重复定义等问题。修改代码后建议调用此工具验证。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "要检查的 Python 文件路径"}
+                },
+                "required": ["file_path"]
+            }
+        }
+    },
+
 
 ]
 
@@ -4160,6 +4210,10 @@ TOOL_EXECUTORS = {
     "notebook_write": lambda inp: _notebook_exec("write", inp),
     "notebook_read": lambda inp: _notebook_exec("read", inp),
     "notebook_delete": lambda inp: _notebook_exec("delete", inp),
+    "code_goto_def":    lambda inp: goto_definition(inp["file_path"], inp["line"], inp.get("symbol", ""), inp.get("column", 0)),
+    "code_find_refs":   lambda inp: find_references(inp["file_path"], inp["line"], inp.get("symbol", ""), inp.get("column", 0)),
+    "code_diagnostics": lambda inp: get_diagnostics(inp["file_path"]),
+
 }
 
 

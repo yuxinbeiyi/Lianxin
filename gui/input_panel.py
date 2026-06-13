@@ -101,6 +101,9 @@ TOOL_GROUP_MAP = {
     "notebook_write": "📝 草稿本",
     "notebook_read": "📝 草稿本",
     "notebook_delete": "📝 草稿本",
+    "code_goto_def": "🔍 代码搜索",
+    "code_find_refs": "🔍 代码搜索",
+    "code_diagnostics": "🔍 代码搜索",
 
     "describe_image": "🔍 视觉理解",
     # 系统命令类
@@ -160,6 +163,9 @@ TOOL_ALIASES = {
     "notebook_write": ["写入草稿", "保存草稿", "记录笔记"],
     "notebook_read": ["读取草稿", "查看草稿", "列出笔记"],
     "notebook_delete": ["删除草稿", "清除笔记", "移除记录"],
+    "code_goto_def": ["跳转定义", "查看定义", "在哪定义", "函数定义"],
+    "code_find_refs": ["查找引用", "谁调用了", "哪用了", "引用位置"],
+    "code_diagnostics": ["检查代码", "代码诊断", "语法检查", "错误检查"],
 
 
 
