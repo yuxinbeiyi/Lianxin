@@ -1324,7 +1324,7 @@ class AgentCore:
             return text
         return text.translate(str.maketrans({
             "ｊ": "{", "ｋ": "}", "：": ":",
-            "，": ",", "“": '"', "”": '"',
+            "“": "'", "”": "'",
             "‘": "'", "’": "'",
             "［": "[", "］": "]",
         }))

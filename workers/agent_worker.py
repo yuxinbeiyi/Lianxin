@@ -29,6 +29,7 @@ class AgentWorker(QThread):
     response_ready = pyqtSignal(str)
     progress_update = pyqtSignal(str)   # 插话进度回复（仅追加文字，不改动画状态）
     tool_called    = pyqtSignal(str)
+    tool_result    = pyqtSignal(str, str)  # 工具执行结果 (name, preview)
     error_occurred = pyqtSignal(str)
 
     def __init__(self, agent: AgentCore, message: str, parent=None,
@@ -71,9 +72,15 @@ class AgentWorker(QThread):
             def on_tool_call(name, args):
                 self.tool_called.emit(name)
 
+            def on_tool_result(name, result):          # ← 新增
+                preview = result[:80].replace("\n", " ")
+                preview += ("…" if len(result) > 80 else "")
+                self.tool_result.emit(name, preview)
+
             response = self.agent.chat(
                 self.message,
                 on_tool_call=on_tool_call,
+                on_tool_result=on_tool_result,
                 forced_tool=self.forced_tool,
                 disable_tools=self.disable_tools,
                 interrupt_queue=self.interrupt_queue,

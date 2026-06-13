@@ -296,6 +296,8 @@ class MainWindow(QMainWindow):
         self._agent_worker.response_ready.connect(self._on_ai_response)
         self._agent_worker.progress_update.connect(self._on_progress_update)
         self._agent_worker.tool_called.connect(self._on_tool_called)
+        self._agent_worker.tool_result.connect(self._on_tool_result)
+
         self._agent_worker.error_occurred.connect(self._on_error)
         self._agent_worker.start()
         self._input_panel.show_interrupt_bar(self._agent_worker)
@@ -870,18 +872,19 @@ class MainWindow(QMainWindow):
         self._agent_worker.start()
         self._input_panel.show_interrupt_bar(self._agent_worker)
 
-
-
-
-
     def _on_tool_called(self, tool_name: str):
         if tool_name == "speak_voice":
-            self._speak_voice_used = True  # 标记已语音播报，后面不再重复播放
+            self._speak_voice_used = True
         self._chat_widget.show_thinking(tool_name)
-        # 标记需要播放抱胸动画，等思考结束后再播放
+        self._task_progress.set_subtitle(f"🔧 {tool_name} 执行中…")
         self._pending_arms_cross = random.random() < 0.03
         if self._galgame_visible and self._galgame_dialog:
             self._galgame_dialog.show_thinking()
+
+    def _on_tool_result(self, tool_name: str, preview: str):
+        """工具执行完毕，更新进度条副标题显示结果摘要"""
+        self._task_progress.set_subtitle(f"✅ {tool_name} → {preview}")
+
 
     def _on_progress_update(self, text: str):
         """收到插话进度回复（流式文本不显示在聊天界面）。"""
@@ -895,6 +898,8 @@ class MainWindow(QMainWindow):
 
 
     def _on_ai_response(self, text: str):
+        from brain.task_tracker import get_task_tracker
+        get_task_tracker().clear()
         self._input_panel.hide_interrupt_bar()
         # 先结束思考（如果是非待机模式，会播放放下手机动画；如果是待机模式，则什么都不做）
         if self._standby_state != "STANDBY":
