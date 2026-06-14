@@ -42,7 +42,7 @@ class _HourRow(QWidget):
         time_lbl = QLabel(_HOUR_LABELS[hour])
         time_lbl.setFixedWidth(44)
         time_lbl.setFont(QFont("Microsoft YaHei UI", 8))
-        time_lbl.setStyleSheet("color: #555555;")
+     
         layout.addWidget(time_lbl)
 
         self._slider = QSlider(Qt.Horizontal)
@@ -108,7 +108,7 @@ class ProactiveDialog(QDialog):
         self.setMinimumSize(460, 480)
         self.setModal(True)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setStyleSheet("background-color: #F8F8FC;")
+        
 
         self._build_ui()
         self._load_from_scheduler()
@@ -129,35 +129,18 @@ class ProactiveDialog(QDialog):
         # 标题 + 描述
         title = QLabel("主动聊天设置")
         title.setFont(QFont("Microsoft YaHei UI", 13, QFont.Bold))
-        title.setStyleSheet("color: #3A3A5C;")
+        
         root.addWidget(title)
 
         desc = QLabel("莲心会在设定的时间段内随机主动给你发消息。")
         desc.setFont(QFont("Microsoft YaHei UI", 9))
-        desc.setStyleSheet("color: #777777;")
+        
         root.addWidget(desc)
 
         # ── 选项卡 ──
         tab = QTabWidget()
         tab.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #D8D8EE;
-                border-radius: 6px;
-                background: #F8F8FC;
-            }
-            QTabBar::tab {
-                background: #ECEEF6;
-                color: #555555;
-                padding: 6px 20px;
-                font-size: 9pt;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                margin-right: 2px;
-            }
             QTabBar::tab:selected {
-                background: #F8F8FC;
-                color: #3A3A5C;
-                font-weight: bold;
                 border-bottom: 2px solid #6C7BFF;
             }
         """)
@@ -210,8 +193,8 @@ class ProactiveDialog(QDialog):
         btn_cancel.setCursor(Qt.PointingHandCursor)
         btn_cancel.setStyleSheet("""
             QPushButton {
-                background-color: #F0F0F8;
-                color: #555555;
+                background-color: #1E1E30;
+               
                 border-radius: 8px;
                 border: 1px solid #D8D8EE;
             }
@@ -258,7 +241,7 @@ class ProactiveDialog(QDialog):
         qq_row = QHBoxLayout()
         qq_lbl = QLabel("启用QQ主动聊天")
         qq_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-        qq_lbl.setStyleSheet("color: #555555;")
+      
         qq_row.addWidget(qq_lbl)
         qq_row.addStretch()
         self._qq_cb = QCheckBox()
@@ -332,12 +315,12 @@ class ProactiveDialog(QDialog):
 
         # 实时概率显示
         prob_frame = QFrame()
-        prob_frame.setStyleSheet("background-color: #F0F2F7; border-radius: 8px;")
+        prob_frame.setStyleSheet("background-color: #1E1E30; border-radius: 8px;")
         prob_inner = QHBoxLayout(prob_frame)
         prob_inner.setContentsMargins(16, 10, 16, 10)
         self._prob_label = QLabel()
         self._prob_label.setFont(QFont("Microsoft YaHei UI", 9))
-        self._prob_label.setStyleSheet("color: #5060DD;")
+        self._prob_label.setStyleSheet("color: #A0B0FF;")
         prob_inner.addWidget(self._prob_label)
         layout.addWidget(prob_frame)
 
@@ -363,7 +346,7 @@ class ProactiveDialog(QDialog):
         int_row = QHBoxLayout()
         int_lbl = QLabel("两次主动消息最小间隔（分钟）")
         int_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-        int_lbl.setStyleSheet("color: #555555;")
+       
         int_row.addWidget(int_lbl)
         int_row.addStretch()
         self._interval_spin = QSpinBox()
@@ -376,7 +359,7 @@ class ProactiveDialog(QDialog):
         defer_row = QHBoxLayout()
         defer_lbl = QLabel("用户发消息后推迟时间（分钟）")
         defer_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-        defer_lbl.setStyleSheet("color: #555555;")
+   
         defer_row.addWidget(defer_lbl)
         defer_row.addStretch()
         self._defer_spin = QSpinBox()
@@ -458,7 +441,7 @@ class ProactiveDialog(QDialog):
             '然后基于看到的东西调皮地跟你打招呼。'
         )
         hint.setFont(QFont("Microsoft YaHei UI", 9))
-        hint.setStyleSheet("color: #777777;")
+     
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -484,7 +467,7 @@ class ProactiveDialog(QDialog):
         scr_row = QHBoxLayout()
         scr_lbl = QLabel("截图概率（每小时）")
         scr_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-        scr_lbl.setStyleSheet("color: #555555;")
+        
         scr_row.addWidget(scr_lbl)
         scr_row.addStretch()
         self._scr_slider = QSlider(Qt.Horizontal)
@@ -505,7 +488,7 @@ class ProactiveDialog(QDialog):
         cam_row = QHBoxLayout()
         cam_lbl = QLabel("摄像头概率（每小时）")
         cam_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-        cam_lbl.setStyleSheet("color: #555555;")
+         
         cam_row.addWidget(cam_lbl)
         cam_row.addStretch()
         self._cam_slider = QSlider(Qt.Horizontal)
@@ -526,7 +509,7 @@ class ProactiveDialog(QDialog):
         params_row = QHBoxLayout()
         cam_wait_lbl = QLabel("等待")
         cam_wait_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-        cam_wait_lbl.setStyleSheet("color: #555555;")
+        
         params_row.addWidget(cam_wait_lbl)
         self._cam_wait_spin = QSpinBox()
         self._cam_wait_spin.setRange(3, 30)
@@ -539,7 +522,7 @@ class ProactiveDialog(QDialog):
         cam_select_row = QHBoxLayout()
         cam_sel_lbl = QLabel("使用摄像头")
         cam_sel_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-        cam_sel_lbl.setStyleSheet("color: #555555;")
+       
         cam_select_row.addWidget(cam_sel_lbl)
         self._cam_combo = QComboBox()
         self._cam_combo.setMinimumWidth(180)
@@ -570,7 +553,7 @@ class ProactiveDialog(QDialog):
         qq_row.addWidget(self._obs_qq_cb)
         qq_lbl = QLabel("观察消息同时发送到 QQ")
         qq_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-        qq_lbl.setStyleSheet("color: #555555;")
+    
         qq_row.addWidget(qq_lbl)
         qq_row.addStretch()
         layout.addLayout(qq_row)

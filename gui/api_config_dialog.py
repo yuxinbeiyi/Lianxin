@@ -81,7 +81,7 @@ class ApiConfigDialog(QDialog):
         self.setWindowTitle("API 配置")
         self.setFixedWidth(560)
         self.setModal(True)
-        self.setStyleSheet("background-color: #F8F8FC;")
+        
         self._test_worker: _TestWorker | None = None
         self._build_ui()
         self._load()
@@ -118,20 +118,19 @@ class ApiConfigDialog(QDialog):
         tabs.setFont(QFont("Microsoft YaHei UI", 9))
         tabs.setStyleSheet("""
             QTabWidget::pane {
-                border: 1px solid #D8D8EE;
-                border-radius: 8px;
-                background-color: #FFFFFF;
-                padding: 0px;
+                border: 1px solid #3D3D5A;
+                border-radius: 6px;
+                background-color: #1E1E30;
             }
             QTabBar::tab {
-                background-color: #F0F0F8;
+                background-color: #1E1E30;
                 border: 1px solid #D8D8EE;
                 border-bottom: none;
                 border-top-left-radius: 8px;
                 border-top-right-radius: 8px;
                 padding: 8px 20px;
                 margin-right: 2px;
-                color: #666666;
+                
             }
             QTabBar::tab:selected {
                 background-color: #FFFFFF;
@@ -202,8 +201,8 @@ class ApiConfigDialog(QDialog):
         btn_cancel.setCursor(Qt.PointingHandCursor)
         btn_cancel.setStyleSheet("""
             QPushButton {
-                background-color: #F0F0F8;
-                color: #555555;
+                background-color: #1E1E30;
+                 
                 border-radius: 8px;
                 border: 1px solid #D8D8EE;
             }
@@ -248,7 +247,7 @@ class ApiConfigDialog(QDialog):
                 color: #3A3A5C;
                 spacing: 8px;
                 padding: 8px 12px;
-                background-color: #F0F0F8;
+                background-color: #1E1E30;
                 border-radius: 8px;
                 border: 1px solid #D8D8EE;
             }
@@ -264,7 +263,7 @@ class ApiConfigDialog(QDialog):
             "    注意：本地模型不支持工具调用（打开应用、文件操作等），仅限纯文本聊天。"
         )
         self._local_hint.setFont(QFont("Microsoft YaHei UI", 8))
-        self._local_hint.setStyleSheet("color: #999999; background-color: #F8F8FC; padding: 8px; border-radius: 6px;")
+        self._local_hint.setStyleSheet("color: #999999; background-color: #1E1E30; padding: 8px; border-radius: 6px;")
         self._local_hint.setWordWrap(True)
         self._local_hint.hide()
         layout.addWidget(self._local_hint)
@@ -336,6 +335,7 @@ class ApiConfigDialog(QDialog):
                 padding: 4px 8px;
                 background-color: #FFFFFF;
                 color: #2C2C2C;
+                 
             }
             QComboBox:focus { border: 1px solid #6C7BFF; }
             QComboBox::drop-down { border: none; width: 24px; }
@@ -344,6 +344,7 @@ class ApiConfigDialog(QDialog):
                 border: 1px solid #D8D8EE;
                 selection-background-color: #ECEEFF;
                 color: #2C2C2C;
+                
             }
         """)
         cloud_form.addRow("API 格式:", self._api_format_combo)
@@ -361,6 +362,7 @@ class ApiConfigDialog(QDialog):
                 padding: 4px 8px;
                 background-color: #FFFFFF;
                 color: #2C2C2C;
+              
             }
             QSpinBox:focus { border: 1px solid #6C7BFF; }
         """)
@@ -525,7 +527,7 @@ class ApiConfigDialog(QDialog):
         # 自动连接
         self._auto_enable = QCheckBox("程序启动时自动连接 QQ")
         self._auto_enable.setFont(QFont("Microsoft YaHei UI", 9))
-        self._auto_enable.setStyleSheet("color: #555555; spacing: 6px;")
+        self._auto_enable.setStyleSheet("spacing: 6px;")
         form.addRow("", self._auto_enable)
 
         layout.addLayout(form)
@@ -537,7 +539,7 @@ class ApiConfigDialog(QDialog):
             "    莲心AI 不支持也无法内置 NapCatQQ。"
         )
         help_text.setFont(QFont("Microsoft YaHei UI", 8))
-        help_text.setStyleSheet("color: #999999; background-color: #F8F8FC; padding: 8px; border-radius: 6px;")
+        help_text.setStyleSheet("color: #999999; background-color: #1E1E30; padding: 8px; border-radius: 6px;")
         help_text.setWordWrap(True)
         layout.addWidget(help_text)
 
@@ -607,7 +609,7 @@ class ApiConfigDialog(QDialog):
             "    需在 siliconflow.cn 注册并申请 API Key。"
         )
         help_text.setFont(QFont("Microsoft YaHei UI", 8))
-        help_text.setStyleSheet("color: #999999; background-color: #F8F8FC; padding: 8px; border-radius: 6px;")
+        help_text.setStyleSheet("color: #999999; background-color: #1E1E30; padding: 8px; border-radius: 6px;")
         help_text.setWordWrap(True)
         layout.addWidget(help_text)
 
@@ -654,8 +656,8 @@ class ApiConfigDialog(QDialog):
         self._show_qw_btn.setCursor(Qt.PointingHandCursor)
         self._show_qw_btn.setStyleSheet("""
             QPushButton {
-                background-color: #F0F0F8;
-                color: #555555;
+                background-color: #1E1E30;
+                
                 border-radius: 8px;
                 border: 1px solid #D8D8EE;
             }
@@ -697,6 +699,7 @@ class ApiConfigDialog(QDialog):
                 padding: 4px 10px;
                 background-color: #FFFFFF;
                 color: #2C2C2C;
+                 
             }
             QComboBox:focus { border: 1px solid #6C7BFF; }
         """)
@@ -714,7 +717,7 @@ class ApiConfigDialog(QDialog):
             "    建议开启主动提醒，莲心会在每天早上提醒你今日天气和出行建议。"
         )
         help_text.setFont(QFont("Microsoft YaHei UI", 8))
-        help_text.setStyleSheet("color: #999999; background-color: #F8F8FC; padding: 8px; border-radius: 6px;")
+        help_text.setStyleSheet("color: #999999; background-color: #1E1E30; padding: 8px; border-radius: 6px;")
         help_text.setWordWrap(True)
         layout.addWidget(help_text)
 
@@ -729,7 +732,7 @@ class ApiConfigDialog(QDialog):
 
         title = QLabel("🔍 Tavily Search AI 配置")
         title.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
-        title.setStyleSheet("color: #3A3A5C;")
+        title.setStyleSheet("color: #FFFFFF;")
         layout.addWidget(title)
 
         desc = QLabel(
@@ -762,8 +765,8 @@ class ApiConfigDialog(QDialog):
         self._show_tv_btn.setCursor(Qt.PointingHandCursor)
         self._show_tv_btn.setStyleSheet("""
             QPushButton {
-                background-color: #F0F0F8;
-                color: #555555;
+                background-color: #1E1E30;
+                
                 border-radius: 8px;
                 border: 1px solid #D8D8EE;
             }
@@ -783,7 +786,7 @@ class ApiConfigDialog(QDialog):
             "💡 提示：MCP Tavily 请求从你本地发出，绕过后端被墙限制，搜索质量优于 DuckDuckGo。"
         )
         help_text.setFont(QFont("Microsoft YaHei UI", 8))
-        help_text.setStyleSheet("color: #999999; background-color: #F8F8FC; padding: 8px; border-radius: 6px;")
+        help_text.setStyleSheet("color: #999999; background-color: #1E1E30; padding: 8px; border-radius: 6px;")
         help_text.setWordWrap(True)
         layout.addWidget(help_text)
 
@@ -829,8 +832,8 @@ class ApiConfigDialog(QDialog):
         self._show_fc_btn.setCursor(Qt.PointingHandCursor)
         self._show_fc_btn.setStyleSheet("""
             QPushButton {
-                background-color: #F0F0F8;
-                color: #555555;
+                background-color: #1E1E30;
+                
                 border-radius: 8px;
                 border: 1px solid #D8D8EE;
             }
@@ -850,7 +853,7 @@ class ApiConfigDialog(QDialog):
             "💡 提示：Firecrawl 将网页转为 LLM 友好的 Markdown，自动去除广告和噪音。"
         )
         help_text.setFont(QFont("Microsoft YaHei UI", 8))
-        help_text.setStyleSheet("color: #999999; background-color: #F8F8FC; padding: 8px; border-radius: 6px;")
+        help_text.setStyleSheet("color: #999999; background-color: #1E1E30; padding: 8px; border-radius: 6px;")
         help_text.setWordWrap(True)
         layout.addWidget(help_text)
 
@@ -938,6 +941,7 @@ class ApiConfigDialog(QDialog):
                 padding: 4px 10px;
                 background-color: #FFFFFF;
                 color: #2C2C2C;
+                 
             }
             QLineEdit:focus { border: 1px solid #6C7BFF; }
         """)

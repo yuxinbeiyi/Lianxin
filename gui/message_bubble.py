@@ -28,6 +28,7 @@ class MessageBubble(QWidget):
 
         # 用容器包裹 label，容器控制最大宽度，label 在容器内自由伸展
         bubble = QWidget()
+        bubble.setAttribute(Qt.WA_StyledBackground, True)
         bubble.setMaximumWidth(520)
         bubble.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Preferred)
 
@@ -50,11 +51,12 @@ class MessageBubble(QWidget):
         if self.is_user:
             bubble.setStyleSheet("""
                 QWidget {
-                    background-color: #6C7BFF;
+                    background-color: #2D2D3F;
                     border-radius: 14px;
+                    border: 1px solid #3D3D5A;
                 }
                 QLabel {
-                    color: #FFFFFF;
+                    color: #E0E0E0;
                     padding: 10px 16px;
                     background: transparent;
                 }
@@ -64,12 +66,12 @@ class MessageBubble(QWidget):
         else:
             bubble.setStyleSheet("""
                 QWidget {
-                    background-color: #FFFFFF;
+                    background-color: #2D2D3F;
                     border-radius: 14px;
-                    border: 1px solid #E8E8E8;
+                    border: 1px solid #3D3D5A;
                 }
                 QLabel {
-                    color: #2C2C2C;
+                    color: #E0E0E0;
                     padding: 10px 16px;
                     background: transparent;
                 }
@@ -101,6 +103,7 @@ class ImageMessageBubble(QWidget):
         outer.setSpacing(0)
 
         bubble = QWidget()
+        bubble.setAttribute(Qt.WA_StyledBackground, True)
         bubble.setMaximumWidth(320)
         bubble.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Preferred)
 
@@ -141,9 +144,9 @@ class ImageMessageBubble(QWidget):
             
             # 根据发送者设置文字颜色
             if self._sender == "user":
-                self._text_label.setStyleSheet("color: #E0E0FF; background: transparent; padding: 2px 0;")
+                self._text_label.setStyleSheet("background: transparent; padding: 2px 0;")
             else:
-                self._text_label.setStyleSheet("color: #555555; background: transparent; padding: 2px 0;")
+                self._text_label.setStyleSheet("background: transparent; padding: 2px 0;")
             
             inner.addWidget(self._text_label)
 
@@ -171,10 +174,11 @@ class ImageMessageBubble(QWidget):
         if self._sender == "user":
             bubble.setStyleSheet("""
                 QWidget {
-                    background-color: #6C7BFF;
+                    background-color: #1ABC9C;
                     border-radius: 14px;
                 }
                 QLabel {
+                    color: #FFFFFF;
                     background: transparent;
                 }
             """)
@@ -183,11 +187,12 @@ class ImageMessageBubble(QWidget):
         else:
             bubble.setStyleSheet("""
                 QWidget {
-                    background-color: #FFFFFF;
+                    background-color: #2D2D3F;
                     border-radius: 14px;
-                    border: 1px solid #E8E8E8;
+                    border: 1px solid #3D3D5A;
                 }
                 QLabel {
+                    color: #E0E0E0;
                     background: transparent;
                 }
             """)

@@ -91,12 +91,7 @@ class ReminderDialog(QDialog):
 
         # 样式优化
         self.setStyleSheet("""
-            QDialog { background-color: #FFF8E7; }
-            QListWidget { background-color: #FFFFFF; outline: none; }
-            QListWidget::item { padding: 8px; border-bottom: 1px solid #E0E0E8; color: #000000; }
             QListWidget::item:selected { background-color: #FFD966; color: #000000; }
-            QPushButton { background-color: #E8E8F0; border-radius: 5px; padding: 5px; color: #000000; }
-            QPushButton:hover { background-color: #D0D0E0; }
         """)
 
     def _on_global_smart_changed(self):

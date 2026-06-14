@@ -78,7 +78,7 @@ class CharacterWidget(QWidget):
 
 
     def _build_ui(self):
-        self.setStyleSheet("background-color: rgba(232, 235, 245, 180); border-right: 1px solid rgba(208, 212, 232, 150);")
+        self.setStyleSheet("background: transparent; border-right: 1px solid rgba(255,255,255,30);")
 
         main_layout = QVBoxLayout(self)
         main_layout.setAlignment(Qt.AlignCenter)
@@ -90,9 +90,9 @@ class CharacterWidget(QWidget):
         gif_wrapper.setFixedSize(270, 430)
         gif_wrapper.setStyleSheet("""
             QWidget {
-                background-color: rgba(240, 242, 250, 200);
+                background-color: rgba(30, 30, 45, 200);
                 border-radius: 16px;
-                border: 2px solid rgba(200, 204, 238, 150);
+                border: 2px solid rgba(80, 80, 110, 150);
             }
         """)
         wrapper_layout = QVBoxLayout(gif_wrapper)

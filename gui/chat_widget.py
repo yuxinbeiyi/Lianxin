@@ -25,28 +25,12 @@ class ChatWidget(QScrollArea):
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background-color: rgba(240, 242, 247, 75);
-            }
-            QScrollBar:vertical {
-                width: 12px;
-                background: #E0E0E0;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical {
-                background: #333333;
-                border-radius: 6px;
-                min-height: 50px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #1A1A1A;
-            }
-        """)
+# 原代码（第 28-49 行）：
+        self.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         self._container = QWidget()
-        self._container.setStyleSheet("background-color: rgba(240, 242, 247, 120);")
+        self._container.setStyleSheet("background: transparent;")
+
         self._layout = QVBoxLayout(self._container)
         self._layout.setAlignment(Qt.AlignTop)
         self._layout.setSpacing(6)
@@ -56,7 +40,7 @@ class ChatWidget(QScrollArea):
 
         self._thinking_label = QLabel("  莲心思考中...")
         self._thinking_label.setFont(QFont("Microsoft YaHei UI", 10))
-        self._thinking_label.setStyleSheet("color: #000000; padding: 4px 16px; background: transparent;")
+        self._thinking_label.setStyleSheet("padding: 4px 16px; background: transparent;")
         self._thinking_label.hide()
         self._layout.addWidget(self._thinking_label)
 
@@ -97,7 +81,7 @@ class ChatWidget(QScrollArea):
         label = QLabel(text)
         label.setAlignment(Qt.AlignCenter)
         label.setFont(QFont("Microsoft YaHei UI", 10))
-        label.setStyleSheet("color: #000000; background: transparent; padding: 2px;")
+        label.setStyleSheet("background: transparent; padding: 2px;")
         self._layout.insertWidget(self._layout.count() - 1, label)
 
     def add_user_image(self, image_path: str, ocr_text: str = "", full_text: str = ""):
@@ -121,7 +105,7 @@ class ChatWidget(QScrollArea):
             label.setAlignment(Qt.AlignCenter)
             label.setFont(QFont("Microsoft YaHei UI", 10))
             label.setStyleSheet(
-                "color: #000000; background: transparent; padding: 8px 0px 2px 0px;"
+                "background: transparent; padding: 8px 0px 2px 0px;"
             )
             self._layout.insertWidget(self._layout.count() - 1, label)
         self._last_message_time = now

@@ -39,7 +39,7 @@ class SettingsDialog(QDialog):
         self.setMinimumSize(540, 780)
         self.resize(580, 800)
         self.setModal(True)
-        self.setStyleSheet("background-color: #F8F8FC;")
+    
         self._build_ui()
         self._load_from_settings()
 
@@ -52,29 +52,18 @@ class SettingsDialog(QDialog):
         # 标题
         title = QLabel("⚙️ 全局设置")
         title.setFont(QFont("Microsoft YaHei UI", 14, QFont.Bold))
-        title.setStyleSheet("color: #3A3A5C;")
+        
         layout.addWidget(title)
 
         # 分割线
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("background-color: #E0E0E8; max-height: 1px;")
+        line.setStyleSheet("background-color: #3D3D5A; max-height: 1px;")
         layout.addWidget(line)
 
         # ========== 选项卡 ==========
         tab_widget = QTabWidget()
         tab_widget.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #D8D8E8;
-                border-radius: 8px;
-                background: #F8F8FC;
-            }
-            QTabBar::tab {
-                background: #F0F0F8;
-                border-radius: 6px;
-                padding: 6px 12px;
-                margin: 4px;
-            }
             QTabBar::tab:selected {
                 background: #6C7BFF;
                 color: white;
@@ -182,13 +171,13 @@ class SettingsDialog(QDialog):
         self._font_value_label = QLabel("12")
         self._font_value_label.setFixedWidth(30)
         self._font_value_label.setAlignment(Qt.AlignCenter)
-        self._font_value_label.setStyleSheet("color: #5060DD; font-weight: bold;")
+        self._font_value_label.setStyleSheet("color: #A0B0FF; font-weight: bold;")
         slider_layout_font.addWidget(self._font_value_label)
 
         font_layout.addLayout(slider_layout_font)
         font_tip = QLabel("💡 调整聊天气泡中的文字大小（10-20px）")
         font_tip.setFont(QFont("Microsoft YaHei UI", 8))
-        font_tip.setStyleSheet("color: #888888;")
+        
         font_layout.addWidget(font_tip)
         self._font_slider.valueChanged.connect(self._on_font_size_changed)
         scroll_layout.addWidget(font_frame)
@@ -216,7 +205,7 @@ class SettingsDialog(QDialog):
         note_tip = QLabel("💡 小纸条是使用待机模式时给莲心用的txt文件，请选择一个合适的路径创建’小纸条.txt’")
         note_tip.setWordWrap(True)
         note_tip.setFont(QFont("Microsoft YaHei UI", 8))
-        note_tip.setStyleSheet("color: #888888;")
+        
         note_layout.addWidget(note_tip)
         scroll_layout.addWidget(note_frame)
 
@@ -229,26 +218,13 @@ class SettingsDialog(QDialog):
         autostart_layout.addWidget(self._autostart_cb)
         autostart_tip = QLabel("启动后若检测到网络，莲心会自动发送一条问候消息（每天仅一次）")
         autostart_tip.setFont(QFont("Microsoft YaHei UI", 8))
-        autostart_tip.setStyleSheet("color: #999999;")
+    
         autostart_layout.addWidget(autostart_tip)
         scroll_layout.addWidget(autostart_frame)
 
         # 初识日期
         first_meet_group = QGroupBox("📅 初识日期")
         first_meet_group.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
-        first_meet_group.setStyleSheet("""
-            QGroupBox {
-                border: 1px solid #D8D8EE;
-                border-radius: 8px;
-                margin-top: 8px;
-                padding: 12px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 4px;
-            }
-        """)
         first_meet_layout = QVBoxLayout(first_meet_group)
         date_input_layout = QHBoxLayout()
 
@@ -310,7 +286,7 @@ class SettingsDialog(QDialog):
         self._avatar_path_edit.setPlaceholderText("选择本地图片...")
         self._avatar_path_edit.setFont(QFont("Microsoft YaHei UI", 9))
         self._avatar_path_edit.setReadOnly(True)
-        self._avatar_path_edit.setStyleSheet("background: white; border: 1px solid #D0D0E0; border-radius: 6px; padding: 4px 8px;")
+        self._avatar_path_edit.setStyleSheet("background: #1E1E30; border: 1px solid #3D3D5A; border-radius: 6px; padding: 4px 8px;")
         self._avatar_path_edit.setEnabled(False)
         path_row.addWidget(self._avatar_path_edit)
 
@@ -332,7 +308,7 @@ class SettingsDialog(QDialog):
 
         tip = QLabel("💡 选择静态头像可避免动画卡顿，节省 CPU 资源。")
         tip.setFont(QFont("Microsoft YaHei UI", 8))
-        tip.setStyleSheet("color: #888; background: #F0F0F8; padding: 8px; border-radius: 6px;")
+        tip.setStyleSheet("background: #1E1E30; padding: 8px; border-radius: 6px;")
         tip.setWordWrap(True)
         avatar_layout.addWidget(tip)
 
@@ -417,9 +393,9 @@ class SettingsDialog(QDialog):
         frame = QFrame()
         frame.setStyleSheet("""
             QFrame {
-                background-color: #F0F2F7;
+                background-color: #1E1E30;
                 border-radius: 8px;
-                border: 1px solid #E0E0E8;
+                border: 1px solid #3D3D5A;
             }
         """)
         return frame

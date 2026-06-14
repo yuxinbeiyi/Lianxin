@@ -22,7 +22,7 @@ class MemorySettingsDialog(QDialog):
         self.setMinimumSize(620, 480)
         self.resize(660, 540)
         self.setModal(True)
-        self.setStyleSheet("background-color: #F8F8FC;")
+        
         self._build_ui()
         self._load_from_config()
         self._all_facts = list_all_facts()
@@ -32,7 +32,7 @@ class MemorySettingsDialog(QDialog):
         frame = QFrame()
         frame.setStyleSheet("""
             QFrame {
-                background-color: #F0F2F7;
+                background-color: #1E1E30;
                 border-radius: 8px;
                 border: 1px solid #E0E0E8;
             }
@@ -47,7 +47,7 @@ class MemorySettingsDialog(QDialog):
         # 标题
         title = QLabel("🧠 记忆系统设置")
         title.setFont(QFont("Microsoft YaHei UI", 14, QFont.Bold))
-        title.setStyleSheet("color: #3A3A5C;")
+        title.setStyleSheet("color: #1ABC9C;")
         layout.addWidget(title)
 
         # 分割线
@@ -64,16 +64,17 @@ class MemorySettingsDialog(QDialog):
                 background: transparent;
             }
             QTabBar::tab {
-                background: #F0F2F7;
-                border: 1px solid #E0E0E8;
+                background: #1E1E30;
+                border: 1px solid #3D3D5A;
                 border-bottom: 0;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
+                border-radius: 6px 6px 0 0;
                 padding: 6px 14px;
-                margin-right: 4px;
+                margin-right: 2px;
+                color: #A0A0B0;
             }
             QTabBar::tab:selected {
-                background: #FFFFFF;
+                background: #2D2D3F;
+                color: #E0E0E0;
                 font-weight: bold;
             }
         """)
@@ -97,7 +98,7 @@ class MemorySettingsDialog(QDialog):
             "关闭后记忆系统仍然可用，但不会自动新增记忆。"
         )
         auto_desc.setWordWrap(True)
-        auto_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        auto_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
         auto_vbox.addWidget(auto_desc)
         tab1_layout.addWidget(auto_frame)
 
@@ -114,7 +115,7 @@ class MemorySettingsDialog(QDialog):
         interval_vbox.addWidget(self._memory_extract_interval_spin)
         interval_desc = QLabel("每完成 N 轮对话后触发一次自动提取，间隔越小记忆越及时但也越占用Token。")
         interval_desc.setWordWrap(True)
-        interval_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        interval_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
         interval_vbox.addWidget(interval_desc)
         tab1_layout.addWidget(interval_frame)
 
@@ -131,7 +132,7 @@ class MemorySettingsDialog(QDialog):
         count_vbox.addWidget(self._memory_extract_msgs_spin)
         count_desc = QLabel("单次自动提取最多包含多少条最近消息，数值越大包含上下文越多但也越慢。")
         count_desc.setWordWrap(True)
-        count_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        count_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
         count_vbox.addWidget(count_desc)
         tab1_layout.addWidget(count_frame)
 
@@ -148,7 +149,7 @@ class MemorySettingsDialog(QDialog):
         max_vbox.addWidget(self._memory_max_items_spin)
         max_desc = QLabel("每个分类最多保留多少条记忆，超出自动淘汰最旧+强度最低的记忆。")
         max_desc.setWordWrap(True)
-        max_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        max_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
         max_vbox.addWidget(max_desc)
         tab1_layout.addWidget(max_frame)
 
@@ -173,7 +174,7 @@ class MemorySettingsDialog(QDialog):
         cat_vbox.addWidget(self._memory_default_cat_combo)
         cat_desc = QLabel("当用户要求记住某件事但没有指定分类时，默认存到哪个分类。")
         cat_desc.setWordWrap(True)
-        cat_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        cat_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
         cat_vbox.addWidget(cat_desc)
         tab1_layout.addWidget(cat_frame)
 
@@ -198,7 +199,7 @@ class MemorySettingsDialog(QDialog):
             "关闭后只使用分类事实记忆，不影响基本功能。"
         )
         graph_desc.setWordWrap(True)
-        graph_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        graph_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
         graph_vbox.addWidget(graph_desc)
         tab2_layout.addWidget(graph_frame)
 
@@ -215,7 +216,7 @@ class MemorySettingsDialog(QDialog):
             "不需要手动调用工具添加关系。"
         )
         auto_quin_desc.setWordWrap(True)
-        auto_quin_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        auto_quin_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
         auto_quin_vbox.addWidget(auto_quin_desc)
         tab2_layout.addWidget(auto_quin_frame)
 
@@ -245,7 +246,7 @@ class MemorySettingsDialog(QDialog):
             "推荐：15-25"
         )
         window_desc.setWordWrap(True)
-        window_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        window_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
         window_vbox.addWidget(window_desc)
         tab3_layout.addWidget(window_frame)
 
@@ -262,7 +263,7 @@ class MemorySettingsDialog(QDialog):
             "关闭后只保留窗口内对话，早期内容直接截断。"
         )
         summary_desc.setWordWrap(True)
-        summary_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        summary_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
         summary_vbox.addWidget(summary_desc)
         tab3_layout.addWidget(summary_frame)
 
@@ -282,7 +283,7 @@ class MemorySettingsDialog(QDialog):
             "0 = 无论多少条都压缩（适合非常短对话），推荐 20-40。"
         )
         trigger_desc.setWordWrap(True)
-        trigger_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        trigger_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
         trigger_vbox.addWidget(trigger_desc)
         tab3_layout.addWidget(trigger_frame)
 
@@ -294,7 +295,7 @@ class MemorySettingsDialog(QDialog):
             "· 原全量历史 → 30轮后 Token > 6000，持续增长"
         )
         estimate_label.setWordWrap(True)
-        estimate_label.setStyleSheet("color: #666; font-size: 11px; background: #F5F5FF; padding: 8px; border-radius: 4px;")
+        estimate_label.setStyleSheet("color: #666; font-size: 13px; background: #F5F5FF; padding: 8px; border-radius: 4px;")
         tab3_layout.addWidget(estimate_label)
 
         tab3_layout.addStretch()
@@ -313,6 +314,7 @@ class MemorySettingsDialog(QDialog):
             QLineEdit {
                 border: 1px solid #D0D0E0; border-radius: 6px;
                 padding: 6px 10px; background: #FFFFFF;
+                color: #2C2C2C;
                 font-size: 12px;
             }
         """)
@@ -336,7 +338,7 @@ class MemorySettingsDialog(QDialog):
         add_btn.setStyleSheet("""
             QPushButton {
                 background: #E8ECFF; color: #4A4A8A; border: 1px solid #C0C8E8;
-                border-radius: 6px; padding: 6px 10px; font-size: 11px;
+                border-radius: 6px; padding: 6px 10px; font-size: 13px;
             }
             QPushButton:hover { background: #D0D8FF; }
         """)
@@ -375,7 +377,9 @@ class MemorySettingsDialog(QDialog):
         self._new_content_input.setStyleSheet("""
             QTextEdit {
                 border: 1px solid #D0D0E0; border-radius: 6px;
-                padding: 6px; background: #FFFFFF; font-size: 12px;
+                padding: 6px; background: #FFFFFF;
+                color: #2C2C2C;
+                font-size: 12px;
             }
         """)
         add_form_layout.addWidget(self._new_content_input)
@@ -403,14 +407,19 @@ class MemorySettingsDialog(QDialog):
 
         # 统计标签
         self._memory_count_label = QLabel("")
-        self._memory_count_label.setStyleSheet("color: #888; font-size: 11px;")
+        self._memory_count_label.setStyleSheet("color: #888; font-size: 13px;")
         tab4_layout.addWidget(self._memory_count_label)
 
         # 可滚动记忆列表
         self._memory_scroll = QScrollArea()
         self._memory_scroll.setWidgetResizable(True)
         self._memory_scroll.setStyleSheet("""
-            QScrollArea { border: 1px solid #E0E0E8; border-radius: 8px; background: #FFFFFF; }
+            QScrollArea { border: 1px solid #E0E0E8; border-radius: 8px; background: #FFFFFF;
+                color: #2C2C2C;
+                font-size: 12px;
+            }
+            QScrollArea::vertical { background: transparent; }
+            QScrollArea::horizontal { background: transparent; }
         """)
         self._memory_list_widget = QWidget()
         self._memory_list_layout = QVBoxLayout(self._memory_list_widget)
@@ -556,15 +565,15 @@ class MemorySettingsDialog(QDialog):
                 # 左侧：内容
                 content_label = QLabel(content)
                 content_label.setWordWrap(True)
-                content_label.setStyleSheet("border: 0; background: transparent; font-size: 14px;")
+                content_label.setStyleSheet("border: 0; background: transparent; font-size: 15px; color: #2C2C2C; font-weight: bold;")
                 row_layout.addWidget(content_label, 1)
 
                 # 右侧：元信息
-                meta = f"<span style='color:#888;'>强度:{strength} · {source}</span>"
+                meta = f"<span style='color:#555;'>强度:{strength} · {source}</span>"
                 if created:
-                    meta += f"<span style='color:#AAA;'> · {created}</span>"
+                    meta += f"<span style='color:#16A085;'> · {created}</span>"
                 meta_label = QLabel(meta)
-                meta_label.setStyleSheet("border: 0; background: transparent; font-size: 11px; white-space: nowrap;")
+                meta_label.setStyleSheet("border: 0; background: transparent; font-size: 13px; white-space: nowrap;")
                 row_layout.addWidget(meta_label)
 
                 # 删除按钮
@@ -574,7 +583,7 @@ class MemorySettingsDialog(QDialog):
                 del_btn.setStyleSheet("""
                     QPushButton {
                         background: #FFE0E0; color: #CC4444; border: 0;
-                        border-radius: 11px; font-weight: bold; font-size: 11px;
+                        border-radius: 11px; font-weight: bold; font-size: 13px;
                     }
                     QPushButton:hover { background: #FF8888; color: #FFFFFF; }
                 """)

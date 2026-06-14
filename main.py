@@ -7,7 +7,7 @@ import sys
 import os
 import ctypes
 import warnings
-sys.stdout.reconfigure(line_buffering=True)
+
 # 屏蔽 pydub/TTS 临时文件未关闭的 ResourceWarning 刷屏
 warnings.simplefilter("ignore", ResourceWarning)
 
@@ -32,6 +32,7 @@ migrate_legacy_files()
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import Qt
+import qdarkstyle
 
 from gui.main_window import MainWindow
 
@@ -77,7 +78,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("莲心AI")
-
+    app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())   # ← 加这行
     # 全局字体
     font = QFont("Microsoft YaHei UI", 10)
     app.setFont(font)

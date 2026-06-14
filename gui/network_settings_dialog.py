@@ -32,7 +32,7 @@ class NetworkSettingsDialog(QDialog):
         self.setMinimumSize(520, 460)
         self.setStyleSheet("""
             QDialog {
-                background-color: #FAFBFF;
+                background-color: #1E1E2E;
             }
         """)
         self._build_ui()
@@ -59,18 +59,18 @@ class NetworkSettingsDialog(QDialog):
         )
         desc.setWordWrap(True)
         desc.setFont(QFont("Microsoft YaHei UI", 9))
-        desc.setStyleSheet("color: #666; background: #F5F5FF; padding: 8px; border-radius: 4px;")
+        desc.setStyleSheet("color: #1ABC9C; background: #1E1E30; padding: 8px; border-radius: 4px; border: 1px solid #3D3D5A;")
         layout.addWidget(desc)
 
         tabs = QTabWidget()
         tabs.setStyleSheet("""
             QTabWidget::pane { border: 0; background: transparent; }
             QTabBar::tab {
-                background: #F0F2F7; border: 1px solid #E0E0E8; border-bottom: 0;
-                border-top-left-radius: 6px; border-top-right-radius: 6px;
-                padding: 6px 14px; margin-right: 4px;
+                background: #1E1E30; border: 1px solid #3D3D5A; border-bottom: 0;
+                border-radius: 6px 6px 0 0; padding: 6px 14px; margin-right: 2px;
+                color: #A0A0B0;
             }
-            QTabBar::tab:selected { background: #FFFFFF; font-weight: bold; }
+            QTabBar::tab:selected { background: #2D2D3F; color: #E0E0E0; font-weight: bold; }
         """)
         layout.addWidget(tabs)
 
@@ -145,9 +145,8 @@ class NetworkSettingsDialog(QDialog):
         self._tv_key_edit.setEchoMode(QLineEdit.Password)
         self._tv_key_edit.setFont(QFont("Consolas", 10))
         self._tv_key_edit.setStyleSheet("""
-            QLineEdit {
-                border: 1px solid #D0D0E0; border-radius: 6px;
-                padding: 6px 10px; background: #FFFFFF;
+            QLineEdit { border: 1px solid #D8D8E8; border-radius: 6px;
+                padding: 6px 10px; background: #FFFFFF; color: #2C2C2C;
             }
             QLineEdit:focus { border-color: #6C7BFF; }
         """)
@@ -169,7 +168,7 @@ class NetworkSettingsDialog(QDialog):
             "💡 提示：MCP Tavily 请求从你本地发出，绕过后端被墙限制，搜索质量优于 DuckDuckGo。"
         )
         help_text.setFont(QFont("Microsoft YaHei UI", 8))
-        help_text.setStyleSheet("color: #999999; background-color: #F8F8FC; padding: 8px; border-radius: 6px;")
+        help_text.setStyleSheet("color: #999999; background-color: #1E1E30; padding: 8px; border-radius: 6px;")
         help_text.setWordWrap(True)
         layout.addWidget(help_text)
         layout.addStretch()

@@ -33,7 +33,7 @@ class QqSettingsDialog(QDialog):
         # ── QQ 桥接开关 ──────────────────────────────────────
         bridge_frame = QFrame()
         bridge_frame.setFrameShape(QFrame.StyledPanel)
-        bridge_frame.setStyleSheet("QFrame { background-color: #F8F9FF; border-radius: 8px; }")
+        bridge_frame.setStyleSheet("QFrame { background-color: #1E1E30; border-radius: 8px; }")
         bridge_layout = QHBoxLayout(bridge_frame)
 
         self._bridge_status = QLabel("QQ 桥接: 未连接")

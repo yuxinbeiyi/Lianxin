@@ -197,17 +197,15 @@ class ToolSelectionDialog(QDialog):
         # 样式表（包含QMenu样式，解决右键菜单文字消失）
         self.setStyleSheet("""
             QDialog {
-                background-color: #FFFFFF;
                 border-radius: 8px;
             }
             QListWidget, QTreeWidget {
-                border: 1px solid #DDDDDD;
+                border: 1px solid #3D3D5A;
                 border-radius: 6px;
                 padding: 4px;
                 outline: none;
                 font-size: 10pt;
                 font-family: "Microsoft YaHei UI";
-                background-color: #FFFFFF;
             }
             QListWidget::item, QTreeWidget::item {
                 padding: 8px 12px;
@@ -232,7 +230,7 @@ class ToolSelectionDialog(QDialog):
             }
             QMenu::item {
                 background-color: transparent;
-                color: #333333;
+                color: #E0E0E0;
                 padding: 6px 24px 6px 12px;
                 margin: 2px;
                 border-radius: 4px;
@@ -253,14 +251,14 @@ class ToolSelectionDialog(QDialog):
                 background-color: #5A6AEE;
             }
             QPushButton#cancel_btn {
-                background-color: #F0F0F0;
-                color: #333333;
+                background-color: #3D3D5A;
+                color: #E0E0E0;
             }
             QPushButton#cancel_btn:hover {
-                background-color: #E0E0E0;
+                background-color: #4D4D6A;
             }
             QLineEdit {
-                border: 1px solid #DDDDDD;
+                border: 1px solid #3D3D5A;
                 border-radius: 6px;
                 padding: 8px 10px;
                 font-size: 10pt;
@@ -271,7 +269,6 @@ class ToolSelectionDialog(QDialog):
             QCheckBox {
                 font-size: 10pt;
                 spacing: 6px;
-                color: #333333;
             }
         """)
 
@@ -621,8 +618,8 @@ class InputPanel(QWidget):
     def _build_ui(self):
         self.setStyleSheet("""
             QWidget {
-                background-color: rgba(255, 255, 255, 200);
-                border-top: 1px solid rgba(224, 224, 232, 150);
+                background: transparent;
+                border-top: 1px solid rgba(255, 255, 255, 30);
             }
         """)
 
@@ -634,7 +631,7 @@ class InputPanel(QWidget):
         # ── 图片预览栏 ──
         self._image_preview = QWidget()
         self._image_preview.setVisible(False)
-        self._image_preview.setStyleSheet("background-color: #F0F2F5; border-bottom: 1px solid #E0E0E8;")
+        self._image_preview.setStyleSheet("background-color: #1E1E30; border-bottom: 1px solid #3D3D5A;")
         self._image_preview.setMaximumHeight(72)
         self._image_preview_layout = QHBoxLayout(self._image_preview)
         self._image_preview_layout.setContentsMargins(12, 6, 12, 6)
@@ -682,17 +679,17 @@ class InputPanel(QWidget):
         self._input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._input.setStyleSheet("""
             QTextEdit {
-                border: 1px solid #D8D8E8;
+                border: 2px solid #FFB347;
                 border-radius: 10px;
                 padding: 8px 12px;
-                background-color: #F8F8FC;
-                color: #2C2C2C;
+                background-color: #2D2A20;
+                color: #E0E0E0;
                 font-size: 12pt;
                 font-family: "Microsoft YaHei UI";
             }
             QTextEdit:focus {
-                border: 1px solid #6C7BFF;
-                background-color: #FFFFFF;
+                border: 2px solid #6C7BFF;
+                background-color: #252540;
             }
         """)
         self._input.enter_pressed.connect(self._on_send)
@@ -745,7 +742,7 @@ class InputPanel(QWidget):
         self._btn_clear.setStyleSheet("""
             QPushButton {
                 background-color: #F0F0F0;
-                color: #666666;
+
                 border-radius: 8px;
                 border: 1px solid #DDDDDD;
             }
@@ -813,7 +810,6 @@ class InputPanel(QWidget):
         self._auto_send_cb.setCursor(Qt.PointingHandCursor)
         self._auto_send_cb.setStyleSheet("""
             QCheckBox {
-                color: #555555;
                 spacing: 6px;
                 font-size: 9pt;
             }
@@ -891,33 +887,33 @@ class InputPanel(QWidget):
             self._input.setFocus()
             self._input.setStyleSheet("""
                 QTextEdit {
-                    border: 1px solid #D8D8E8;
+                    border: 1px solid #3D3D5A;
                     border-radius: 10px;
                     padding: 8px 12px;
-                    background-color: #F8F8FC;
-                    color: #2C2C2C;
+                    background-color: #1E1E30;
+                    color: #E0E0E0;
                     font-size: 12pt;
                     font-family: "Microsoft YaHei UI";
                 }
                 QTextEdit:focus {
                     border: 1px solid #6C7BFF;
-                    background-color: #FFFFFF;
+                    background-color: #252540;
                 }
             """)
         else:
             self._input.setStyleSheet("""
                 QTextEdit {
-                    border: 1px solid #D8D8E8;
+                    border: 1px solid #3D3D5A;
                     border-radius: 10px;
                     padding: 8px 12px;
-                    background-color: #F8F8FC;
-                    color: #888888;
+                    background-color: #1E1E30;
+                    color: #707070;
                     font-size: 12pt;
                     font-family: "Microsoft YaHei UI";
                 }
                 QTextEdit:focus {
                     border: 1px solid #6C7BFF;
-                    background-color: #FFFFFF;
+                    background-color: #252540;
                 }
             """)
 
@@ -982,8 +978,8 @@ class InputPanel(QWidget):
                 border: 2px solid #FFB347;
                 border-radius: 10px;
                 padding: 8px 12px;
-                background-color: #FFF8E7;
-                color: #2C2C2C;
+                background-color: #2D2A20;
+                color: #E0E0E0;
                 font-size: 12pt;
                 font-family: "Microsoft YaHei UI";
             }
@@ -997,17 +993,17 @@ class InputPanel(QWidget):
     def _clear_highlight(self):
         self._input.setStyleSheet("""
             QTextEdit {
-                border: 1px solid #D8D8E8;
+                border: 1px solid #3D3D5A;
                 border-radius: 10px;
                 padding: 8px 12px;
-                background-color: #F8F8FC;
-                color: #2C2C2C;
+                background-color: #1E1E30;
+                color: #E0E0E0;
                 font-size: 12pt;
                 font-family: "Microsoft YaHei UI";
             }
             QTextEdit:focus {
                 border: 1px solid #6C7BFF;
-                background-color: #FFFFFF;
+                background-color: #252540;
             }
         """)
 

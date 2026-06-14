@@ -79,7 +79,13 @@ class HistoryDialog(QDialog):
 
         self.setWindowTitle("历史对话记录")
         self.resize(960, 620)
-        self.setStyleSheet("background-color: #F5F6FA;")
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #1E1E2E;
+                border: 2px solid #1ABC9C;
+                border-radius: 8px;
+            }
+        """)
         self._build_ui()
         self._load_sessions()
 
@@ -115,31 +121,33 @@ class HistoryDialog(QDialog):
         self._search_box.setPlaceholderText("搜索标题、内容、摘要…")
         self._search_box.setFont(QFont("Microsoft YaHei UI", 9))
         self._search_box.setStyleSheet("""
-            QLineEdit {
-                border: 1px solid #D8D8E8; border-radius: 6px;
-                padding: 4px 8px; background: #FFFFFF; color: #3A3A5C;
+            QLineEdit { border: 1px solid #3D3D5A; border-radius: 6px;
+                padding: 4px 8px; background: #2D2D3F; color: #E0E0E0;
             }
-            QLineEdit:focus { border-color: #6C7BFF; }
+            QLineEdit:focus { border-color: #1ABC9C; }
         """)
         self._search_box.textChanged.connect(self._on_search_changed)
         left_layout.addWidget(self._search_box)
 
         self._session_list = QListWidget()
-        self._session_list.setFont(QFont("Microsoft YaHei UI", 9))
         self._session_list.setStyleSheet("""
             QListWidget {
-                border: 1px solid #D8D8E8; border-radius: 8px;
-                background: #FFFFFF; outline: none;
+                background: #1E1E2E;
+                border: 1px solid #3D3D5A;
+                border-radius: 6px;
+                color: #E0E0E0;
             }
             QListWidget::item {
-                padding: 8px 10px;
-                border-bottom: 1px solid #F0F0F8;
-                color: #3A3A5C;
+                padding: 8px !important;
+                color: #E0E0E0;
             }
             QListWidget::item:selected {
-                background-color: #EEF0FF; color: #5060DD;
+                background: #1ABC9C;
+                color: #1E1E2E;
             }
-            QListWidget::item:hover { background-color: #F5F6FF; }
+            QListWidget::item:hover {
+                background: #2D2D3F;
+            }
         """)
         self._session_list.currentRowChanged.connect(self._on_session_selected)
         self._session_list.itemDoubleClicked.connect(self._on_rename_session)
@@ -161,8 +169,11 @@ class HistoryDialog(QDialog):
         self._content_browser.setOpenExternalLinks(False)
         self._content_browser.setStyleSheet("""
             QTextBrowser {
-                border: 1px solid #D8D8E8; border-radius: 8px;
-                background: #FFFFFF; padding: 10px; color: #2C2C2C;
+                border: 1px solid #3D3D5A;
+                border-radius: 6px;
+                padding: 8px;
+                background: #1E1E2E;
+                color: #E0E0E0;
             }
         """)
         right_layout.addWidget(self._content_browser)
@@ -173,8 +184,8 @@ class HistoryDialog(QDialog):
         self._summary_label.setFont(QFont("Microsoft YaHei UI", 9))
         self._summary_label.setStyleSheet("""
             QLabel {
-                background: #F0F2FF; border: 1px solid #D0D4F0;
-                border-radius: 6px; padding: 6px 10px; color: #5060AA;
+                background: #1A2A3A; border: 1px solid #3D5A7A;
+                border-radius: 6px; padding: 6px 10px; color: #A0C0FF;
             }
         """)
         self._summary_label.hide()
@@ -189,27 +200,27 @@ class HistoryDialog(QDialog):
             QPushButton { background:#6C7BFF; color:white; border-radius:8px; border:none; }
             QPushButton:hover   { background:#5A6AEE; }
             QPushButton:pressed { background:#4A5ADE; }
-            QPushButton:disabled{ background:#E0E0E8; color:#AAAAAA; }"""
+            QPushButton:disabled{ background:#3D3D5A; color:#666666; }"""
         S_LIGHT = """
-            QPushButton { background:#F0F0F8; color:#5060DD; border-radius:8px; border:1px solid #C8CCF0; }
-            QPushButton:hover   { background:#E4E4F8; }
-            QPushButton:pressed { background:#D8D8EE; }
-            QPushButton:disabled{ background:#F5F5F5; color:#BBBBBB; border-color:#E0E0E8; }"""
+            QPushButton { background:#2D2D3F; color:#A0B0FF; border-radius:8px; border:1px solid #3D3D5A; }
+            QPushButton:hover   { background:#3D3D55; }
+            QPushButton:pressed { background:#4D4D65; }
+            QPushButton:disabled{ background:#2D2D3F; color:#555555; border-color:#2D2D3F; }"""
         S_RED = """
             QPushButton { background:#FF5555; color:white; border-radius:8px; border:none; }
             QPushButton:hover   { background:#EE4444; }
             QPushButton:pressed { background:#DD3333; }
-            QPushButton:disabled{ background:#E0E0E8; color:#AAAAAA; }"""
+            QPushButton:disabled{ background:#3D3D5A; color:#666666; }"""
         S_PINK = """
             QPushButton { background:#E05080; color:white; border-radius:8px; border:none; }
             QPushButton:hover   { background:#C8406A; }
             QPushButton:pressed { background:#B03060; }
-            QPushButton:disabled{ background:#E0E0E8; color:#AAAAAA; }"""
+            QPushButton:disabled{ background:#3D3D5A; color:#666666; }"""
         S_GOLD = """
             QPushButton { background:#F0A800; color:white; border-radius:8px; border:none; }
             QPushButton:hover   { background:#E09800; }
             QPushButton:pressed { background:#CC8800; }
-            QPushButton:disabled{ background:#E0E0E8; color:#AAAAAA; }"""
+            QPushButton:disabled{ background:#3D3D5A; color:#666666; }"""
 
         def btn(text, w, style, enabled=True):
             b = QPushButton(text)
@@ -355,8 +366,8 @@ class HistoryDialog(QDialog):
                     f'<div style="margin:8px 0;">'
                     f'<span style="color:#6C7BFF;font-weight:bold;">主人</span>'
                     f'<span style="color:#AAA;font-size:11px;margin-left:8px;">{time_str}</span><br>'
-                    f'<div style="background:#EEF0FF;border-radius:8px;'
-                    f'padding:8px 12px;margin-top:4px;color:#3A3A5C;">{content_html}</div>'
+                    f'<div style="background:#2D2D3F;border-radius:8px;'
+                    f'padding:8px 12px;margin-top:4px;color:#E0E0E0;">{content_html}</div>'
                     f'</div>'
                 )
             else:
@@ -364,8 +375,8 @@ class HistoryDialog(QDialog):
                     f'<div style="margin:8px 0;">'
                     f'<span style="color:#E05080;font-weight:bold;">莲心</span>'
                     f'<span style="color:#AAA;font-size:11px;margin-left:8px;">{time_str}</span><br>'
-                    f'<div style="background:#FFF0F5;border-radius:8px;'
-                    f'padding:8px 12px;margin-top:4px;color:#3A3A5C;">{content_html}</div>'
+                    f'<div style="background:#2D1A2A;border-radius:8px;'
+                    f'padding:8px 12px;margin-top:4px;color:#E0E0E0;">{content_html}</div>'
                     f'</div>'
                 )
 

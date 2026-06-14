@@ -132,7 +132,7 @@ class TodoDialog(QDialog):
                     due_str = "无效时间"
             due_lbl = QLabel(due_str)
             due_lbl.setFixedWidth(100)
-            due_lbl.setStyleSheet("color: #555555;")
+            
             layout.addWidget(due_lbl)
 
             # 标题（已完成加删除线和灰色）

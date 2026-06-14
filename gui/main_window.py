@@ -455,13 +455,13 @@ class MainWindow(QMainWindow):
         # 顶部栏：标题 + 历史按钮（半透明）
         top_bar = QWidget()
         top_bar.setFixedHeight(36)
-        top_bar.setStyleSheet("background-color: rgba(236, 238, 255, 200); border-bottom: 1px solid rgba(216, 216, 238, 150);")
+        top_bar.setStyleSheet("background: transparent; border-bottom: 1px solid rgba(255,255,255,30);")
         top_bar_layout = QHBoxLayout(top_bar)
         top_bar_layout.setContentsMargins(12, 0, 12, 0)
 
         app_label = QLabel("莲心AI")
         app_label.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
-        app_label.setStyleSheet("color: #5060DD;")
+        app_label.setStyleSheet("color: #A0B0FF;")
         top_bar_layout.addWidget(app_label)
         top_bar_layout.addStretch()
 
@@ -488,13 +488,13 @@ class MainWindow(QMainWindow):
         self._btn_new_chat.setCursor(Qt.PointingHandCursor)
         self._btn_new_chat.setStyleSheet("""
             QPushButton {
-                background-color: #F0F0F8;
-                color: #5060DD;
+                background-color: #2D2D3F;
+                color: #A0B0FF;
                 border-radius: 6px;
-                border: 1px solid #C8CCF0;
+                border: 1px solid #3D3D5A;
             }
-            QPushButton:hover  { background-color: #E4E4F8; }
-            QPushButton:pressed{ background-color: #D8D8EE; }
+            QPushButton:hover  { background-color: #3D3D55; }
+            QPushButton:pressed{ background-color: #4D4D65; }
         """)
         self._btn_new_chat.clicked.connect(self._on_new_chat_clicked)
         top_bar_layout.addWidget(self._btn_new_chat)
@@ -506,12 +506,12 @@ class MainWindow(QMainWindow):
         self._btn_diary.setCursor(Qt.PointingHandCursor)
         self._btn_diary.setStyleSheet("""
             QPushButton {
-                background-color: #F0F0F8;
-                color: #7A4A2A;
+                background-color: #2D2D3F;
+                color: #C8A060;
                 border-radius: 6px;
-                border: 1px solid #D8C8A0;
+                border: 1px solid #5A4A30;
             }
-            QPushButton:hover { background-color: #E8D8C0; }
+            QPushButton:hover { background-color: #3D3D55; }
         """)
         self._btn_diary.clicked.connect(self._open_diary_dialog)
         top_bar_layout.addWidget(self._btn_diary)
@@ -523,12 +523,12 @@ class MainWindow(QMainWindow):
         self._btn_note.setCursor(Qt.PointingHandCursor)
         self._btn_note.setStyleSheet("""
             QPushButton {
-                background-color: #F0F0F8;
-                color: #7A4A2A;
+                background-color: #2D2D3F;
+                color: #C8A060;
                 border-radius: 6px;
-                border: 1px solid #D8C8A0;
+                border: 1px solid #5A4A30;
             }
-            QPushButton:hover { background-color: #E8D8C0; }
+            QPushButton:hover { background-color: #3D3D55; }
         """)
         self._btn_note.clicked.connect(self._open_note_dialog)
         top_bar_layout.addWidget(self._btn_note)
@@ -541,13 +541,13 @@ class MainWindow(QMainWindow):
         self._btn_proactive.setToolTip("设置莲心主动发消息的时间和频率")
         self._btn_proactive.setStyleSheet("""
             QPushButton {
-                background-color: #F0F0F8;
-                color: #777777;
+                background-color: #2D2D3F;
+                color: #A0A0B0;
                 border-radius: 6px;
-                border: 1px solid #D8D8EE;
+                border: 1px solid #3D3D5A;
             }
-            QPushButton:hover  { background-color: #E4E4F0; }
-            QPushButton:pressed{ background-color: #D8D8E8; }
+            QPushButton:hover  { background-color: #3D3D55; }
+            QPushButton:pressed{ background-color: #4D4D65; }
         """)
         self._btn_proactive.clicked.connect(self._on_proactive_clicked)
         top_bar_layout.addWidget(self._btn_proactive)
@@ -627,6 +627,7 @@ class MainWindow(QMainWindow):
 
         # 聊天区（右侧）：进度条 + 滚动消息区
         right_widget = QWidget()
+        right_widget.setStyleSheet("background-color: #1E2833;")
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
@@ -695,23 +696,20 @@ class MainWindow(QMainWindow):
 
 
     def _set_background_image(self):
-        """设置主窗口半透明背景图，所有子控件背景透明"""
+        """设置主窗口半透明背景图"""
         bg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "主界面背景图.jpg")
         if os.path.exists(bg_path):
-            self.setStyleSheet(f"""
-                QMainWindow {{
+            central = self.centralWidget()
+            if central:
+                central.setStyleSheet(f"""
                     background-image: url("{bg_path.replace('\\', '/')}");
                     background-position: center;
                     background-repeat: no-repeat;
                     background-attachment: fixed;
-                }}
-            """)
-            central = self.centralWidget()
-            if central:
-                central.setStyleSheet("background-color: rgba(0, 0, 0, 0); border: none;")
+                    background-color: rgba(0, 0, 0, 0);
+                    border: none;
+                """)
             self.setAttribute(Qt.WA_StyledBackground, True)
-        else:
-            self.setStyleSheet("background-color: #F0F2F7;")
 
     def _show_greeting(self):
         """启动时显示欢迎内容：有历史则回放最近30条，否则显示初次欢迎语。"""
@@ -1592,13 +1590,13 @@ class MainWindow(QMainWindow):
         btn.setFixedSize(80, 30)
         btn.setStyleSheet("""
             QPushButton {
-                background-color: #E8D8C0;
-                color: #4A2A1A;
+                background-color: #3D3028;
+                color: #D8C0A0;
                 border-radius: 6px;
                 border: none;
             }
             QPushButton:hover {
-                background-color: #D8C8A0;
+                background-color: #4D4038;
             }
         """)
         btn.clicked.connect(dialog.accept)
@@ -1647,13 +1645,13 @@ class MainWindow(QMainWindow):
             self._btn_proactive.setText("主动聊天 ●")
             self._btn_proactive.setStyleSheet("""
                 QPushButton {
-                    background-color: #EDFFF2;
-                    color: #34C759;
+                    background-color: #2D2D3F;
+                    color: #A0A0B0;
                     border-radius: 6px;
-                    border: 1px solid #B0ECC4;
+                    border: 1px solid #3D3D5A;
                 }
-                QPushButton:hover  { background-color: #D8F5E4; }
-                QPushButton:pressed{ background-color: #C0EBD2; }
+                QPushButton:hover  { background-color: #3D3D55; }
+                QPushButton:pressed{ background-color: #4D4D65; }
             """)
         else:
             self._btn_proactive.setText("主动聊天 ○")
@@ -1976,25 +1974,25 @@ class MainWindow(QMainWindow):
             self._btn_standby.setText("🌙 待机 ●")
             self._btn_standby.setStyleSheet("""
                 QPushButton {
-                    background-color: #EEF0FF;
-                    color: #5060DD;
+                    background-color: #2D2D3F;
+                    color: #A0A0B0;
                     border-radius: 6px;
-                    border: 1px solid #C0C8F8;
+                    border: 1px solid #3D3D5A;
                 }
-                QPushButton:hover  { background-color: #E4E8FF; }
-                QPushButton:pressed{ background-color: #D8DCFF; }
+                QPushButton:hover  { background-color: #3D3D55; }
+                QPushButton:pressed{ background-color: #4D4D65; }
             """)
         else:
             self._btn_standby.setText("🌙 待机")
             self._btn_standby.setStyleSheet("""
                 QPushButton {
-                    background-color: #F0F0F8;
-                    color: #777777;
+                    background-color: #2D2D3F;
+                    color: #A0A0B0;
                     border-radius: 6px;
-                    border: 1px solid #D8D8EE;
+                    border: 1px solid #3D3D5A;
                 }
-                QPushButton:hover  { background-color: #E4E4F0; }
-                QPushButton:pressed{ background-color: #D8D8E8; }
+                QPushButton:hover  { background-color: #3D3D55; }
+                QPushButton:pressed{ background-color: #4D4D65; }
             """)
 
     def _check_note_file(self):
@@ -2773,13 +2771,13 @@ class MainWindow(QMainWindow):
         self._btn_qq_bridge.setText("QQ聊天 ◷")
         self._btn_qq_bridge.setStyleSheet("""
             QPushButton {
-                background-color: #EEF0FF;
-                color: #5060DD;
+                background-color: #2D2D3F;
+                color: #A0A0B0;
                 border-radius: 6px;
-                border: 1px solid #C0C8F8;
+                border: 1px solid #3D3D5A;
             }
-            QPushButton:hover  { background-color: #E4E8FF; }
-            QPushButton:pressed{ background-color: #D8DCFF; }
+            QPushButton:hover  { background-color: #3D3D55; }
+            QPushButton:pressed{ background-color: #4D4D65; }
         """)
 
         from workers.qq_bridge_worker import QQBridgeWorker
@@ -2858,28 +2856,26 @@ class MainWindow(QMainWindow):
             self._btn_qq_bridge.setText("QQ聊天 ●")
             self._btn_qq_bridge.setStyleSheet("""
                 QPushButton {
-                    background-color: #EDFFF2;
+                    background-color: #1A3D2A;
                     color: #34C759;
                     border-radius: 6px;
-                    border: 1px solid #B0ECC4;
+                    border: 1px solid #2A5D3A;
                 }
-                QPushButton:hover  { background-color: #D8F5E4; }
-                QPushButton:pressed{ background-color: #C0EBD2; }
+                QPushButton:hover  { background-color: #2A4D3A; }
+                QPushButton:pressed{ background-color: #3A5D4A; }
             """)
         else:
             self._btn_qq_bridge.setText("QQ聊天 ○")
             self._btn_qq_bridge.setStyleSheet("""
                 QPushButton {
-                    background-color: #F0F0F8;
-                    color: #777777;
+                    background-color: #2D2D3F;
+                    color: #A0A0B0;
                     border-radius: 6px;
-                    border: 1px solid #D8D8EE;
+                    border: 1px solid #3D3D5A;
                 }
-                QPushButton:hover  { background-color: #E4E4F0; }
-                QPushButton:pressed{ background-color: #D8D8E8; }
+                QPushButton:hover  { background-color: #3D3D55; }
+                QPushButton:pressed{ background-color: #4D4D65; }
             """)
-
-
 class _ImageVisionWorker(QThread):
     """后台线程：调用视觉API理解图片内容。"""
     finished = pyqtSignal(str)

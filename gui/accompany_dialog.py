@@ -60,13 +60,13 @@ class AccompanyDialog(QDialog):
         self._duration_label.setFont(QFont("Microsoft YaHei UI", 11))
         self._duration_label.setWordWrap(True)
         self._duration_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self._duration_label.setStyleSheet("color: #3A3A5C;")
+        self._duration_label.setStyleSheet("color: #1ABC9C;")
 
         self._session_label = QLabel()
         self._session_label.setFont(QFont("Microsoft YaHei UI", 11))
         self._session_label.setWordWrap(True)
         self._session_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self._session_label.setStyleSheet("color: #3A3A5C;")
+        self._session_label.setStyleSheet("color: #1ABC9C;")
 
         self._first_meet_label = QLabel()
         self._first_meet_label.setFont(QFont("Microsoft YaHei UI", 10))
@@ -79,7 +79,7 @@ class AccompanyDialog(QDialog):
         self._music_label.setFont(QFont("Microsoft YaHei UI", 10))
         self._music_label.setWordWrap(True)
         self._music_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self._music_label.setStyleSheet("color: #7A5B3A;")  # 咖啡色
+        self._music_label.setStyleSheet("color: #1ABC9C;")  # 咖啡色
 
         right_layout.addWidget(self._duration_label)
         right_layout.addWidget(self._session_label)

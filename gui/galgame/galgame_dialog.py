@@ -63,7 +63,7 @@ class GalgameDialog(QWidget):
             QTextEdit {
                 background: transparent;
                 border: none;
-                color: #000000;  # #333 → #000000 纯黑
+                color: #000000;
                 padding: 2px 0;
             }
             QScrollBar:vertical {
@@ -205,7 +205,7 @@ class GalgameDialog(QWidget):
         if self._current_index < len(self._full_text):
             text = self._full_text[:self._current_index + 1]
             # 用 html 保留换行
-            html = text.replace("\n", "<br>")
+            html = f"<span style='color:#000000;'>{text.replace(chr(10), '<br>')}</span>"
             self._reply_area.setHtml(html)
             self._current_index += 1
             # 逐字时自动滚到底

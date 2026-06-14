@@ -64,7 +64,7 @@ class AlarmDialog(QDialog):
             QTabWidget::pane {
                 border: 1px solid #D8D8EE;
                 border-radius: 8px;
-                background-color: rgba(248, 248, 252, 200);
+                background-color: rgba(30, 30, 45, 200);
             }
             QTabBar::tab {
                 padding: 6px 16px;
@@ -186,7 +186,7 @@ class AlarmDialog(QDialog):
             QListWidget {
                 border: 1px solid #E0E0E8;
                 border-radius: 6px;
-                background-color: rgba(255, 255, 255, 200);
+                background-color: rgba(30, 30, 45, 200);
             }
             QListWidget::item {
                 padding: 8px;
@@ -313,7 +313,7 @@ class AlarmDialog(QDialog):
             QListWidget {
                 border: 1px solid #E0E0E8;
                 border-radius: 6px;
-                background-color: rgba(255, 255, 255, 200);
+                background-color: rgba(30, 30, 45, 200);
             }
             QListWidget::item {
                 padding: 8px;
@@ -623,7 +623,7 @@ class AlarmDialog(QDialog):
             QListWidget {
                 border: 1px solid #E0E0E8;
                 border-radius: 6px;
-                background-color: rgba(255, 255, 255, 200);
+                background-color: rgba(30, 30, 45, 200);
             }
             QListWidget::item {
                 padding: 4px;
@@ -714,7 +714,7 @@ class AlarmDialog(QDialog):
                     due_str = ""
             due_lbl = QLabel(due_str)
             due_lbl.setFixedWidth(90)
-            due_lbl.setStyleSheet("color: #555555;")
+            
             row.addWidget(due_lbl)
 
             title_lbl = QLabel(todo.title)

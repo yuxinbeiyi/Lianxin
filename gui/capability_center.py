@@ -19,7 +19,54 @@ class CapabilityCenter(QDialog):
         self.resize(750, 600)
         self.setStyleSheet("""
             QDialog {
-                background-color: #FAFBFF;
+                background-color: #FFFFFF;
+            }
+            QWidget {
+                background-color: #FFFFFF;
+                color: #2C2C2C;
+            }
+            QTabWidget::pane {
+                background: #FFFFFF;
+                border: none;
+            }
+            QTabBar::tab {
+                background: #F0F0F5;
+                border: 1px solid #D0D0D8;
+                border-bottom: none;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                padding: 8px 18px;
+                margin-right: 4px;
+                color: #2C2C2C;
+                font-size: 12px;
+            }
+            QTabBar::tab:selected {
+                background: #FFFFFF;
+                font-weight: bold;
+                color: #2C2C2C;
+            }
+            QFrame {
+                background: #FFFFFF;
+                border: 1px solid #E0E0E8;
+                border-radius: 10px;
+            }
+            QScrollArea {
+                background: #FFFFFF;
+                border: none;
+            }
+            QLabel {
+                background: transparent;
+                color: #2C2C2C;
+            }
+            QLineEdit {
+                background: #FFFFFF;
+                color: #2C2C2C;
+                border: 1px solid #D0D0E0;
+                border-radius: 8px;
+                padding: 6px 12px;
+            }
+            QLineEdit:focus {
+                border-color: #6C7BFF;
             }
         """)
         self._last_refresh = datetime.now()
@@ -39,13 +86,13 @@ class CapabilityCenter(QDialog):
         header = QHBoxLayout()
         title = QLabel("🧩 能力中心")
         title.setFont(QFont("Microsoft YaHei UI", 14, QFont.Bold))
-        title.setStyleSheet("color: #3A3A5C;")
+        title.setStyleSheet("color: #2C2C2C;")
         header.addWidget(title)
         header.addStretch()
 
         self._refresh_label = QLabel()
         self._refresh_label.setFont(QFont("Microsoft YaHei UI", 8))
-        self._refresh_label.setStyleSheet("color: #999;")
+        self._refresh_label.setStyleSheet("color: #555;")
         header.addWidget(self._refresh_label)
 
         self._refresh_btn = QPushButton("🔄 刷新")
@@ -54,10 +101,10 @@ class CapabilityCenter(QDialog):
         self._refresh_btn.setCursor(Qt.PointingHandCursor)
         self._refresh_btn.setStyleSheet("""
             QPushButton {
-                background-color: #6C7BFF; color: white;
-                border-radius: 6px; border: none;
+                background-color: #E8C85A; color: #2C2C2C;
+                border-radius: 6px; border: 1px solid #D0B040;
             }
-            QPushButton:hover { background-color: #5A6AEE; }
+            QPushButton:hover { background-color: #DDB840; }
         """)
         self._refresh_btn.clicked.connect(self._on_refresh)
         header.addWidget(self._refresh_btn)
@@ -75,7 +122,7 @@ class CapabilityCenter(QDialog):
         self._search_edit.setStyleSheet("""
             QLineEdit {
                 border: 1px solid #D0D0E0; border-radius: 8px;
-                padding: 6px 12px; background: #FFFFFF;
+                padding: 6px 12px; background: #FFF8DC; color: #2C2C2C;
             }
             QLineEdit:focus { border-color: #6C7BFF; }
         """)
@@ -85,16 +132,7 @@ class CapabilityCenter(QDialog):
 
         # 选项卡
         self._tabs = QTabWidget()
-        self._tabs.setStyleSheet("""
-            QTabWidget::pane { border: 0; background: transparent; }
-            QTabBar::tab {
-                background: #F0F2F7; border: 1px solid #E0E0E8; border-bottom: 0;
-                border-top-left-radius: 6px; border-top-right-radius: 6px;
-                padding: 8px 18px; margin-right: 4px;
-                font-size: 12px;
-            }
-            QTabBar::tab:selected { background: #FFFFFF; font-weight: bold; }
-        """)
+        self._tabs.setStyleSheet("")
 
         self._skill_tab = QWidget()
         self._skill_scroll = self._make_scroll_area()
@@ -147,7 +185,7 @@ class CapabilityCenter(QDialog):
             card = QFrame()
             card.setStyleSheet(f"""
                 QFrame {{
-                    background: #FFFFFF; border: 1px solid #E8E8F0;
+                    background: #FFF8DC; border: 1px solid #E0D0A0;
                     border-radius: 10px;
                 }}
             """)
@@ -161,7 +199,7 @@ class CapabilityCenter(QDialog):
             card_layout.addWidget(num_lbl)
             lbl = QLabel(label)
             lbl.setFont(QFont("Microsoft YaHei UI", 9))
-            lbl.setStyleSheet("color: #888;")
+            lbl.setStyleSheet("color: #555;")
             lbl.setAlignment(Qt.AlignCenter)
             card_layout.addWidget(lbl)
             layout.addWidget(card, 0, i)
@@ -173,7 +211,7 @@ class CapabilityCenter(QDialog):
         card = QFrame()
         card.setStyleSheet("""
             QFrame {
-                background: #FFFFFF; border: 1px solid #E8E8F0;
+                background: #FFF8DC; border: 1px solid #E0D0A0;
                 border-radius: 10px;
             }
         """)
@@ -192,13 +230,13 @@ class CapabilityCenter(QDialog):
 
         name_lbl = QLabel(name)
         name_lbl.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
-        name_lbl.setStyleSheet("color: #3A3A5C;")
+        name_lbl.setStyleSheet("color: #2C2C2C;")
         row1.addWidget(name_lbl)
 
         if version:
             ver = QLabel(f"v{version}")
             ver.setFont(QFont("Microsoft YaHei UI", 8))
-            ver.setStyleSheet("color: #BBB;")
+            ver.setStyleSheet("color: #888;")
             row1.addWidget(ver)
 
         row1.addStretch()
@@ -212,7 +250,7 @@ class CapabilityCenter(QDialog):
         # 描述
         desc = QLabel(description)
         desc.setFont(QFont("Microsoft YaHei UI", 9))
-        desc.setStyleSheet("color: #777;")
+        desc.setStyleSheet("color: #555;")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
@@ -229,7 +267,7 @@ class CapabilityCenter(QDialog):
         tool_row.setSpacing(8)
         tool_badge = QLabel(f"▸ {tool_count} 个工具")
         tool_badge.setFont(QFont("Microsoft YaHei UI", 9))
-        tool_badge.setStyleSheet("color: #6C7BFF;")
+        tool_badge.setStyleSheet("color: #2C2C2C;")
         tool_badge.setCursor(Qt.PointingHandCursor)
         tool_row.addWidget(tool_badge)
         tool_row.addStretch()
@@ -259,14 +297,14 @@ class CapabilityCenter(QDialog):
         params = tool_info.get("parameters", {})
 
         frame = QFrame()
-        frame.setStyleSheet("background: #F8F9FF; border-radius: 6px; padding: 4px;")
+        frame.setStyleSheet("background: #FFF8DC; border-radius: 6px; padding: 4px; border: 1px solid #E8D8A0;")
         fl = QVBoxLayout(frame)
         fl.setContentsMargins(8, 4, 8, 4)
         fl.setSpacing(2)
 
         name_lbl = QLabel(f"🔹 {name}")
         name_lbl.setFont(QFont("Consolas", 9, QFont.Bold))
-        name_lbl.setStyleSheet("color: #3A5A8C;")
+        name_lbl.setStyleSheet("color: #2C2C2C;")
         fl.addWidget(name_lbl)
 
         if desc:
@@ -372,9 +410,9 @@ class CapabilityCenter(QDialog):
             layout.insertWidget(layout.count() - 1, card)
 
         if not skills:
-            empty = QLabel("暂无技能。\n将 SKILL.md 放入 skills/ 目录即可自动发现。")
             empty.setAlignment(Qt.AlignCenter)
-            empty.setStyleSheet("color: #AAA; padding: 40px;")
+            empty = QLabel("暂无技能。\n将 SKILL.md 放入 skills/ 目录即可自动发现。")
+            empty.setStyleSheet("color: #888; padding: 40px;")
             layout.insertWidget(layout.count() - 1, empty)
 
     def _skill_icon(self, name):

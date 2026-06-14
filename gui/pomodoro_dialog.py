@@ -25,16 +25,22 @@ class TimeSpinBox(QSpinBox):
         self.setFont(QFont("Microsoft YaHei UI", 14, QFont.Bold))
         self.setStyleSheet("""
             QSpinBox {
-                background-color: rgba(240, 242, 247, 200);
-                border: 2px solid #D8D8EE;
-                border-radius: 8px;
-                color: #3A3A5C;
+                background-color: #FFFFFF;
+                color: #FF6B6B;
+                border: 1px solid #D8D8EE;
+                border-radius: 6px;
+                padding: 2px 4px;
             }
             QSpinBox::up-button, QSpinBox::down-button {
+                background-color: #F5F5FA;
+                border: none;
+                border-radius: 2px;
                 width: 16px;
             }
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+                background-color: #E8E8F0;
+            }
         """)
-
 
 class PomodoroDialog(QDialog):
     """番茄钟对话框"""
@@ -79,9 +85,7 @@ class PomodoroDialog(QDialog):
         self.setStyleSheet("""
             QDialog {
                 background-color: #F5F5FA;
-            }
-            QDialog > * {
-                background-color: rgba(255, 255, 255, 210);
+                border-radius: 20px;
             }
         """)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -120,7 +124,7 @@ class PomodoroDialog(QDialog):
         stats_frame = QFrame()
         stats_frame.setStyleSheet("""
             QFrame {
-                background-color: rgba(240, 242, 247, 200);
+                background-color: rgba(255, 255, 255, 210);
                 border-radius: 12px;
                 border: 1px solid rgba(224, 224, 232, 150);
             }
@@ -157,7 +161,7 @@ class PomodoroDialog(QDialog):
         focus_group.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
         focus_group.setStyleSheet("""
             QGroupBox {
-                background-color: rgba(255, 255, 255, 200);
+                background-color: rgba(255, 255, 255, 210);
                 border: 1px solid #D8D8EE;
                 border-radius: 10px;
                 margin-top: 10px;
@@ -186,7 +190,7 @@ class PomodoroDialog(QDialog):
         sec_label = QLabel("秒")
         for lbl in (hour_label, min_label, sec_label):
             lbl.setFont(QFont("Microsoft YaHei UI", 10))
-            lbl.setStyleSheet("color: #555555; background: transparent;")
+            lbl.setStyleSheet("color: #FF6B6B; background-color: #FFFFFF;")
 
         time_row.addWidget(self._hour_spin)
         time_row.addWidget(hour_label)
@@ -210,7 +214,7 @@ class PomodoroDialog(QDialog):
         rest_group.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
         rest_group.setStyleSheet("""
             QGroupBox {
-                background-color: rgba(255, 255, 255, 200);
+                background-color: rgba(255, 255, 255, 210);
                 border: 1px solid #D8D8EE;
                 border-radius: 10px;
                 margin-top: 10px;
@@ -236,6 +240,9 @@ class PomodoroDialog(QDialog):
         rest_hour_label = QLabel("时")
         rest_min_label = QLabel("分")
         rest_sec_label = QLabel("秒")
+        for lbl in (rest_hour_label, rest_min_label, rest_sec_label):
+            lbl.setFont(QFont("Microsoft YaHei UI", 10))
+            lbl.setStyleSheet("color: #FF6B6B; background-color: #FFFFFF;")
 
         rest_time_row.addWidget(self._rest_hour_spin)
         rest_time_row.addWidget(rest_hour_label)
@@ -446,7 +453,7 @@ class PomodoroDialog(QDialog):
         """开始专注计时"""
         focus_seconds = self._get_focus_seconds()
         if focus_seconds < 60:
-            QMessageBox.warning(self, "提示", "专注时长至少需要设置 1 分钟（60秒）！")
+            self._msg_warn("专注时长至少需要设置 1 分钟（60秒）！")
             return
 
         self._current_phase = "focusing"
@@ -535,17 +542,10 @@ class PomodoroDialog(QDialog):
     def _on_end_clicked(self):
         """提前结束按钮"""
         if self._current_phase == "focusing":
-            # 弹窗确认
-            reply = QMessageBox.question(
-                self,
-                "确认提前结束",
-                "是否放弃当前专注计时？\n（专注次数不会累加，专注时长会计入总时长）",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
+            reply = self._msg_box("确认提前结束",
+                "是否放弃当前专注计时？\n（专注次数不会累加，专注时长会计入总时长）")
             if reply == QMessageBox.Yes:
                 self._is_premature_end = True
-                # 提前结束：专注时长累加（按实际经过的时间），专注次数不累加
                 elapsed = self._focus_seconds - self._remaining_seconds
                 if elapsed > 0:
                     self._stats.add_completed_session(elapsed)
@@ -553,53 +553,74 @@ class PomodoroDialog(QDialog):
                 self._timer.stop()
                 self._current_phase = "idle"
                 self._update_ui_state()
-                # 发送吐槽消息
                 complaint_msg = "唉，你这家伙要专注点才行啊！(｀へ´)"
                 self.proactive_message.emit(complaint_msg)
 
         elif self._current_phase == "resting":
-            reply = QMessageBox.question(
-                self,
-                "确认提前结束",
-                "是否放弃当前休息计时？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
+            reply = self._msg_box("确认提前结束", "是否放弃当前休息计时？")
             if reply == QMessageBox.Yes:
                 self._timer.stop()
                 self._current_phase = "idle"
                 self._update_ui_state()
-                # 发送吐槽消息
                 complaint_msg = "休息都不好好休息，快去放松一下！(╯°□°)╯"
                 self.proactive_message.emit(complaint_msg)
 
     def _on_skip_rest_clicked(self):
         """跳过休息按钮"""
-        reply = QMessageBox.question(
-            self,
-            "确认跳过休息",
-            "确定要跳过休息吗？",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
+        reply = self._msg_box("确认跳过休息", "确定要跳过休息吗？")
         if reply == QMessageBox.Yes:
             self._timer.stop()
             self._current_phase = "idle"
             self._update_ui_state()
-            # 发送跳过休息的特殊消息
             skip_msg = "呦？不需要休息吗？好吧...那继续加油吧！(｀・ω・´)"
             self.proactive_message.emit(skip_msg)
-
+    def _msg_warn(self, text: str):
+        """创建白底黑字的警告弹窗"""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("提示")
+        msg.setText(text)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setStyleSheet("""
+            QMessageBox { background-color: #FFFFFF; }
+            QLabel { color: #2C2C2C; background: transparent; }
+            QPushButton { color: #2C2C2C; background-color: #F0F0F5; border: 1px solid #D0D0D8; border-radius: 4px; padding: 6px 16px; min-width: 60px; }
+            QPushButton:hover { background-color: #E0E0E8; }
+        """)
+        msg.exec_()
+    def _msg_box(self, title: str, text: str) -> int:
+        """创建白底黑字的确认弹窗"""
+        msg = QMessageBox(self)
+        msg.setWindowTitle(title)
+        msg.setText(text)
+        msg.setIcon(QMessageBox.Question)
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
+        msg.setStyleSheet("""
+            QMessageBox {
+                background-color: #FFFFFF;
+            }
+            QLabel {
+                color: #2C2C2C;
+                background: transparent;
+            }
+            QPushButton {
+                color: #2C2C2C;
+                background-color: #F0F0F5;
+                border: 1px solid #D0D0D8;
+                border-radius: 4px;
+                padding: 6px 16px;
+                min-width: 60px;
+            }
+            QPushButton:hover {
+                background-color: #E0E0E8;
+            }
+        """)
+        return msg.exec_()
     def _on_close_clicked(self):
         """关闭窗口按钮"""
         if self._current_phase != "idle":
-            reply = QMessageBox.question(
-                self,
-                "确认关闭",
-                "番茄钟仍在进行中，关闭窗口不会停止计时。\n是否继续关闭？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
+            reply = self._msg_box("确认关闭",
+                "番茄钟仍在进行中，关闭窗口不会停止计时。\n是否继续关闭？")
             if reply == QMessageBox.Yes:
                 self.hide()
         else:
@@ -608,13 +629,8 @@ class PomodoroDialog(QDialog):
     def closeEvent(self, event):
         """重写关闭事件"""
         if self._current_phase != "idle":
-            reply = QMessageBox.question(
-                self,
-                "确认关闭",
-                "番茄钟仍在进行中，关闭窗口不会停止计时。\n是否继续关闭？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
+            reply = self._msg_box("确认关闭",
+                "番茄钟仍在进行中，关闭窗口不会停止计时。\n是否继续关闭？")
             if reply == QMessageBox.Yes:
                 event.accept()
             else:

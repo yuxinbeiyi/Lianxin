@@ -39,6 +39,7 @@ class DiaryDialog(QDialog):
         title_bar = QHBoxLayout()
         title = QLabel("莲心日记")
         title.setFont(QFont("Microsoft YaHei UI", 12, QFont.Bold))
+        title.setStyleSheet("color: #6B3A1F;")
         title_bar.addWidget(title)
 
         self.total_count_label = QLabel()
@@ -49,6 +50,7 @@ class DiaryDialog(QDialog):
         title_bar.addStretch()
         self.auto_voice_cb = QCheckBox("🔊 自动语音")
         self.auto_voice_cb.setChecked(False)
+        self.auto_voice_cb.setStyleSheet("color: #6B3A1F; background-color: #F5E6C8; padding: 2px 6px; border-radius: 4px;")
         title_bar.addWidget(self.auto_voice_cb)
         main_layout.addLayout(title_bar)
 
@@ -58,6 +60,7 @@ class DiaryDialog(QDialog):
 
         search_label = QLabel("🔍 搜索：")
         search_label.setFont(QFont("Microsoft YaHei UI", 9))
+        search_label.setStyleSheet("color: #6B3A1F;")
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("输入关键词，搜索日记内容...")
         self.search_input.setFont(QFont("Microsoft YaHei UI", 9))
@@ -66,6 +69,7 @@ class DiaryDialog(QDialog):
 
         date_label = QLabel("📅 日期：")
         date_label.setFont(QFont("Microsoft YaHei UI", 9))
+        date_label.setStyleSheet("color: #6B3A1F;")
         self.date_filter = QDateEdit()
         self.date_filter.setCalendarPopup(True)
         self.date_filter.setDisplayFormat("yyyy-MM-dd")
@@ -79,7 +83,7 @@ class DiaryDialog(QDialog):
         clear_btn.setStyleSheet("""
             QPushButton {
                 background-color: #E8D8C0;
-                color: #4A2A1A;
+                color: #6B3A1F;
                 border-radius: 5px;
                 border: none;
             }
@@ -100,7 +104,25 @@ class DiaryDialog(QDialog):
         # 滚动区域
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical {
+                width: 10px;
+                background: #F5E6C8;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical {
+                background: #D8C8A0;
+                border-radius: 5px;
+                min-height: 30px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #C0A880;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
         self.content_widget = QWidget()
         self.content_widget.setStyleSheet("background: transparent;")
         self.content_layout = QVBoxLayout(self.content_widget)
@@ -131,7 +153,7 @@ class DiaryDialog(QDialog):
         settings_btn.setStyleSheet("""
             QPushButton {
                 background-color: #E8D8C0;
-                color: #4A2A1A;
+                color: #D8C8A0;
                 border-radius: 6px;
                 border: none;
             }
@@ -157,29 +179,27 @@ class DiaryDialog(QDialog):
         from pathlib import Path
         bg_path = Path(__file__).parent.parent / "assets" / "莲心日记本.jpg"
         if bg_path.exists():
-            img_url = bg_path.as_posix()  # 转为 Unix 风格路径
             self.setStyleSheet(f"""
                 QDialog {{
-                    background-image: url("{img_url}");
+                    background-image: url("{str(bg_path).replace(chr(92), '/')}");
                     background-position: center;
                     background-repeat: no-repeat;
-                    background-attachment: fixed;
                     background-color: #FDF8F0;
                 }}
                 QScrollArea, QLabel, QLineEdit, QDateEdit, QPushButton {{
                     background-color: rgba(253, 248, 240, 220);
+                    color: #4A2A1A;
                     border-radius: 5px;
                 }}
-                QCheckBox {{
-                    background-color: transparent;
-                }}
-                QScrollArea {{
-                    background: transparent;
+                QPushButton {{
+                    background-color: #E8D8C0;
+                    color: #4A2A1A;
+                    border-radius: 6px;
                     border: none;
+                    padding: 6px 12px;
                 }}
+                QPushButton:hover {{ background-color: #D8C8A0; }}
             """)
-        else:
-            self.setStyleSheet("background-color: #FDF8F0;")
 
 
 
@@ -227,6 +247,7 @@ class DiaryDialog(QDialog):
             empty_label = QLabel("没有找到符合条件的日记。")
             empty_label.setAlignment(Qt.AlignCenter)
             empty_label.setStyleSheet("color: #A0522D; padding: 40px;")
+
             self.content_layout.addWidget(empty_label)
             return
         
@@ -319,7 +340,7 @@ class DiaryDialog(QDialog):
         # 新增提示标签：双击展开完整日记
         tip_label = QLabel("💡 双击卡片展开完整日记")
         tip_label.setFont(QFont("Microsoft YaHei UI", base_font_size - 2))
-        tip_label.setStyleSheet("color: #A0A0A0; padding-top: 4px;")
+        tip_label.setStyleSheet("color: #6B3A1F; padding-top: 4px;")
         tip_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(tip_label)
 
@@ -372,6 +393,7 @@ class DiaryDialog(QDialog):
         dialog.setStyleSheet("""
             QDialog {
                 background-color: #FDF8F0;
+                border-radius: 8px;
             }
         """)
         
@@ -402,7 +424,7 @@ class DiaryDialog(QDialog):
         btn.setStyleSheet("""
             QPushButton {
                 background-color: #E8D8C0;
-                color: #4A2A1A;
+                color: #D8C8A0;
                 border-radius: 6px;
                 border: none;
             }
@@ -455,6 +477,66 @@ class DiarySettingsDialog(QDialog):
         self.setWindowTitle("日记设置")
         self.setMinimumSize(440, 420)
         self.setModal(True)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #FDF8F0;
+            }
+            QLabel {
+                color: #6B3A1F;
+            }
+            QCheckBox {
+                color: #6B3A1F;
+                background-color: #F5E6C8;
+                padding: 4px 8px;
+                border-radius: 4px;
+            }
+            QComboBox {
+                background-color: #F5E6C8;
+                color: #4A2A1A;
+                border: 1px solid #D8C8A0;
+                border-radius: 4px;
+                padding: 2px 6px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #FDF8F0;
+                color: #4A2A1A;
+                selection-background-color: #E8D8C0;
+                selection-color: #4A2A1A;
+                outline: none;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #E8D8C0;
+                color: #4A2A1A;
+            }
+            QComboBox QAbstractItemView::item:selected {
+                background-color: #D8C8A0;
+                color: #4A2A1A;
+            }
+            QSpinBox {
+                background-color: #F5E6C8;
+                color: #4A2A1A;
+                border: 1px solid #D8C8A0;
+                border-radius: 4px;
+                padding: 2px 4px;
+            }
+            QTimeEdit {
+                background-color: #F5E6C8;
+                color: #4A2A1A;
+                border: 1px solid #D8C8A0;
+                border-radius: 4px;
+                padding: 2px 4px;
+            }
+            QDateEdit {
+                background-color: #F5E6C8;
+                color: #4A2A1A;
+                border: 1px solid #D8C8A0;
+                border-radius: 4px;
+                padding: 2px 4px;
+            }
+            QPushButton {
+                color: #4A2A1A;
+            }
+        """)
         self._load_config()
         self._build_ui()
         self._init_ui()
@@ -517,7 +599,7 @@ class DiarySettingsDialog(QDialog):
         sched_note = QLabel("莲心会在设定时间自动写日记（如果当天已有则不会重复生成）")
         sched_note.setWordWrap(True)
         sched_note.setFont(QFont("Microsoft YaHei UI", 8))
-        sched_note.setStyleSheet("color: #888;")
+        
         sched_layout.addWidget(sched_note)
         layout.addWidget(sched_frame)
 
@@ -573,9 +655,9 @@ class DiarySettingsDialog(QDialog):
         frame = QFrame()
         frame.setStyleSheet("""
             QFrame {
-                background-color: #F0F2F7;
+                background-color: #F5E6C8;
                 border-radius: 8px;
-                border: 1px solid #E0E0E8;
+                border: 1px solid #D8C8A0;
             }
         """)
         return frame

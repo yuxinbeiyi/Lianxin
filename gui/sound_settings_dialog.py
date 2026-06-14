@@ -2,7 +2,7 @@
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton,
     QScrollArea, QFrame, QComboBox, QLineEdit, QCheckBox, QDialogButtonBox,
-    QSpinBox, QWidget
+    QWidget
 )
 
 from PyQt5.QtCore import Qt
@@ -24,7 +24,7 @@ class SoundSettingsDialog(QDialog):
         self.setMinimumSize(500, 620)
         self.resize(520, 660)
         self.setModal(True)
-        self.setStyleSheet("background-color: #F8F8FC;")
+    
         self._build_ui()
         self._load_from_settings()
 
@@ -32,9 +32,9 @@ class SoundSettingsDialog(QDialog):
         frame = QFrame()
         frame.setStyleSheet("""
             QFrame {
-                background-color: #F0F2F7;
+                background-color: #1E1E30;
                 border-radius: 8px;
-                border: 1px solid #E0E0E8;
+                border: 1px solid #3D3D5A;
             }
         """)
         return frame
@@ -47,13 +47,13 @@ class SoundSettingsDialog(QDialog):
         # 标题
         title = QLabel("🔊 声音设置")
         title.setFont(QFont("Microsoft YaHei UI", 14, QFont.Bold))
-        title.setStyleSheet("color: #3A3A5C;")
+    
         layout.addWidget(title)
 
         # 分割线
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("background-color: #E0E0E8; max-height: 1px;")
+        line.setStyleSheet("background-color: #3D3D5A; max-height: 1px;")
         layout.addWidget(line)
 
         # ── 静默模式（全局开关）────────────
@@ -102,7 +102,7 @@ class SoundSettingsDialog(QDialog):
         # 分隔线
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("background-color: #D8D8E8; max-height: 1px;")
+        sep.setStyleSheet("background-color: #3D3D5A; max-height: 1px;")
         scroll_layout.addWidget(sep)
 
         # 引擎选择
@@ -124,7 +124,7 @@ class SoundSettingsDialog(QDialog):
             "Edge-TTS 无需安装，配置后即可使用。"
         )
         engine_desc.setWordWrap(True)
-        engine_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        engine_desc.setStyleSheet("font-size: 11px; padding: 4px 0;")
         engine_vbox.addWidget(engine_desc)
         scroll_layout.addWidget(engine_frame)
 
@@ -147,7 +147,7 @@ class SoundSettingsDialog(QDialog):
         gs_vbox.addLayout(gs_row)
 
         self._tts_gs_status = QLabel()
-        self._tts_gs_status.setStyleSheet("color: #888; font-size: 11px; padding: 2px 0;")
+        self._tts_gs_status.setStyleSheet("font-size: 11px; padding: 2px 0;")
         gs_vbox.addWidget(self._tts_gs_status)
         scroll_layout.addWidget(gs_frame)
 
@@ -171,34 +171,6 @@ class SoundSettingsDialog(QDialog):
             self._tts_mood_combo.addItem(label, val)
         mood_vbox.addWidget(self._tts_mood_combo)
         scroll_layout.addWidget(mood_frame)
-
-        # ── 参考音频（音色切换） ─────────────────────────
-        ref_frame = self._create_frame()
-        ref_vbox = QVBoxLayout(ref_frame)
-        ref_vbox.setSpacing(6)
-        ref_title = QLabel("参考音频（音色切换）")
-        ref_title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
-        ref_vbox.addWidget(ref_title)
-
-        ref_row = QHBoxLayout()
-        self._ref_wav_combo = QComboBox()
-        self._ref_wav_combo.setMinimumWidth(200)
-        ref_row.addWidget(self._ref_wav_combo)
-
-        refresh_btn = QPushButton("🔄 刷新")
-        refresh_btn.setFixedWidth(80)
-        refresh_btn.clicked.connect(self._refresh_ref_wavs)
-        ref_row.addWidget(refresh_btn)
-        ref_vbox.addLayout(ref_row)
-
-        ref_desc = QLabel(
-            "选择一个参考音频文件后，GPT-SoVITS 将使用该音色合成所有语音。\n"
-            "选择“自动\"则恢复按情绪自动匹配参考音频。"
-        )
-        ref_desc.setWordWrap(True)
-        ref_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
-        ref_vbox.addWidget(ref_desc)
-        scroll_layout.addWidget(ref_frame)
 
         # 语速
         speed_frame = self._create_frame()
@@ -256,37 +228,6 @@ class SoundSettingsDialog(QDialog):
         )
         tts_tip.setWordWrap(True)
         tts_tip.setStyleSheet("color: #888; font-size: 12px; padding: 8px;")
-        # ── 待机模式设置 ────────────
-        standby_frame = self._create_frame()
-        standby_vbox = QVBoxLayout(standby_frame)
-        standby_vbox.addWidget(QLabel("🌙 待机模式"))
-        self._standby_auto_cb = QCheckBox("启用自动发送（说完话后自动发送，无需结束词）")
-        self._standby_auto_cb.setFont(QFont("Microsoft YaHei UI", 9))
-        self._standby_auto_cb.setCursor(Qt.PointingHandCursor)
-        self._standby_auto_cb.toggled.connect(self._on_standby_auto_toggled)
-        standby_vbox.addWidget(self._standby_auto_cb)
-
-        delay_row = QHBoxLayout()
-        delay_row.addWidget(QLabel("自动发送等待时间："))
-        self._standby_delay_spin = QSpinBox()
-        self._standby_delay_spin.setRange(1, 30)
-        self._standby_delay_spin.setSuffix(" 秒")
-        self._standby_delay_spin.setFixedWidth(80)
-        delay_row.addWidget(self._standby_delay_spin)
-        delay_row.addStretch()
-        standby_vbox.addLayout(delay_row)
-
-        end_row = QHBoxLayout()
-        end_row.addWidget(QLabel("结束词："))
-        self._standby_end_word_edit = QLineEdit()
-        self._standby_end_word_edit.setPlaceholderText("完毕")
-        self._standby_end_word_edit.setFixedWidth(120)
-        end_row.addWidget(self._standby_end_word_edit)
-        end_row.addStretch()
-        standby_vbox.addLayout(end_row)
-
-        scroll_layout.addWidget(standby_frame)
-
         scroll_layout.addWidget(tts_tip)
 
         scroll_layout.addStretch()
@@ -328,13 +269,6 @@ class SoundSettingsDialog(QDialog):
 
         # 静默模式
         self._silent_cb.setChecked(self._settings.silent_mode)
-        self._refresh_ref_wavs()
-        # 待机模式
-        self._standby_auto_cb.setChecked(self._settings.standby_auto_send)
-        self._standby_delay_spin.setValue(self._settings.standby_auto_send_delay)
-        self._standby_end_word_edit.setText(self._settings.standby_end_word)
-        self._on_standby_auto_toggled(self._settings.standby_auto_send)
-
 
     def _browse_gs_path(self):
         from PyQt5.QtWidgets import QFileDialog
@@ -372,53 +306,11 @@ class SoundSettingsDialog(QDialog):
         from utils.settings import get_settings
         vol = value / 100.0
         get_settings().tts_volume = vol
-    
+
     def _on_sfx_volume_changed(self, value):
-        """音效音量滑块变化。"""
         from utils.settings import get_settings
         vol = value / 100.0
         get_settings().sfx_volume = vol
-
-    def _refresh_ref_wavs(self):
-        """扫描 ref_wavs 目录，刷新下拉列表。"""
-        self._ref_wav_combo.clear()
-        self._ref_wav_combo.addItem("自动（按情绪匹配）", "")
-
-        import os
-        ref_dir = None
-        for candidate in [
-            self._tts_cfg.get("ref_audio_dir", "").strip(),
-            os.path.join("skills", "语音合成", "ref_wavs"),
-        ]:
-            if candidate and os.path.isdir(candidate):
-                ref_dir = candidate
-                break
-
-        if not ref_dir or not os.path.isdir(ref_dir):
-            return
-
-        wav_files = []
-        for root, dirs, files in os.walk(ref_dir):
-            for f in files:
-                if f.lower().endswith(".wav"):
-                    full = os.path.join(root, f)
-                    rel = os.path.relpath(full, ref_dir)
-                    wav_files.append((rel, full))
-
-        if not wav_files:
-            return
-
-        wav_files.sort(key=lambda x: x[0])
-        for rel, full in wav_files:
-            self._ref_wav_combo.addItem(rel, full)
-
-        current = self._tts_cfg.get("ref_wav_override", "").strip()
-        if current:
-            for i in range(self._ref_wav_combo.count()):
-                if self._ref_wav_combo.itemData(i) == current:
-                    self._ref_wav_combo.setCurrentIndex(i)
-                    break
-
 
     def _on_tts_test(self):
         """试听语音合成效果。"""
@@ -444,8 +336,6 @@ class SoundSettingsDialog(QDialog):
             "sample_steps": self._tts_cfg.get("sample_steps", 32),
             "edge_tts_voice": self._tts_cfg.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural"),
             "tts_warmup": self._tts_cfg.get("tts_warmup", True),
-            "ref_wav_override": self._ref_wav_combo.currentData() or "",
-
         })
 
 
@@ -490,20 +380,11 @@ class SoundSettingsDialog(QDialog):
         from gui.emotional_debug_dialog import EmotionalDebugDialog
         dlg = EmotionalDebugDialog(self)
         dlg.exec_()
-    def _on_standby_auto_toggled(self, checked: bool):
-        """自动发送开关：开→启用延迟设置，关→启用以结束词发送"""
-        self._standby_delay_spin.setEnabled(checked)
-        self._standby_end_word_edit.setEnabled(not checked)
 
     def _on_save(self):
         """保存所有设置：声音+TTS+静默模式"""
         # 静默模式
         self._settings.silent_mode = self._silent_cb.isChecked()
-        # 待机模式
-        self._settings.standby_auto_send = self._standby_auto_cb.isChecked()
-        self._settings.standby_auto_send_delay = self._standby_delay_spin.value()
-        self._settings.standby_end_word = self._standby_end_word_edit.text().strip() or "完毕"
-
 
         # 声音设置（音量）在滑块变化时已实时保存
         # 保存 TTS 配置
@@ -511,8 +392,6 @@ class SoundSettingsDialog(QDialog):
         engine = "auto" if engine_idx == 0 else "edge_tts"
         gs_path = self._tts_gs_path_edit.text().strip()
         mood = self._tts_mood_combo.currentData()
-        ref_override = self._ref_wav_combo.currentData() or ""
-
         speed = self._tts_speed_slider.value() / 100.0
         warmup = self._tts_warmup_cb.isChecked()
 
@@ -527,7 +406,6 @@ class SoundSettingsDialog(QDialog):
             "sample_steps": self._tts_cfg.get("sample_steps", 32),
             "edge_tts_voice": self._tts_cfg.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural"),
             "tts_warmup": warmup,
-            "ref_wav_override": ref_override,
         })
 
         self.accept()

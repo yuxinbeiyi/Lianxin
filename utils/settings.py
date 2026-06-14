@@ -14,11 +14,12 @@ _DEFAULT_SETTINGS = {
     "last_autostart_welcome_date": "",   # 上次自启动欢迎消息发送日期（YYYY-MM-DD）
     "show_exit_confirmation": True,      # 退出时显示确认弹窗：True=显示，False=不显示
     "font_size": 12,                     # 聊天字体大小（像素）
+    "galgame_font_size": 12,             # Galgame 字体大小（像素）
+    "galgame_font_bold": False,          # Galgame 字体加粗
+    "standby_auto_send": True,           # 待机模式自动发送：True=开启
+    "standby_auto_send_delay": 5,        # 自动发送延迟（秒）
+    "standby_end_word": "完毕",           # 待机模式结束词
     "note_file_path": "",                # 小纸条文件路径（空表示使用默认路径）
-    "standby_auto_send": True,           # 待机自动发送：True=说完自动发，False=仅结束词
-    "standby_auto_send_delay": 5,        # 自动发送等待秒数（1-30）
-    "standby_end_word": "完毕",          # 结束词
-
     "tts_volume": 1.0,                   # TTS 语音音量 0.0-1.0
     "sfx_volume": 1.0,                   # 音效音量 0.0-1.0
     "music_playlist_index": 0,
@@ -27,9 +28,6 @@ _DEFAULT_SETTINGS = {
     "music_position": 0.0,          # 新增：播放位置（秒）
     "emotion_probability": 0.6,   # 发表情包概率    默认 60%
     "user_name": "雨心",           # 用户称呼（莲心对用户的称呼）
-    "galgame_font_size": 12,       # Galgame 模式字体大小
-    "galgame_font_bold": True,     # Galgame 模式字体加粗
-
 }
 
 
@@ -90,8 +88,7 @@ class SettingsManager:
     def font_size(self, val: int):
         self._settings["font_size"] = val
         self.save()
-    
-        # ========== Galgame 字体设置 ==========
+    # ========== Galgame 字体 ==========
     @property
     def galgame_font_size(self) -> int:
         return self._settings.get("galgame_font_size", 12)
@@ -103,29 +100,13 @@ class SettingsManager:
 
     @property
     def galgame_font_bold(self) -> bool:
-        return self._settings.get("galgame_font_bold", True)
+        return self._settings.get("galgame_font_bold", False)
 
     @galgame_font_bold.setter
     def galgame_font_bold(self, val: bool):
         self._settings["galgame_font_bold"] = val
         self.save()
-
-
-    # ========== 小纸条路径 ==========
-    @property
-    def note_file_path(self) -> str:
-        """获取小纸条文件路径，如果未配置则返回默认路径"""
-        path = self._settings.get("note_file_path", "")
-        if path and Path(path).parent.exists():
-            return path
-        # 默认路径：用户桌面
-        return str(Path.home() / "Desktop" / "小纸条.txt")
-
-    @note_file_path.setter
-    def note_file_path(self, val: str):
-        self._settings["note_file_path"] = val
-        self.save()
-    # ========== 待机模式设置 ==========
+    # ========== 待机模式 ==========
     @property
     def standby_auto_send(self) -> bool:
         return self._settings.get("standby_auto_send", True)
@@ -153,6 +134,20 @@ class SettingsManager:
         self._settings["standby_end_word"] = val
         self.save()
 
+    # ========== 小纸条路径 ==========
+    @property
+    def note_file_path(self) -> str:
+        """获取小纸条文件路径，如果未配置则返回默认路径"""
+        path = self._settings.get("note_file_path", "")
+        if path and Path(path).parent.exists():
+            return path
+        # 默认路径：用户桌面
+        return str(Path.home() / "Desktop" / "小纸条.txt")
+
+    @note_file_path.setter
+    def note_file_path(self, val: str):
+        self._settings["note_file_path"] = val
+        self.save()
 
     # ========== 音量设置 ==========
     @property
