@@ -1119,6 +1119,8 @@ _TTS_DEFAULTS = {
     "sample_steps": 32,              # 推理步数
     "edge_tts_voice": "zh-CN-XiaoxiaoNeural",  # Edge-TTS 回退音色
     "tts_warmup": True,                         # 启动时预热 GPT-SoVITS 引擎
+    "ref_wav_override": "",           # 手动选择的参考音频路径（空=自动按情绪选择）
+
 }
 
 

@@ -35,98 +35,124 @@ class VoiceSpeaker:
         if not text:
             return ""
 
-        # 0. 先删分隔线
-        text = re.sub(r'-{3,}|={3,}|~{3,}', '\n', text)
+        try:
+            # 0. 先删分隔线
+            text = re.sub(r'-{3,}|={3,}|~{3,}', '\n', text)
 
-        # 1. Markdown 链接 [text](url) -> text
-        text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
-        # 2. 图片
-        text = re.sub(r'!\[([^\]]*)\]\([^\)]+\)', '', text)
-        # 3. 加粗斜体等（保留内部文字）
-        text = re.sub(r'\*\*([^\*]+)\*\*', r'\1', text)
-        text = re.sub(r'\*([^\*]+)\*', r'\1', text)
-        text = re.sub(r'__([^_]+)__', r'\1', text)
-        text = re.sub(r'~~([^~]+)~~', r'\1', text)
-        # 4. 行内代码
-        text = re.sub(r'`([^`]+)`', r'\1', text)
-        # 5. 移除标题标记（行首的 #）
-        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-        # 6. 移除代码块标记
-        text = re.sub(r'```[\s\S]*?```', '', text)
-        text = re.sub(r'~~~[\s\S]*?~~~', '', text)
+            # 1. Markdown 链接 [text](url) -> text
+            text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+            # 2. 图片
+            text = re.sub(r'!\[([^\]]*)\]\([^\)]+\)', '', text)
+            # 3. 加粗斜体等（保留内部文字）
+            text = re.sub(r'\*\*([^\*]+)\*\*', r'\1', text)
+            text = re.sub(r'\*([^\*]+)\*', r'\1', text)
+            text = re.sub(r'__([^_]+)__', r'\1', text)
+            text = re.sub(r'~~([^~]+)~~', r'\1', text)
+            # 4. 行内代码
+            text = re.sub(r'`([^`]+)`', r'\1', text)
+            # 5. 移除标题标记（行首的 #）
+            text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+            # 6. 移除代码块标记
+            text = re.sub(r'```[\s\S]*?```', '', text)
+            text = re.sub(r'~~~[\s\S]*?~~~', '', text)
 
-        # 7. 移除所有 emoji（Unicode 表情符号区段）
-        # 注意：范围不能覆盖 CJK 汉字区域（U+3400–U+9FFF）！
-        text = re.sub(
-            r'[\U0001F300-\U0001F9FF]'       # 杂项表情符号和补充表情符号
-            r'|[\U0001FA70-\U0001FAFF]'       # 表情符号扩展 A
-            r'|[\U00002702-\U000027B0]'       # 丁贝符
-            r'|[\U0001F1E0-\U0001F1FF]'       # 区域标志（国旗）
-            r'|[\U0000FE00-\U0000FE0F]'       # 变异选择器
-            r'|[\U0000200D]'                  # 零宽连接器
-            r'|[❤️⭐✨💡🔥🎶🎵💤💢💦💨💫🌟]',  # 常见单个 emoji
-            '', text
-        )
-        text = text.replace('‍', '').replace('﻿', '').replace('​', '')
+            # 7. 移除所有 emoji（Unicode 表情符号区段）
+            text = re.sub(
+                r'[\U0001F300-\U0001F9FF]'
+                r'|[\U0001FA70-\U0001FAFF]'
+                r'|[\U00002702-\U000027B0]'
+                r'|[\U0001F1E0-\U0001F1FF]'
+                r'|[\U0000FE00-\U0000FE0F]'
+                r'|[\U0000200D]'
+                r'|[❤️⭐✨💡🔥🎶🎵💤💢💦💨💫🌟]',
+                '', text
+            )
+            text = text.replace('\u200d', '').replace('\ufeff', '').replace('\u200b', '')
 
-        # 8. 颜文字
-        text = re.sub(r'[\(（\[［][\s\-＝=]*[｀´・ω∀∂⊙◎●○■□△▲▼☆★♪♫♬αβγδεθλμπσφψ]+[\s\-＝=]*[\)）\]］]', '', text)
+            # 8. 颜文字
+            text = re.sub(
+                r'[\(（\[［][\s\-＝=]*[｀´・ω∀∂⊙◎●○■□△▲▼☆★♪♫♬αβγδεθλμπσφψ]+[\s\-＝=]*[\)）\]］]',
+                '', text
+            )
 
-        # 9. 符号替换
-        text = text.replace('——', '，')
-        text = text.replace('–', '，')
-        text = text.replace('—', '，')
-        text = re.sub(r'(?<=[^\d])-(?=[^\d])', ' ', text)
-        text = text.replace('_', ' ')
-        text = text.replace('~', ' ')
-        text = text.replace('|', '，')  # 表格竖线换成逗号，便于断句
-        text = re.sub(r'\\+', ' ', text)
-        text = text.replace('^', ' ')
-        text = text.replace('@', ' at ')
-        text = text.replace('&', ' and ')
-        text = text.replace('+', ' plus ')
-        text = text.replace('=', ' equals ')
-        text = text.replace('#', ' ')
-        text = text.replace('/', ' ')
-        text = re.sub(r'\$\$?', ' ', text)
-        text = re.sub(r'%', ' percent ', text)
-        # 箭头
-        text = re.sub(r'→|➔|➜', '到', text)
-        text = re.sub(r'↘|↙', '', text)
-        # 范围
-        text = re.sub(r'(\d+)\s*~\s*(\d+)', r'\1 到 \2', text)
-        text = re.sub(r'(\d+)\s*~\s*(\d+)', r'\1 到 \2', text)
-        # 圆角数字圈
-        text = re.sub(r'[①②③④⑤⑥⑦⑧⑨⑩]', '', text)
+            # 9. 符号替换
+            text = text.replace('——', '，')
+            text = text.replace('–', '，')
+            text = text.replace('—', '，')
+            text = re.sub(r'(?<=[^\d])-(?=[^\d])', ' ', text)
+            text = text.replace('_', ' ')
+            text = text.replace('~', ' ')
+            text = text.replace('|', '，')
+            text = re.sub(r'\\+', ' ', text)
+            text = text.replace('^', ' ')
+            text = text.replace('@', ' at ')
+            text = text.replace('&', ' and ')
+            text = text.replace('+', ' plus ')
+            text = text.replace('=', ' equals ')
+            text = text.replace('#', ' ')
+            text = text.replace('/', ' ')
+            text = re.sub(r'\$\$?', ' ', text)
+            text = re.sub(r'%', ' percent ', text)
+            # 箭头
+            text = re.sub(r'→|➔|➜', '到', text)
+            text = re.sub(r'↘|↙', '', text)
+            # 范围
+            text = re.sub(r'(\d+)\s*~\s*(\d+)', r'\1 到 \2', text)
+            text = re.sub(r'(\d+)\s*~\s*(\d+)', r'\1 到 \2', text)
+            # 圆角数字圈
+            text = re.sub(r'[①②③④⑤⑥⑦⑧⑨⑩]', '', text)
 
-        # 10. 移除 URL
-        text = re.sub(r'https?://[^\s,，。！？、\)）】]+', '', text)
+            # 10. 移除 URL
+            text = re.sub(r'https?://[^\s,，。！？、\)）】]+', '', text)
 
-        # 11. 规范化重复标点
-        text = re.sub(r'[。！？；，]{2,}', lambda m: m.group(0)[0], text)
+            # 11. 规范化重复标点
+            text = re.sub(r'[。！？；，]{2,}', lambda m: m.group(0)[0], text)
 
-        # 12. 处理驼峰命名和点分隔文件名（events.py → events dot py）
-        def split_camel_case(match):
-            word = match.group(0)
-            if len(word) <= 1:
-                return word
-            # 驼峰拆分
-            word = re.sub('([a-z0-9])([A-Z])', r'\1 \2', word)
-            return word.lower()
+            # 11b. 英文省略号 → 句号
+            text = re.sub(r'\.{3,}', '。', text)
 
-        def split_dot(match):
-            return match.group(0).replace('.', ' dot ')
+            # 11c. 删除所有残留的 Unicode 颜文字/特殊符号
+            text = re.sub(
+                r'[^\u4e00-\u9fff\u3400-\u4dbf'
+                r'a-zA-Z0-9'
+                r'\s\n'
+                r'。！？，、；：\u201c\u201d\u2018\u2019（）…—…·'
+                r'\.\,\!\?\;\:\-\(\)'
+                r']+',
+                '', text
+            )
 
-        # 匹配文件名样式
-        text = re.sub(r'[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+', split_dot, text)
-        # 拆分驼峰
-        text = re.sub(r'[A-Z][a-zA-Z]+', split_camel_case, text)
+            # 11d. 删除残留的波浪线
+            text = text.replace('~', '')
+            text = text.replace('～', '')
 
-        # 13. 折叠多个空行
-        text = re.sub(r'\n{3,}', '\n\n', text)
+            # 11e. 删除残留的特殊符号
+            text = re.sub(r'[\^\*\_\`\#\$\%\&\[\]\{\}\<\>]', '', text)
 
-        # 14. 首尾空白
-        return text.strip()
+            # 12. 处理驼峰命名和点分隔文件名
+            def split_camel_case(match):
+                word = match.group(0)
+                if len(word) <= 1:
+                    return word
+                word = re.sub('([a-z0-9])([A-Z])', r'\1 \2', word)
+                return word.lower()
+
+            def split_dot(match):
+                return match.group(0).replace('.', ' dot ')
+
+            text = re.sub(r'[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+', split_dot, text)
+            text = re.sub(r'[A-Z][a-zA-Z]+', split_camel_case, text)
+
+            # 13. 折叠多个空行
+            text = re.sub(r'\n{3,}', '\n\n', text)
+
+            # 14. 首尾空白
+            return text.strip()
+
+        except Exception as e:
+            print(f"[TTS清洗异常] {e}")
+            return ""
+
 
     # ── 公开接口 ─────────────────────────────────────────────
 
@@ -185,7 +211,7 @@ class VoiceSpeaker:
         
         cleaned_text = self._clean_text_for_tts(text)
         
-        if not cleaned_text.strip():
+        if not cleaned_text or not cleaned_text.strip():
             print("[TTS] 清洗后文本为空，放弃朗读")
             return
         
@@ -210,7 +236,7 @@ class VoiceSpeaker:
         # 整段文字统一检测情绪，避免每句随机选不同参考音频导致声音不一致
         from brain.tts_engine import _detect_mood
         unified_mood = _detect_mood(cleaned_text, None) or "casual"
-
+        tts_speed = get_tts_config().get("speed", 1.0)     # ← 加这行
         # ── 单句：快速路径（无流水线开销） ──────────
         if len(sentences) == 1:
             tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
@@ -219,7 +245,7 @@ class VoiceSpeaker:
             try:
                 success = False
                 if engine and engine.gpt_sovits_available:
-                    success = engine.synthesize_to_mp3(sentences[0], tmp_path, mood=unified_mood)
+                    success = engine.synthesize_to_mp3(sentences[0], tmp_path, mood=unified_mood, speed=tts_speed)
                 if not success:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
@@ -262,7 +288,8 @@ class VoiceSpeaker:
 
                 ok = False
                 if _eng and _eng.gpt_sovits_available:
-                    ok = _eng.synthesize_to_mp3(sent, tmp_path, mood=unified_mood)
+                    ok = _eng.synthesize_to_mp3(sent, tmp_path, mood=unified_mood, speed=tts_speed)
+
                 if not ok and not has_edge:
                     try:
                         import edge_tts as _et
@@ -324,6 +351,7 @@ class VoiceSpeaker:
                 tmp_path = tmp.name
                 tmp.close()
                 success = engine.synthesize_to_mp3(text, tmp_path)
+
                 if success:
                     return tmp_path
         except Exception:

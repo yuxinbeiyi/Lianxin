@@ -391,34 +391,57 @@ def _get_refs() -> dict:
         _ref_cache = {}
     return _ref_cache
 
+# ── 参考音频会话缓存：同一 mood 首次随机选，后续复用 ──
+_pick_ref_cache: dict = {}
+
+
+def reset_pick_ref_cache():
+    """重置参考音频缓存（用户手动切音色后调用）。"""
+    _pick_ref_cache.clear()
 
 def _pick_ref(text: str, mood_hint: Optional[str] = None) -> Optional[dict]:
     """根据文本和情绪提示选择参考音频。
     返回 {"path": str, "text": str, "lang": str} 或 None。
+    同一 mood 首次随机选，后续复用同一 WAV，保证音色一致。
     """
+    global _pick_ref_cache
+
+    # ── 用户手动指定了参考音频 → 直接使用，跳过情绪匹配 ──
+    from config import get_tts_config
+    cfg = get_tts_config()
+    override = cfg.get("ref_wav_override", "").strip()
+    if override and os.path.isfile(override):
+        return {"path": override, "text": "", "lang": "中文"}
+
     refs = _get_refs()
     if not refs:
         return None
 
     # 确定目标情绪
-    target_mood = _detect_mood(text, mood_hint)
+    target_mood = _detect_mood(text, mood_hint) or "casual"
+
+    # ── 缓存命中：同一 mood 复用上次选的 WAV ──
+    if target_mood in _pick_ref_cache:
+        return _pick_ref_cache[target_mood]
 
     # 优先选目标情绪的参考音频
-    if target_mood and target_mood in refs:
-        candidates = refs[target_mood]
-        if candidates:
-            chosen = random.choice(candidates)
-            return {"path": chosen["path"], "text": chosen["text"], "lang": chosen["lang"]}
+    candidates = refs.get(target_mood, [])
+    if candidates:
+        chosen = random.choice(candidates)
+        _pick_ref_cache[target_mood] = chosen
+        return chosen
 
-    # 回退：任意情绪
+    # 没有对应情绪的参考音频 → 从所有音频中随机选一个
     all_entries = []
     for entries in refs.values():
         all_entries.extend(entries)
     if all_entries:
         chosen = random.choice(all_entries)
-        return {"path": chosen["path"], "text": chosen["text"], "lang": chosen["lang"]}
+        _pick_ref_cache[target_mood] = chosen
+        return chosen
 
     return None
+
 
 
 # ══════════════════════════════════════════════════════════
@@ -624,8 +647,10 @@ class TtsEngine:
             "ref_wav": ref["path"],
             "output_path": output_path,
             "mood": detected_mood,
-            "sample_steps": cfg.get("sample_steps", 16),
+            "sample_steps": cfg.get("sample_steps", 32),
+            "speed": speed or cfg.get("speed", 1.0),
         })
+
 
         logger.info(
             f"GPT-SoVITS 合成: mood={detected_mood}, "
