@@ -1041,14 +1041,23 @@ class AgentCore:
                 ]
 
 
-        # 注入已激活技能的知识内容（本地模式跳过）
+        # ── 注入 System Prompt 技能模块（渐进式披露） ──
         if not self._use_local:
-            skill_knowledge = get_active_knowledge()
-            if skill_knowledge:
-                messages.append({
-                    "role": "system",
-                    "content": "【以下是你当前已激活的技能知识】\n" + "\n\n".join(skill_knowledge)
-                })
+            # 从历史中提取最新用户消息
+            last_user_msg = ""
+            for msg in reversed(self.history):
+                if msg.get("role") == "user":
+                    last_user_msg = msg.get("content", "")
+                    break
+            if last_user_msg:
+                try:
+                    from skills._prompt_guides import get_matching_modules
+                    modules = get_matching_modules(last_user_msg)
+                    if modules:
+                        messages.append({"role": "system", "content": modules})
+                except Exception:
+                    pass
+
 
         # ── 禁用工具模式：直接纯文本对话，不走工具循环 ──────
         if disable_tools:
