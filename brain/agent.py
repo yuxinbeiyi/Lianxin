@@ -97,20 +97,29 @@ class AgentCore:
 
         # 每次实例化都从文件读取最新配置，支持热重载
         cfg = get_api_config()
-        self._use_local = cfg.get("use_local", False)
+        self._provider = cfg.get("provider", "deepseek")  # "deepseek" | "agnes" | "local"
         self._api_format = cfg.get("api_format", "openai")
-        if self._use_local:
+        self._use_local = (self._provider == "local")  # 兼容旧代码引用
+        if self._provider == "agnes":
+            from config import get_agnes_config
+            agnes_cfg = get_agnes_config()
+            self._model      = f"openai/{agnes_cfg['model']}"
+            self._max_tokens = cfg["max_tokens"]
+            self._api_base   = agnes_cfg["base_url"]
+            self._api_key    = agnes_cfg["api_key"]
+        elif self._provider == "local":
             self._model      = f"ollama/{cfg.get('local_model_name', 'my-deepseek')}"
             self._max_tokens = min(cfg["max_tokens"], 2048)
             self._api_base   = cfg.get("local_base_url", "http://localhost:11434/v1")
-        else:
+            self._api_key    = "ollama"
+        else:  # deepseek
             model = cfg["model"]
             if "/" not in model:  # litellm 需要 provider 前缀
                 model = f"deepseek/{model}"
             self._model      = model
             self._max_tokens = cfg["max_tokens"]
             self._api_base   = cfg["base_url"]
-        self._api_key = cfg["api_key"] if not self._use_local else "ollama"
+            self._api_key    = cfg["api_key"]
 
         self._disable_tools = disable_tools
         self._last_emotion = None     # 本轮回复的情绪标签（供 GUI 选图用）

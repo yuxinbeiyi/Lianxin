@@ -369,11 +369,22 @@ def shoulder_observe() -> str:
 
     try:
         from openai import OpenAI
-        from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, MODEL
-        if DEEPSEEK_API_KEY:
-            client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+        from config import get_api_config, get_agnes_config
+        cfg = get_api_config()
+        provider = cfg.get("provider", "deepseek")
+        if provider == "agnes":
+            agnes_cfg = get_agnes_config()
+            api_key = agnes_cfg["api_key"]
+            base_url = agnes_cfg["base_url"]
+            model = agnes_cfg["model"]
+        else:
+            api_key = cfg["api_key"]
+            base_url = cfg["base_url"]
+            model = cfg["model"]
+        if api_key:
+            client = OpenAI(api_key=api_key, base_url=base_url)
             resp = client.chat.completions.create(
-                model=MODEL,
+                model=model,
                 max_tokens=400,
                 messages=[
                     {

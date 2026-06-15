@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QSpinBox, QFrame, QMessageBox, QTabWidget,
     QWidget, QFormLayout, QCheckBox, QComboBox, QApplication,
+    QRadioButton, QButtonGroup,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont
@@ -235,51 +236,63 @@ class ApiConfigDialog(QDialog):
     def _build_tab_deepseek(self, parent: QWidget):
         layout = QVBoxLayout(parent)
         layout.setContentsMargins(16, 20, 16, 16)
-        form = QFormLayout()
-        form.setSpacing(16)
-        form.setContentsMargins(0, 0, 0, 0)
 
-        # ── 本地模型开关 ──
-        self._use_local_check = QCheckBox("使用本地模型 (Ollama)")
-        self._use_local_check.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
-        self._use_local_check.setStyleSheet("""
-            QCheckBox {
+        # ── Provider 选择器（RadioButton 三选一） ──
+        provider_label = QLabel("选择 AI 提供商：")
+        provider_label.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        provider_label.setStyleSheet("color: #3A3A5C;")
+        layout.addWidget(provider_label)
+
+        provider_row = QHBoxLayout()
+        provider_row.setSpacing(12)
+
+        self._provider_group = QButtonGroup(self)
+
+        self._radio_deepseek = QRadioButton("DeepSeek（云端）")
+        self._radio_agnes = QRadioButton("Agnes AI（云端）")
+        self._radio_local = QRadioButton("Ollama（本地）")
+
+        radio_style = """
+            QRadioButton {
                 color: #3A3A5C;
-                spacing: 8px;
-                padding: 8px 12px;
+                spacing: 6px;
+                padding: 8px 14px;
                 background-color: #1E1E30;
                 border-radius: 8px;
                 border: 1px solid #D8D8EE;
+                font-size: 9pt;
             }
-            QCheckBox:hover { background-color: #E4E4F0; }
-            QCheckBox::indicator { width: 18px; height: 18px; }
-        """)
-        self._use_local_check.toggled.connect(self._on_use_local_toggled)
-        layout.addWidget(self._use_local_check)
+            QRadioButton:hover { background-color: #E4E4F0; }
+            QRadioButton:checked { background-color: #ECEEFF; border: 1px solid #6C7BFF; color: #5060DD; font-weight: bold; }
+            QRadioButton::indicator { width: 16px; height: 16px; }
+        """
+        for rb in [self._radio_deepseek, self._radio_agnes, self._radio_local]:
+            rb.setFont(QFont("Microsoft YaHei UI", 9))
+            rb.setStyleSheet(radio_style)
+            self._provider_group.addButton(rb)
+            provider_row.addWidget(rb)
 
-        # 提示
-        self._local_hint = QLabel(
-            "💡 开启后将使用本地 Ollama 部署的模型，无需联网，不消耗 API 额度。\n"
-            "    注意：本地模型不支持工具调用（打开应用、文件操作等），仅限纯文本聊天。"
-        )
-        self._local_hint.setFont(QFont("Microsoft YaHei UI", 8))
-        self._local_hint.setStyleSheet("color: #999999; background-color: #1E1E30; padding: 8px; border-radius: 6px;")
-        self._local_hint.setWordWrap(True)
-        self._local_hint.hide()
-        layout.addWidget(self._local_hint)
+        provider_row.addStretch()
+        layout.addLayout(provider_row)
+        layout.addSpacing(12)
 
+        # ── 提示文本 ──
+        self._provider_hint = QLabel("")
+        self._provider_hint.setFont(QFont("Microsoft YaHei UI", 8))
+        self._provider_hint.setStyleSheet("color: #999999; background-color: #1E1E30; padding: 8px; border-radius: 6px;")
+        self._provider_hint.setWordWrap(True)
+        layout.addWidget(self._provider_hint)
         layout.addSpacing(4)
 
-        # ── 云端配置分组 ──
-        self._cloud_group = QFrame()
-        self._cloud_group.setStyleSheet("QFrame { border: none; }")
-        cloud_layout = QVBoxLayout(self._cloud_group)
-        cloud_layout.setContentsMargins(0, 0, 0, 0)
-        cloud_form = QFormLayout()
-        cloud_form.setSpacing(16)
-        cloud_form.setContentsMargins(0, 0, 0, 0)
+        # ── DeepSeek 配置分组 ──
+        self._deepseek_group = QFrame()
+        self._deepseek_group.setStyleSheet("QFrame { border: none; }")
+        ds_layout = QVBoxLayout(self._deepseek_group)
+        ds_layout.setContentsMargins(0, 0, 0, 0)
+        ds_form = QFormLayout()
+        ds_form.setSpacing(16)
+        ds_form.setContentsMargins(0, 0, 0, 0)
 
-        # API Key
         self._key_edit = QLineEdit()
         self._key_edit.setPlaceholderText("sk-xxxxxxxxxxxxxxxxxxxxxxxx")
         self._key_edit.setEchoMode(QLineEdit.Password)
@@ -299,57 +312,43 @@ class ApiConfigDialog(QDialog):
                 border-radius: 6px;
                 border: 1px solid #C8CCEE;
             }
-            QPushButton:checked {
-                background-color: #5060DD;
-                color: white;
-            }
+            QPushButton:checked { background-color: #5060DD; color: white; }
             QPushButton:hover { background-color: #DDE0FF; }
         """)
         self._show_btn.toggled.connect(self._toggle_key_visibility)
         key_layout.addWidget(self._show_btn)
-        cloud_form.addRow("API Key:", key_layout)
+        ds_form.addRow("API Key:", key_layout)
 
-        # Base URL
         self._url_edit = QLineEdit()
         self._url_edit.setPlaceholderText("https://api.deepseek.com")
         self._url_edit.setFont(QFont("Consolas", 10))
         self._apply_field_style(self._url_edit)
-        cloud_form.addRow("Base URL:", self._url_edit)
+        ds_form.addRow("Base URL:", self._url_edit)
 
-        # 模型名称
         self._model_edit = QLineEdit()
         self._model_edit.setPlaceholderText("deepseek-v4-flash")
         self._model_edit.setFont(QFont("Consolas", 10))
         self._apply_field_style(self._model_edit)
-        cloud_form.addRow("模型名称:", self._model_edit)
+        ds_form.addRow("模型名称:", self._model_edit)
 
-        # API 格式
         self._api_format_combo = QComboBox()
         self._api_format_combo.addItems(["openai", "anthropic"])
         self._api_format_combo.setFixedHeight(34)
         self._api_format_combo.setFont(QFont("Microsoft YaHei UI", 10))
         self._api_format_combo.setStyleSheet("""
             QComboBox {
-                border: 1px solid #D8D8EE;
-                border-radius: 8px;
-                padding: 4px 8px;
-                background-color: #FFFFFF;
-                color: #2C2C2C;
-                 
+                border: 1px solid #D8D8EE; border-radius: 8px; padding: 4px 8px;
+                background-color: #FFFFFF; color: #2C2C2C;
             }
             QComboBox:focus { border: 1px solid #6C7BFF; }
             QComboBox::drop-down { border: none; width: 24px; }
             QComboBox QAbstractItemView {
-                background-color: #FFFFFF;
-                border: 1px solid #D8D8EE;
-                selection-background-color: #ECEEFF;
-                color: #2C2C2C;
-                
+                background-color: #FFFFFF; border: 1px solid #D8D8EE;
+                selection-background-color: #ECEEFF; color: #2C2C2C;
             }
         """)
-        cloud_form.addRow("API 格式:", self._api_format_combo)
+        ds_form.addRow("API 格式:", self._api_format_combo)
 
-        # 最大 Token 数
         self._tokens_spin = QSpinBox()
         self._tokens_spin.setRange(512, 32768)
         self._tokens_spin.setSingleStep(512)
@@ -357,42 +356,95 @@ class ApiConfigDialog(QDialog):
         self._tokens_spin.setFont(QFont("Microsoft YaHei UI", 10))
         self._tokens_spin.setStyleSheet("""
             QSpinBox {
-                border: 1px solid #D8D8EE;
-                border-radius: 8px;
-                padding: 4px 8px;
-                background-color: #FFFFFF;
-                color: #2C2C2C;
-              
+                border: 1px solid #D8D8EE; border-radius: 8px; padding: 4px 8px;
+                background-color: #FFFFFF; color: #2C2C2C;
             }
             QSpinBox:focus { border: 1px solid #6C7BFF; }
         """)
-        cloud_form.addRow("最大 Token 数:", self._tokens_spin)
+        ds_form.addRow("最大 Token 数:", self._tokens_spin)
 
-        cloud_layout.addLayout(cloud_form)
+        ds_layout.addLayout(ds_form)
 
-        # 余额查询按钮
-        balance_btn = QPushButton("💰 查询余额")
-        balance_btn.setFixedHeight(36)
-        balance_btn.setFont(QFont("Microsoft YaHei UI", 9))
-        balance_btn.setCursor(Qt.PointingHandCursor)
-        balance_btn.setStyleSheet("""
+        self._balance_btn = QPushButton("💰 查询余额")
+        self._balance_btn.setFixedHeight(36)
+        self._balance_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        self._balance_btn.setCursor(Qt.PointingHandCursor)
+        self._balance_btn.setStyleSheet("""
             QPushButton {
-                background-color: #FF9500;
-                color: white;
-                border-radius: 8px;
-                border: none;
-                padding: 0 16px;
+                background-color: #FF9500; color: white; border-radius: 8px;
+                border: none; padding: 0 16px;
             }
             QPushButton:hover   { background-color: #E08600; }
             QPushButton:pressed { background-color: #C07600; }
             QPushButton:disabled{ background-color: #CCCCCC; }
         """)
-        balance_btn.clicked.connect(self._on_balance_query)
-        cloud_layout.addWidget(balance_btn)
+        self._balance_btn.clicked.connect(self._on_balance_query)
+        ds_layout.addWidget(self._balance_btn)
 
-        layout.addWidget(self._cloud_group)
+        layout.addWidget(self._deepseek_group)
 
-        # ── 本地配置分组 ──
+        # ── Agnes AI 配置分组 ──
+        self._agnes_group = QFrame()
+        self._agnes_group.setStyleSheet("QFrame { border: none; }")
+        ag_layout = QVBoxLayout(self._agnes_group)
+        ag_layout.setContentsMargins(0, 0, 0, 0)
+        ag_form = QFormLayout()
+        ag_form.setSpacing(16)
+        ag_form.setContentsMargins(0, 0, 0, 0)
+
+        self._agnes_key_edit = QLineEdit()
+        self._agnes_key_edit.setPlaceholderText("sk-xxxxxxxxxxxxxxxxxxxxxxxx")
+        self._agnes_key_edit.setEchoMode(QLineEdit.Password)
+        self._agnes_key_edit.setFont(QFont("Consolas", 10))
+        self._apply_field_style(self._agnes_key_edit)
+        ag_key_layout = QHBoxLayout()
+        ag_key_layout.addWidget(self._agnes_key_edit)
+        self._show_agnes_btn = QPushButton("显示")
+        self._show_agnes_btn.setFixedSize(52, 32)
+        self._show_agnes_btn.setCheckable(True)
+        self._show_agnes_btn.setCursor(Qt.PointingHandCursor)
+        self._show_agnes_btn.setFont(QFont("Microsoft YaHei UI", 8))
+        self._show_agnes_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ECEEFF; color: #5060DD;
+                border-radius: 6px; border: 1px solid #C8CCEE;
+            }
+            QPushButton:checked { background-color: #5060DD; color: white; }
+            QPushButton:hover { background-color: #DDE0FF; }
+        """)
+        self._show_agnes_btn.toggled.connect(self._toggle_agnes_key_visibility)
+        ag_key_layout.addWidget(self._show_agnes_btn)
+        ag_form.addRow("API Key:", ag_key_layout)
+
+        self._agnes_model_edit = QLineEdit()
+        self._agnes_model_edit.setPlaceholderText("agnes-2.0-flash")
+        self._agnes_model_edit.setFont(QFont("Consolas", 10))
+        self._apply_field_style(self._agnes_model_edit)
+        ag_form.addRow("模型名称:", self._agnes_model_edit)
+
+        ag_layout.addLayout(ag_form)
+
+        # Agnes 测试连接按钮
+        self._agnes_test_btn = QPushButton("🔗 测试 Agnes 连接")
+        self._agnes_test_btn.setFixedHeight(36)
+        self._agnes_test_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        self._agnes_test_btn.setCursor(Qt.PointingHandCursor)
+        self._agnes_test_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9500; color: white; border-radius: 8px;
+                border: none; padding: 0 16px;
+            }
+            QPushButton:hover   { background-color: #E08600; }
+            QPushButton:pressed { background-color: #C07600; }
+            QPushButton:disabled{ background-color: #CCCCCC; }
+        """)
+        self._agnes_test_btn.clicked.connect(self._on_agnes_test)
+        ag_layout.addWidget(self._agnes_test_btn)
+
+        self._agnes_group.hide()
+        layout.addWidget(self._agnes_group)
+
+        # ── 本地 Ollama 配置分组 ──
         self._local_group = QFrame()
         self._local_group.setStyleSheet("QFrame { border: none; }")
         local_layout = QVBoxLayout(self._local_group)
@@ -401,21 +453,18 @@ class ApiConfigDialog(QDialog):
         local_form.setSpacing(16)
         local_form.setContentsMargins(0, 0, 0, 0)
 
-        # 本地服务地址
         self._local_url_edit = QLineEdit()
         self._local_url_edit.setPlaceholderText("http://localhost:11434/v1")
         self._local_url_edit.setFont(QFont("Consolas", 10))
         self._apply_field_style(self._local_url_edit)
         local_form.addRow("Ollama 地址:", self._local_url_edit)
 
-        # 本地模型名称
         self._local_model_edit = QLineEdit()
         self._local_model_edit.setPlaceholderText("my-deepseek")
         self._local_model_edit.setFont(QFont("Consolas", 10))
         self._apply_field_style(self._local_model_edit)
         local_form.addRow("本地模型名:", self._local_model_edit)
 
-        # 路由模型名称（意图分类用小模型）
         self._router_model_edit = QLineEdit()
         self._router_model_edit.setPlaceholderText("my-qwen（留空则回退到规则路由）")
         self._router_model_edit.setFont(QFont("Consolas", 10))
@@ -428,16 +477,50 @@ class ApiConfigDialog(QDialog):
 
         layout.addStretch()
 
-    def _on_use_local_toggled(self, checked: bool):
-        """切换本地/云端模式的 UI 可见性。"""
-        self._cloud_group.setVisible(not checked)
-        self._local_group.setVisible(checked)
-        self._local_hint.setVisible(checked)
-        # 更新测试按钮文字
-        if checked:
-            self._test_btn.setText("测试本地模型连接")
-        else:
+        # ── 连接 radio 切换信号 ──
+        self._provider_group.buttonClicked.connect(self._on_provider_changed)
+
+    def _on_provider_changed(self, btn: QRadioButton):
+        """切换 AI 提供商时更新 UI 可见性。"""
+        if btn is self._radio_deepseek:
+            self._deepseek_group.setVisible(True)
+            self._agnes_group.setVisible(False)
+            self._local_group.setVisible(False)
+            self._provider_hint.setText(
+                "💡 DeepSeek V4 模型，支持 Function Calling 工具调用。\n"
+                "    需在 platform.deepseek.com 注册并申请 API Key。"
+            )
+            self._provider_hint.show()
             self._test_btn.setText("测试 DeepSeek 连接")
+            self._test_btn.show()
+            self._agnes_test_btn.hide()
+        elif btn is self._radio_agnes:
+            self._deepseek_group.setVisible(False)
+            self._agnes_group.setVisible(True)
+            self._local_group.setVisible(False)
+            self._provider_hint.setText(
+                "💡 Agnes AI 免费大模型，OpenAI 兼容协议，1M 上下文窗口，支持 Function Calling。\n"
+                "    需在 platform.agnes-ai.com 注册并申请 API Key。完全免费，不限量调用。"
+            )
+            self._provider_hint.show()
+            self._test_btn.hide()
+            self._agnes_test_btn.show()
+        elif btn is self._radio_local:
+            self._deepseek_group.setVisible(False)
+            self._agnes_group.setVisible(False)
+            self._local_group.setVisible(True)
+            self._provider_hint.setText(
+                "💡 使用本地 Ollama 部署的模型，无需联网，不消耗 API 额度。\n"
+                "    注意：本地模型不支持工具调用（打开应用、文件操作等），仅限纯文本聊天。"
+            )
+            self._provider_hint.show()
+            self._test_btn.setText("测试本地模型连接")
+            self._test_btn.show()
+            self._agnes_test_btn.hide()
+
+    def _toggle_agnes_key_visibility(self, checked: bool):
+        self._agnes_key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+        self._show_agnes_btn.setText("隐藏" if checked else "显示")
 
     # ── Tab: 阿里云语音识别 ─────────────────────────────────
 
@@ -963,13 +1046,11 @@ class ApiConfigDialog(QDialog):
     def _load(self):
         # DeepSeek 配置
         ds_cfg = get_api_config()
-        use_local = ds_cfg.get("use_local", False)
-        self._use_local_check.setChecked(use_local)
+        provider = ds_cfg.get("provider", "deepseek")
         self._key_edit.setText(ds_cfg.get("api_key", ""))
         self._url_edit.setText(ds_cfg.get("base_url", "https://api.deepseek.com"))
         self._model_edit.setText(ds_cfg.get("model", "deepseek-v4-flash"))
         self._tokens_spin.setValue(ds_cfg.get("max_tokens", 4096))
-        # api_format
         api_format = ds_cfg.get("api_format", "openai")
         idx = self._api_format_combo.findText(api_format)
         if idx >= 0:
@@ -977,14 +1058,25 @@ class ApiConfigDialog(QDialog):
         self._local_url_edit.setText(ds_cfg.get("local_base_url", "http://localhost:11434/v1"))
         self._local_model_edit.setText(ds_cfg.get("local_model_name", "my-deepseek"))
         self._router_model_edit.setText(ds_cfg.get("router_model", "my-qwen"))
-        # 根据 use_local 状态切换 UI（toggle 信号不会在 setChecked 前触发）
-        self._cloud_group.setVisible(not use_local)
-        self._local_group.setVisible(use_local)
-        self._local_hint.setVisible(use_local)
-        if use_local:
-            self._test_btn.setText("测试本地模型连接")
+
+        # Agnes AI 配置
+        from config import get_agnes_config
+        agnes_cfg = get_agnes_config()
+        self._agnes_key_edit.setText(agnes_cfg.get("api_key", ""))
+        self._agnes_model_edit.setText(agnes_cfg.get("model", "agnes-2.0-flash"))
+
+        # 根据 provider 恢复 RadioButton 选中状态
+        if provider == "local":
+            self._radio_local.setChecked(True)
+        elif provider == "agnes":
+            self._radio_agnes.setChecked(True)
         else:
-            self._test_btn.setText("测试 DeepSeek 连接")
+            self._radio_deepseek.setChecked(True)
+
+        # 手动触发 UI 更新（setChecked 不会触发 buttonClicked 信号）
+        checked = self._provider_group.checkedButton()
+        if checked:
+            self._on_provider_changed(checked)
 
         # 阿里云 STT 配置
         ali_cfg = get_aliyun_stt_config()
@@ -1024,16 +1116,32 @@ class ApiConfigDialog(QDialog):
     # ── 数据收集 ─────────────────────────────────────────────
 
     def _collect_deepseek(self) -> dict:
+        """收集 DeepSeek 配置（含 provider 选择）。"""
+        if self._radio_local.isChecked():
+            provider = "local"
+        elif self._radio_agnes.isChecked():
+            provider = "agnes"
+        else:
+            provider = "deepseek"
         return {
             "api_key":    self._key_edit.text().strip(),
             "base_url":   self._url_edit.text().strip() or "https://api.deepseek.com",
             "model":      self._model_edit.text().strip() or "deepseek-v4-flash",
             "max_tokens": self._tokens_spin.value(),
             "api_format": self._api_format_combo.currentText(),
-            "use_local": self._use_local_check.isChecked(),
+            "provider":   provider,
+            "use_local":  (provider == "local"),
             "local_base_url": self._local_url_edit.text().strip() or "http://localhost:11434/v1",
             "local_model_name": self._local_model_edit.text().strip() or "my-deepseek",
             "router_model": self._router_model_edit.text().strip(),
+        }
+
+    def _collect_agnes(self) -> dict:
+        """收集 Agnes AI 配置。"""
+        return {
+            "api_key":  self._agnes_key_edit.text().strip(),
+            "base_url": "https://apihub.agnes-ai.com/v1",
+            "model":    self._agnes_model_edit.text().strip() or "agnes-2.0-flash",
         }
 
     def _collect_aliyun(self) -> dict:
@@ -1071,12 +1179,21 @@ class ApiConfigDialog(QDialog):
     # ── 保存 ─────────────────────────────────────────────────
 
     def _on_save(self):
-        # DeepSeek
+        # DeepSeek（含 provider 选择）
         ds_cfg = self._collect_deepseek()
-        if not ds_cfg["use_local"] and not ds_cfg["api_key"]:
+        provider = ds_cfg.get("provider", "deepseek")
+        if provider == "deepseek" and not ds_cfg["api_key"]:
             QMessageBox.warning(self, "提示", "DeepSeek API Key 不能为空！")
             return
+        if provider == "agnes" and not self._agnes_key_edit.text().strip():
+            QMessageBox.warning(self, "提示", "Agnes AI API Key 不能为空！")
+            return
         save_api_config(ds_cfg)
+
+        # Agnes AI 配置（独立存储）
+        agnes_cfg = self._collect_agnes()
+        from config import save_agnes_config
+        save_agnes_config(agnes_cfg)
 
         # 阿里云语音识别
         ali_cfg = self._collect_aliyun()
@@ -1108,47 +1225,102 @@ class ApiConfigDialog(QDialog):
     # ── 测试 DeepSeek 连接 ────────────────────────────────────
 
     def _on_test(self):
-        cfg = self._collect_deepseek()
-        is_local = cfg.get("use_local", False)
-        if not is_local and not cfg["api_key"]:
-            QMessageBox.warning(self, "提示", "请先填写 DeepSeek API Key！")
+        """测试连接（DeepSeek 或 Ollama 本地）。"""
+        if self._radio_local.isChecked():
+            cfg = self._collect_deepseek()
+            api_key = "ollama"
+            base_url = cfg.get("local_base_url", "http://localhost:11434/v1")
+            model = cfg.get("local_model_name", "my-deepseek")
+            is_local = True
+            api_name = "本地 Ollama"
+        elif self._radio_agnes.isChecked():
+            # Agnes 有独立的测试按钮，不应该走到这里
             return
+        else:
+            cfg = self._collect_deepseek()
+            if not cfg["api_key"]:
+                QMessageBox.warning(self, "提示", "请先填写 DeepSeek API Key！")
+                return
+            api_key = cfg["api_key"]
+            base_url = cfg["base_url"]
+            model = cfg["model"]
+            is_local = False
+            api_name = "DeepSeek API"
+
         if self._test_worker and self._test_worker.isRunning():
             return
 
         self._test_btn.setEnabled(False)
         self._test_btn.setText("连接中…")
 
-        if is_local:
-            api_key = "ollama"
-            base_url = cfg.get("local_base_url", "http://localhost:11434/v1")
-            model = cfg.get("local_model_name", "my-deepseek")
-        else:
-            api_key = cfg["api_key"]
-            base_url = cfg["base_url"]
-            model = cfg["model"]
-
-        self._test_worker = _TestWorker(
-            api_key, base_url, model, is_local=is_local, parent=self
-        )
-        self._test_worker.success.connect(self._on_test_success)
-        self._test_worker.failed.connect(self._on_test_failed)
+        self._test_worker = _TestWorker(api_key, base_url, model, is_local=is_local, parent=self)
+        self._test_worker.success.connect(lambda reply: self._on_test_success(reply, api_name))
+        self._test_worker.failed.connect(lambda err: self._on_test_failed(err, api_name, is_local))
         self._test_worker.start()
 
-    def _on_test_success(self, reply: str):
+    def _on_agnes_test(self):
+        """测试 Agnes AI 连接。"""
+        agnes_cfg = self._collect_agnes()
+        if not agnes_cfg["api_key"]:
+            QMessageBox.warning(self, "提示", "请先填写 Agnes AI API Key！")
+            return
+        if self._test_worker and self._test_worker.isRunning():
+            return
+
+        self._agnes_test_btn.setEnabled(False)
+        self._agnes_test_btn.setText("连接中…")
+
+        self._test_worker = _TestWorker(
+            agnes_cfg["api_key"], agnes_cfg["base_url"], agnes_cfg["model"],
+            is_local=False, parent=self
+        )
+        self._test_worker.success.connect(lambda reply: self._on_agnes_test_success(reply))
+        self._test_worker.failed.connect(lambda err: self._on_agnes_test_failed(err))
+        self._test_worker.start()
+
+    def _on_agnes_test_success(self, reply: str):
+        self._agnes_test_btn.setEnabled(True)
+        self._agnes_test_btn.setText("🔗 测试 Agnes 连接")
+        QMessageBox.information(self, "连接成功", f"Agnes AI 连接正常！\n模型回复了：{reply}…")
+
+    def _on_agnes_test_failed(self, err: str):
+        self._agnes_test_btn.setEnabled(True)
+        self._agnes_test_btn.setText("🔗 测试 Agnes 连接")
+        QMessageBox.warning(
+            self, "连接失败",
+            f"无法连接到 Agnes AI。请检查 API Key 是否正确。\n\n错误信息：{err}"
+        )
+
+    def _on_test_success(self, reply: str, api_name: str = "API"):
         self._test_btn.setEnabled(True)
-        is_local = self._use_local_check.isChecked()
-        label = "测试本地模型连接" if is_local else "测试 DeepSeek 连接"
-        self._test_btn.setText(label)
-        api_name = "本地 Ollama" if is_local else "DeepSeek API"
-        QMessageBox.information(
-            self, "连接成功",
-            f"{api_name} 连接正常！\n模型回复了：{reply}…"
+        if self._radio_local.isChecked():
+            self._test_btn.setText("测试本地模型连接")
+        else:
+            self._test_btn.setText("测试 DeepSeek 连接")
+        QMessageBox.information(self, "连接成功", f"{api_name} 连接正常！\n模型回复了：{reply}…")
+
+    def _on_test_failed(self, err: str, api_name: str = "API", is_local: bool = False):
+        self._test_btn.setEnabled(True)
+        if is_local:
+            self._test_btn.setText("测试本地模型连接")
+        else:
+            self._test_btn.setText("测试 DeepSeek 连接")
+        hint = (
+            "请确认 Ollama 已启动（命令行运行 ollama serve），\n"
+            f"且模型已通过 ollama create 导入。"
+        ) if is_local else "请检查 Key 和 URL 是否正确。"
+        QMessageBox.warning(
+            self, "连接失败",
+            f"无法连接到 {api_name}。{hint}\n\n错误信息：{err}"
         )
 
     # ── 余额查询 ──────────────────────────────────────────
 
     def _on_balance_query(self):
+        """仅支持 DeepSeek 余额查询。"""
+        if not self._radio_deepseek.isChecked():
+            QMessageBox.information(self, "提示", "余额查询仅支持 DeepSeek API。")
+            return
         api_key = self._key_edit.text().strip()
         if not api_key:
             QMessageBox.warning(self, "提示", "请先在 DeepSeek API 选项卡中填写 API Key！")
@@ -1180,18 +1352,3 @@ class ApiConfigDialog(QDialog):
 
     def _on_balance_failed(self, err: str):
         QMessageBox.warning(self, "余额查询失败", f"无法获取余额信息：\n{err}")
-
-    def _on_test_failed(self, err: str):
-        self._test_btn.setEnabled(True)
-        is_local = self._use_local_check.isChecked()
-        label = "测试本地模型连接" if is_local else "测试 DeepSeek 连接"
-        self._test_btn.setText(label)
-        api_name = "本地 Ollama" if is_local else "DeepSeek API"
-        hint = (
-            "请确认 Ollama 已启动（命令行运行 ollama serve），\n"
-            f"且模型已通过 ollama create 导入。"
-        ) if is_local else "请检查 Key 和 URL 是否正确。"
-        QMessageBox.warning(
-            self, "连接失败",
-            f"无法连接到 {api_name}。{hint}\n\n错误信息：{err}"
-        )

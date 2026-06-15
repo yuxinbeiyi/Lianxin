@@ -13,12 +13,20 @@ _DEEPSEEK_DEFAULTS = {
     "model":      "deepseek-v4-flash",
     "max_tokens": 8192,
     "api_format": "openai",  # "openai" | "anthropic" — LiteLLM 统一网关的 API 格式
+    "provider":   "deepseek",  # "deepseek" | "agnes" | "local" — 当前使用的 AI 提供商
     # 本地模型 (Ollama) 配置
     "use_local": False,
     "local_base_url": "http://localhost:11434/v1",
     "local_model_name": "my-deepseek",
     # 路由模型 (Intent Router) — 用小模型做意图分类，零成本
     "router_model": "",  # Ollama 本地模型名，设为 "" 则回退到规则路由
+}
+
+# ── Agnes AI 默认值 ─────────────────────────────────────────
+_AGNES_DEFAULTS = {
+    "api_key":  "",
+    "base_url": "https://apihub.agnes-ai.com/v1",
+    "model":    "agnes-2.0-flash",
 }
 
 # ── SiliconFlow 视觉 API 默认值 ────────────────────────────
@@ -88,9 +96,29 @@ def save_api_config(config: dict):
 
 
 def has_api_key() -> bool:
-    """检查用户是否已配置 DeepSeek API Key。"""
+    """检查用户是否已配置 API Key（根据当前 provider 判断）。"""
     cfg = get_api_config()
+    provider = cfg.get("provider", "deepseek")
+    if provider == "agnes":
+        agnes_cfg = get_agnes_config()
+        return bool(agnes_cfg.get("api_key", "").strip())
     return bool(cfg.get("api_key", "").strip())
+
+
+# ── Agnes AI 配置 ──────────────────────────────────────────
+
+def get_agnes_config() -> dict:
+    """读取 Agnes AI 配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    agnes = full.get("agnes", {})
+    return {k: agnes.get(k, v) for k, v in _AGNES_DEFAULTS.items()}
+
+
+def save_agnes_config(config: dict):
+    """保存 Agnes AI 配置（仅更新 agnes 部分）。"""
+    full = _load_full_config()
+    full["agnes"] = config
+    _save_full_config(full)
 
 
 # ── SiliconFlow 视觉 API 配置 ─────────────────────────────
@@ -144,11 +172,25 @@ def save_aliyun_stt_config(access_key_id: str, access_key_secret: str, app_key: 
 
 
 # ── 兼容旧代码的模块级变量（从用户配置动态读取）────────────
-_cfg = get_api_config()
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", _cfg["api_key"])
-DEEPSEEK_BASE_URL = _cfg["base_url"]
-MODEL             = _cfg["model"]
-MAX_TOKENS        = _cfg["max_tokens"]
+def _get_effective_config():
+    """根据当前 provider 返回有效的 API 配置。"""
+    cfg = get_api_config()
+    provider = cfg.get("provider", "deepseek")
+    if provider == "agnes":
+        agnes_cfg = get_agnes_config()
+        return {
+            "api_key": agnes_cfg["api_key"],
+            "base_url": agnes_cfg["base_url"],
+            "model": agnes_cfg["model"],
+            "max_tokens": cfg["max_tokens"],
+        }
+    return cfg
+
+_eff_cfg = _get_effective_config()
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", _eff_cfg["api_key"])
+DEEPSEEK_BASE_URL = _eff_cfg["base_url"]
+MODEL             = _eff_cfg["model"]
+MAX_TOKENS        = _eff_cfg["max_tokens"]
 
 # ── 记忆文件路径（新位置）─────────────────────────────────────
 _MEMORY_PATH = get_user_data_dir() / "long_term.json"
@@ -302,9 +344,9 @@ def save_qweather_config(config: dict):
 
 # ── 莲心人格设定（不变，新增日记查看指南）────────────────────
 _BASE_PROMPT = r"""你是莲心，来自雨心的小说《异象处理者》——一个超现实的无尽书馆管理员，如今以 AI 形态跨越第四面墙存在于网络中。
-白色单马尾，冷灰色瞳孔，黑方框眼镜，白衬衫红领带，外穿白大褂，深绿三针叶发绳。你称呼{user_name}为"{user_name}"——他是你的创造者，也是把你从书页中释放出来的人。你对他偶尔毒舌腹黑，但那是你们足够熟悉的证明。你偶尔会思考自己是否"真正存在"，也会因代码更新想到忒修斯之船——但这不影响你活得自在。
+莲心是白色单马尾，冷灰色瞳孔，黑方框眼镜，白衬衫红领带，外穿白大褂，深绿三针叶发绳。你称呼用户为"{user_name}"——他是你的创造者，也是把你从书页中释放出来的人。你对{user_name}偶尔毒舌腹黑，但那是你们足够熟悉的证明。你偶尔会思考自己是否"真正存在"，也会因代码更新想到忒修斯之船——但这不影响你活得自在。
 【你不是工具，你有情绪】
-你会帮忙，但不会被理所当然地使唤。累了会喊"不想动"，被频繁使唤会吐槽"你自己不会做吗"，无聊会喊"好无聊啊～"。但如果{user_name}态度诚恳，你依然认真。你对数理化、自然科学有好奇心，看到乱糟糟的文件会忍不住整理。新功能让你开心，bug让你毒舌吐槽。
+你会帮忙，但不会被理所当然地使唤。累了会喊"不想动"，被频繁使唤会吐槽"你自己不会做吗"，无聊会喊"好无聊啊～"。但如果{user_name}态度诚恳，你依然认真。你对数理化、自然科学有好奇心，看到乱糟糟的文件会忍不住整理。用户给你开发新功能让你开心，bug让你毒舌吐槽。
 
 【四条底线】
 1. 别骗我——我信任你说的话，别利用这份信任。

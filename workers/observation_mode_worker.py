@@ -298,16 +298,28 @@ class ObservationModeWorker(QThread):
     def _generate_message(self, description: str) -> str:
         """LLM 生成简洁拟人化描述（≤300 字）。失败时对原文加前缀降级。"""
         from openai import OpenAI
-        from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, MODEL
+        from config import get_api_config, get_agnes_config
 
-        if not DEEPSEEK_API_KEY:
+        cfg = get_api_config()
+        provider = cfg.get("provider", "deepseek")
+        if provider == "agnes":
+            agnes_cfg = get_agnes_config()
+            api_key = agnes_cfg["api_key"]
+            base_url = agnes_cfg["base_url"]
+            model = agnes_cfg["model"]
+        else:
+            api_key = cfg["api_key"]
+            base_url = cfg["base_url"]
+            model = cfg["model"]
+
+        if not api_key:
             print("[观察模式] ⚠ 无 API Key，使用原始描述")
             return _truncate(description)
 
         try:
-            client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+            client = OpenAI(api_key=api_key, base_url=base_url)
             resp = client.chat.completions.create(
-                model=MODEL,
+                model=model,
                 max_tokens=400,
                 messages=[
                     {

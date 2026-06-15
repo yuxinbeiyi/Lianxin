@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
+import os
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton,
     QScrollArea, QFrame, QComboBox, QLineEdit, QCheckBox, QDialogButtonBox,
-    QWidget
+    QWidget, QFileDialog
 )
 
 from PyQt5.QtCore import Qt
@@ -151,6 +152,41 @@ class SoundSettingsDialog(QDialog):
         gs_vbox.addWidget(self._tts_gs_status)
         scroll_layout.addWidget(gs_frame)
 
+        # 参考音频来源
+        ref_frame = self._create_frame()
+        ref_vbox = QVBoxLayout(ref_frame)
+        ref_vbox.setSpacing(6)
+        ref_title = QLabel("🎤 参考音频来源")
+        ref_title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        ref_vbox.addWidget(ref_title)
+
+        ref_row = QHBoxLayout()
+        self._ref_wav_combo = QComboBox()
+        self._ref_wav_combo.setMinimumWidth(280)
+        self._refresh_ref_wav_list()
+        ref_row.addWidget(self._ref_wav_combo, 1)
+
+        refresh_btn = QPushButton("🔄 刷新列表")
+        refresh_btn.setFixedWidth(100)
+        refresh_btn.clicked.connect(self._refresh_ref_wav_list)
+        ref_row.addWidget(refresh_btn)
+
+        browse_btn = QPushButton("📁 浏览…")
+        browse_btn.setFixedWidth(80)
+        browse_btn.clicked.connect(self._browse_ref_wav)
+        ref_row.addWidget(browse_btn)
+        ref_vbox.addLayout(ref_row)
+
+        ref_desc = QLabel(
+            "选择后莲心将固定使用该音色，不随情绪自动切换。\n"
+            "选择「自动匹配」则根据每句话的情绪关键词自动选择参考音频。\n"
+            "将 WAV 文件放入 skills/语音合成/ref_wavs/ 目录后点击刷新。"
+        )
+        ref_desc.setWordWrap(True)
+        ref_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        ref_vbox.addWidget(ref_desc)
+        scroll_layout.addWidget(ref_frame)
+
         # 默认情绪
         mood_frame = self._create_frame()
         mood_vbox = QVBoxLayout(mood_frame)
@@ -267,6 +303,10 @@ class SoundSettingsDialog(QDialog):
         self._tts_warmup_cb.setChecked(self._tts_cfg.get("tts_warmup", True))
         self._update_gs_status()
 
+        # 恢复参考音频选择
+        override = self._tts_cfg.get("ref_wav_override", "")
+        self._refresh_ref_wav_list(select_path=override)
+
         # 静默模式
         self._silent_cb.setChecked(self._settings.silent_mode)
 
@@ -298,6 +338,49 @@ class SoundSettingsDialog(QDialog):
             self._tts_gs_status.setText("已选择目录但未检测到 GPT_SoVITS 模块，请确认路径正确")
             self._tts_gs_status.setStyleSheet("color: #F39C12; font-size: 11px;")
 
+    def _refresh_ref_wav_list(self, select_path: str = ""):
+        """扫描 ref_wavs 目录并刷新下拉列表。如果 select_path 非空，选中对应项。"""
+        self._ref_wav_combo.clear()
+        self._ref_wav_combo.addItem("自动匹配（根据情绪选择）", "")
+
+        ref_dirs = [
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "skills", "语音合成", "ref_wavs"),
+            os.path.join(str(__import__("pathlib").Path.home()), ".lianxin", "tts", "ref_wavs"),
+        ]
+
+        found_wavs = []
+        for ref_dir in ref_dirs:
+            if not os.path.isdir(ref_dir):
+                continue
+            for root, dirs, files in os.walk(ref_dir):
+                for fname in sorted(files):
+                    if fname.lower().endswith(".wav"):
+                        full = os.path.join(root, fname)
+                        mood_dir = os.path.basename(os.path.dirname(full))
+                        label = f"{fname}"
+                        if mood_dir in ("casual", "tsundere", "romantic", "long", "angry"):
+                            label = f"[{mood_dir}] {fname}"
+                        found_wavs.append((label, full))
+
+        target_idx = 0
+        for i, (label, path) in enumerate(found_wavs, 1):
+            self._ref_wav_combo.addItem(label, path)
+            if select_path and os.path.normpath(path) == os.path.normpath(select_path):
+                target_idx = i
+
+        self._ref_wav_combo.setCurrentIndex(target_idx)
+
+    def _browse_ref_wav(self):
+        """手动浏览选择 WAV 参考音频文件。"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择参考音频", "", "WAV 音频文件 (*.wav)"
+        )
+        if not path:
+            return
+        fname = os.path.basename(path)
+        self._ref_wav_combo.insertItem(1, f"📁 {fname}", path)
+        self._ref_wav_combo.setCurrentIndex(1)
+
     def _on_tts_speed_changed(self, value: int):
         speed = value / 100.0
         self._tts_speed_value.setText(f"{speed:.1f}x")
@@ -325,6 +408,11 @@ class SoundSettingsDialog(QDialog):
         mood = self._tts_mood_combo.currentData()
         speed_val = self._tts_speed_slider.value() / 100.0
 
+        # 收集参考音频选择
+        ref_wav_override = ""
+        if self._ref_wav_combo.currentData():
+            ref_wav_override = self._ref_wav_combo.currentData()
+
         save_tts_config({
             "engine": engine,
             "gpt_sovits_path": gs_path,
@@ -336,6 +424,7 @@ class SoundSettingsDialog(QDialog):
             "sample_steps": self._tts_cfg.get("sample_steps", 32),
             "edge_tts_voice": self._tts_cfg.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural"),
             "tts_warmup": self._tts_cfg.get("tts_warmup", True),
+            "ref_wav_override": ref_wav_override,
         })
 
 
@@ -395,6 +484,11 @@ class SoundSettingsDialog(QDialog):
         speed = self._tts_speed_slider.value() / 100.0
         warmup = self._tts_warmup_cb.isChecked()
 
+        # 收集参考音频选择
+        ref_wav_override = ""
+        if self._ref_wav_combo.currentData():
+            ref_wav_override = self._ref_wav_combo.currentData()
+
         save_tts_config({
             "engine": engine,
             "gpt_sovits_path": gs_path,
@@ -406,6 +500,7 @@ class SoundSettingsDialog(QDialog):
             "sample_steps": self._tts_cfg.get("sample_steps", 32),
             "edge_tts_voice": self._tts_cfg.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural"),
             "tts_warmup": warmup,
+            "ref_wav_override": ref_wav_override,
         })
 
         self.accept()

@@ -10,7 +10,7 @@ from typing import Optional
 
 from PyQt5.QtCore import QThread, pyqtSignal
 from openai import OpenAI
-from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, MODEL, MAX_TOKENS
+from config import get_api_config, get_agnes_config
 from brain.graph_memory import list_all_facts, ALL_CATEGORIES
 from memory.history_manager import HistoryManager
 from utils.settings import get_settings
@@ -230,10 +230,19 @@ class ProactiveWorker(QThread):
         user_name = _get_user_name()
         return f"（暂无历史对话和记忆，请根据莲心的性格随机发起一个话题，例如关心{user_name}在做什么，或者分享一个有趣的想法）"
 
+    def _get_client(self):
+        """根据当前 provider 获取 OpenAI 客户端。"""
+        cfg = get_api_config()
+        provider = cfg.get("provider", "deepseek")
+        if provider == "agnes":
+            agnes_cfg = get_agnes_config()
+            return OpenAI(api_key=agnes_cfg["api_key"], base_url=agnes_cfg["base_url"]), agnes_cfg["model"]
+        return OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"]), cfg["model"]
+
     def _generate(self, context: str, is_observation: bool = False,
                   is_shoulder_explore: bool = False) -> str:
-        """调用 DeepSeek API 生成一条主动消息。"""
-        client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+        """调用 API 生成一条主动消息。"""
+        client, model = self._get_client()
 
         if is_shoulder_explore:
             system = _format_prompt(_SHOULDER_EXPLORE_SYSTEM)
@@ -250,8 +259,8 @@ class ProactiveWorker(QThread):
         )
 
         response = client.chat.completions.create(
-            model=MODEL,
-            max_tokens=min(MAX_TOKENS, 256),
+            model=model,
+            max_tokens=256,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user",   "content": user_prompt},
