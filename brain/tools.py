@@ -1700,6 +1700,70 @@ TOOL_DEFINITIONS = [
         }
     },
 
+    # ==================== 图片生成工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": (
+                "根据文字描述生成图片。使用 Agnes Image API，支持多种尺寸和质量。"
+                "当用户要求画图、生成图片、创作图像、制作插图时调用此工具。"
+                "生成后图片会自动保存，用户可以查看和下载。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "图片描述（中文或英文），越详细越好。例如：'一只可爱的橘猫坐在窗台上，窗外是星空，油画风格'"
+                    },
+                    "size": {
+                        "type": "string",
+                        "enum": ["1024x1024", "1792x1024", "1024x1792", "4k"],
+                        "description": "图片尺寸，默认使用配置中的默认值"
+                    },
+                    "quality": {
+                        "type": "string",
+                        "enum": ["standard", "hd"],
+                        "description": "图片质量，默认使用配置中的默认值"
+                    }
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
+
+    # ==================== 视频生成工具 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_video",
+            "description": (
+                "根据文字或图片生成视频。使用 Agnes Video API，支持文生视频和图生视频。"
+                "视频生成是异步任务，约需 1-5 分钟完成。"
+                "当用户要求生成视频、制作动画、让图片动起来时调用此工具。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "视频内容描述（中文或英文）。图生视频时描述需要哪些内容运动。"
+                    },
+                    "image_url": {
+                        "type": "string",
+                        "description": "参考图片的 URL（可选）。如果提供，将基于该图片生成视频（图生视频模式）。"
+                    },
+                    "duration": {
+                        "type": "integer",
+                        "description": "视频时长（秒），可选 3、5、10、18。默认 5 秒。"
+                    }
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
+
 
 ]
 
@@ -3333,6 +3397,162 @@ def describe_image(image_path: str, prompt: str = "") -> str:
         vision_prompt = "请详细描述这张图片里的内容，包括人物、物体、场景、动作、颜色等。"
     return _vision_describe(image_path, prompt=vision_prompt)
 
+
+def generate_image(prompt: str, size: str = None, quality: str = None) -> str:
+    """使用 Agnes Image API 生成图片。返回本地保存路径或错误信息。"""
+    import requests
+    from config import get_agnes_config, get_image_gen_config
+
+    agnes_cfg = get_agnes_config()
+    api_key = agnes_cfg.get("api_key", "").strip()
+    if not api_key:
+        return "图片生成失败：未配置 Agnes AI API Key。请在设置中切换到 Agnes AI 并填写 API Key。"
+
+    ig_cfg = get_image_gen_config()
+    if not ig_cfg.get("enabled", True):
+        return "图片生成功能已在设置中关闭。请在「创作生图」选项卡中启用。"
+
+    model = ig_cfg.get("model", "agnes-image-2.1-flash")
+    final_size = size or ig_cfg.get("default_size", "1024x1024")
+    final_quality = quality or ig_cfg.get("default_quality", "standard")
+
+    try:
+        resp = requests.post(
+            "https://apihub.agnes-ai.com/v1/images/generations",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "prompt": prompt,
+                "size": final_size,
+                "quality": final_quality,
+                "n": 1,
+            },
+            timeout=180,
+        )
+        if resp.status_code != 200:
+            return f"图片生成失败：HTTP {resp.status_code} — {resp.text[:200]}"
+
+        data = resp.json()
+        img_data = data.get("data", [])
+        if not img_data:
+            return "图片生成失败：API 返回数据为空"
+
+        img_url = img_data[0].get("url") or img_data[0].get("b64_json")
+        if not img_url:
+            return "图片生成失败：返回数据中未找到图片 URL"
+
+        save_dir = os.path.join(os.path.expanduser("~"), ".lianxin", "generated_images")
+        os.makedirs(save_dir, exist_ok=True)
+        timestamp = int(__import__('time').time())
+        safe_name = re.sub(r'[^\w一-鿿]', '_', prompt[:20]).strip('_')
+        save_path = os.path.join(save_dir, f"{safe_name}_{timestamp}.png")
+
+        if img_url.startswith("http"):
+            img_resp = requests.get(img_url, timeout=60)
+            with open(save_path, "wb") as f:
+                f.write(img_resp.content)
+        else:
+            import base64
+            with open(save_path, "wb") as f:
+                f.write(base64.b64decode(img_url))
+
+        return f"图片已生成并保存到：{save_path}"
+
+    except Exception as e:
+        return f"图片生成异常：{e}"
+
+
+def generate_video(prompt: str, image_url: str = None, duration: int = None) -> str:
+    """使用 Agnes Video API 生成视频。返回本地保存路径或错误信息。"""
+    import requests, time
+    from config import get_agnes_config, get_video_gen_config
+
+    agnes_cfg = get_agnes_config()
+    api_key = agnes_cfg.get("api_key", "").strip()
+    if not api_key:
+        return "视频生成失败：未配置 Agnes AI API Key。请在设置中切换到 Agnes AI 并填写 API Key。"
+
+    vg_cfg = get_video_gen_config()
+    if not vg_cfg.get("enabled", True):
+        return "视频生成功能已在设置中关闭。请在「创作视频」选项卡中启用。"
+
+    model = vg_cfg.get("model", "agnes-video-v2.0")
+    final_duration = duration or vg_cfg.get("default_duration", 5)
+    fps = vg_cfg.get("default_frame_rate", 24)
+    num_frames = final_duration * fps
+    if num_frames > 441:
+        num_frames = 441
+    num_frames = ((num_frames - 1) // 8) * 8 + 1
+    if num_frames < 9:
+        num_frames = 9
+
+    try:
+        body = {
+            "model": model,
+            "prompt": prompt,
+            "num_frames": num_frames,
+            "frame_rate": fps,
+        }
+        if image_url:
+            body["image"] = image_url
+
+        resp = requests.post(
+            "https://apihub.agnes-ai.com/v1/videos",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=body,
+            timeout=120,
+        )
+        if resp.status_code != 200:
+            return f"视频创建失败：HTTP {resp.status_code} — {resp.text[:200]}"
+
+        data = resp.json()
+        video_id = data.get("video_id", "")
+        if not video_id:
+            return "视频创建失败：未获取到 video_id"
+
+        for _ in range(60):
+            time.sleep(5)
+            q_resp = requests.get(
+                f"https://apihub.agnes-ai.com/agnesapi?video_id={video_id}",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=60,
+            )
+            if q_resp.status_code != 200:
+                continue
+            q_data = q_resp.json()
+            status = q_data.get("status", "")
+            if status == "completed":
+                video_url = q_data.get("remixed_from_video_id", "")
+                if not video_url:
+                    return "视频生成失败：未获取到视频 URL"
+
+                save_dir = os.path.join(os.path.expanduser("~"), ".lianxin", "videos")
+                os.makedirs(save_dir, exist_ok=True)
+                timestamp = int(time.time())
+                safe_name = re.sub(r'[^\w一-鿿]', '_', prompt[:20]).strip('_')
+                save_path = os.path.join(save_dir, f"{safe_name}_{timestamp}.mp4")
+
+                v_resp = requests.get(video_url, timeout=300)
+                with open(save_path, "wb") as f:
+                    f.write(v_resp.content)
+
+                return f"视频已生成并保存到：{save_path}"
+
+            elif status == "failed":
+                err = q_data.get("error", "未知错误")
+                if isinstance(err, dict):
+                    err = err.get("message", str(err))
+                return f"视频生成失败：{err}"
+
+        return "视频生成超时（5 分钟），请稍后重试"
+
+    except Exception as e:
+        return f"视频生成异常：{e}"
+
+
 def send_file_to_qq(path: str, name: str = "") -> str:
     """将本地文件发送到主人的 QQ 上。"""
     global _qq_bridge_worker
@@ -4146,6 +4366,8 @@ TOOL_EXECUTORS = {
     "ocr_image": lambda inp: ocr_image(inp["image_path"], inp.get("language", "chi_sim+eng")),
     "ocr_batch": lambda inp: ocr_batch(inp["folder_path"], inp.get("language", "chi_sim+eng")),
     "describe_image": lambda inp: describe_image(inp["image_path"], inp.get("prompt", "")),
+    "generate_image": lambda inp: generate_image(inp["prompt"], inp.get("size"), inp.get("quality")),
+    "generate_video": lambda inp: generate_video(inp["prompt"], inp.get("image_url"), inp.get("duration")),
     "send_file_to_qq": lambda inp: send_file_to_qq(inp["path"], inp.get("name", "")),
     "capture_from_camera": lambda inp: capture_from_camera(),
     "search_cross_session": lambda inp: search_cross_session(inp["keyword"], inp.get("limit", 5)),

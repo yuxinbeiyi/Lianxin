@@ -29,6 +29,15 @@ _AGNES_DEFAULTS = {
     "model":    "agnes-2.0-flash",
 }
 
+# ── Agnes 图片生成默认值 ───────────────────────────────────
+_IMAGE_GEN_DEFAULTS = {
+    "enabled":        True,
+    "model":          "agnes-image-2.1-flash",
+    "default_size":   "1024x1024",
+    "default_quality": "standard",
+    "save_dir":       "",
+}
+
 # ── SiliconFlow 视觉 API 默认值 ────────────────────────────
 _SILICONFLOW_DEFAULTS = {
     "api_key":       "",
@@ -118,6 +127,46 @@ def save_agnes_config(config: dict):
     """保存 Agnes AI 配置（仅更新 agnes 部分）。"""
     full = _load_full_config()
     full["agnes"] = config
+    _save_full_config(full)
+
+
+def get_image_gen_config() -> dict:
+    """读取 Agnes 图片生成配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    ig = full.get("image_gen", {})
+    return {k: ig.get(k, v) for k, v in _IMAGE_GEN_DEFAULTS.items()}
+
+
+def save_image_gen_config(config: dict):
+    """保存 Agnes 图片生成配置（仅更新 image_gen 部分）。"""
+    full = _load_full_config()
+    full["image_gen"] = config
+    _save_full_config(full)
+
+
+# ── Agnes 视频生成默认值 ──────────────────────────────────
+_VIDEO_GEN_DEFAULTS = {
+    "enabled":           True,
+    "model":             "agnes-video-v2.0",
+    "default_duration":  5,
+    "default_frame_rate": 24,
+    "default_width":     1152,
+    "default_height":    768,
+    "save_dir":          "",
+}
+
+
+def get_video_gen_config() -> dict:
+    """读取 Agnes 视频生成配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    vg = full.get("video_gen", {})
+    return {k: vg.get(k, v) for k, v in _VIDEO_GEN_DEFAULTS.items()}
+
+
+def save_video_gen_config(config: dict):
+    """保存 Agnes 视频生成配置（仅更新 video_gen 部分）。"""
+    full = _load_full_config()
+    full["video_gen"] = config
     _save_full_config(full)
 
 

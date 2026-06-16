@@ -56,8 +56,12 @@ nul
 # ç¯å¢ƒå˜é‡ï¼ˆé˜²å¯†é’¥æ³„éœ²ï¼‰
 .env
 "" 
-"# GIF Ñ¹Ëõ±¸·İ" 
+"# GIF Ñ¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½" 
 "*.gif.bak" 
-"assets/±¸·İGIF/" 
+"assets/ï¿½ï¿½ï¿½ï¿½GIF/" 
 claude-code-main/ 
-test_workspace/ 
+test_workspace/
+
+# Codegraph è¿è¡Œæ—¶
+.codegraph/started
+.codegraph/daemon.pid

@@ -165,7 +165,17 @@ class ApiConfigDialog(QDialog):
         self._build_tab_siliconflow(tab_vision)
         tabs.addTab(tab_vision, "视觉理解")
 
-        # Tab 4: 和风天气
+        # Tab 4: 创作生图 (Agnes Image)
+        tab_image = QWidget()
+        self._build_tab_image_gen(tab_image)
+        tabs.addTab(tab_image, "🎨 创作生图")
+
+        # Tab 4.5: 创作视频 (Agnes Video)
+        tab_video = QWidget()
+        self._build_tab_video_gen(tab_video)
+        tabs.addTab(tab_video, "🎬 创作视频")
+
+        # Tab 5: 和风天气
         tab_qw = QWidget()
         self._build_tab_qweather(tab_qw)
         tabs.addTab(tab_qw, "☁️ 和风天气")
@@ -698,6 +708,192 @@ class ApiConfigDialog(QDialog):
 
         layout.addStretch()
 
+    # ── 创作生图选项卡（Agnes Image API） ────────────────────
+
+    def _build_tab_image_gen(self, parent: QWidget):
+        layout = QVBoxLayout(parent)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+
+        title = QLabel("🎨 创作生图 — Agnes Image API")
+        title.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
+        title.setStyleSheet("color: #3A3A5C;")
+        layout.addWidget(title)
+
+        desc = QLabel(
+            "使用 Agnes Image API 根据文字描述生成图片。\n"
+            "与 Agnes 聊天模型共用同一 API Key，无需额外申请。"
+        )
+        desc.setFont(QFont("Microsoft YaHei UI", 9))
+        desc.setStyleSheet("color: #888888;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+        layout.addSpacing(8)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+        form.setSpacing(10)
+
+        # 启用开关
+        self._ig_enabled_cb = QCheckBox("启用图片生成（关闭后 AI 将无法调用生图工具）")
+        self._ig_enabled_cb.setFont(QFont("Microsoft YaHei UI", 9))
+        self._ig_enabled_cb.setStyleSheet("color: #3A3A5C;")
+        form.addRow("", self._ig_enabled_cb)
+
+        # 模型名称
+        self._ig_model_edit = QLineEdit()
+        self._ig_model_edit.setPlaceholderText("agnes-image-2.1-flash")
+        self._ig_model_edit.setFont(QFont("Consolas", 10))
+        self._apply_field_style(self._ig_model_edit)
+        form.addRow("图片模型:", self._ig_model_edit)
+
+        # 默认尺寸
+        self._ig_size_combo = QComboBox()
+        self._ig_size_combo.setFont(QFont("Microsoft YaHei UI", 9))
+        self._ig_size_combo.addItems([
+            "1024x1024 — 正方形",
+            "1792x1024 — 宽屏横版",
+            "1024x1792 — 竖版",
+            "4k — 超高清",
+        ])
+        self._ig_size_combo.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #D8D8EE;
+                border-radius: 8px;
+                padding: 4px 10px;
+                background-color: #FFFFFF;
+                color: #3A3A5C;
+            }
+        """)
+        form.addRow("默认尺寸:", self._ig_size_combo)
+
+        # 默认质量
+        self._ig_quality_combo = QComboBox()
+        self._ig_quality_combo.setFont(QFont("Microsoft YaHei UI", 9))
+        self._ig_quality_combo.addItems([
+            "standard — 标准质量（快速）",
+            "hd — 高清质量（细节更丰富）",
+        ])
+        self._ig_quality_combo.setStyleSheet(self._ig_size_combo.styleSheet())
+        form.addRow("默认质量:", self._ig_quality_combo)
+
+        layout.addLayout(form)
+
+        # 测试按钮
+        layout.addSpacing(8)
+        test_row = QHBoxLayout()
+        test_row.addStretch()
+        self._ig_test_btn = QPushButton("🖼 测试生成一张图片")
+        self._ig_test_btn.setFixedHeight(36)
+        self._ig_test_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        self._ig_test_btn.setCursor(Qt.PointingHandCursor)
+        self._ig_test_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9500;
+                color: white;
+                border-radius: 8px;
+                border: none;
+                padding: 0 20px;
+            }
+            QPushButton:hover   { background-color: #E08600; }
+            QPushButton:pressed { background-color: #C07600; }
+            QPushButton:disabled{ background-color: #CCCCCC; }
+        """)
+        self._ig_test_btn.clicked.connect(self._on_image_gen_test)
+        test_row.addWidget(self._ig_test_btn)
+        test_row.addStretch()
+        layout.addLayout(test_row)
+
+        layout.addStretch()
+
+    # ── 创作视频选项卡（Agnes Video API） ──────────────────
+
+    def _build_tab_video_gen(self, parent: QWidget):
+        layout = QVBoxLayout(parent)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+
+        title = QLabel("🎬 创作视频 — Agnes Video API")
+        title.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
+        title.setStyleSheet("color: #3A3A5C;")
+        layout.addWidget(title)
+
+        desc = QLabel(
+            "使用 Agnes Video API 根据文字或图片生成视频。\n"
+            "与 Agnes 聊天模型共用同一 API Key。\n"
+            "视频生成是异步任务，约需 1-5 分钟完成。"
+        )
+        desc.setFont(QFont("Microsoft YaHei UI", 9))
+        desc.setStyleSheet("color: #888888;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+        layout.addSpacing(8)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+        form.setSpacing(10)
+
+        self._vg_enabled_cb = QCheckBox("启用视频生成（关闭后 AI 将无法调用生视频工具）")
+        self._vg_enabled_cb.setFont(QFont("Microsoft YaHei UI", 9))
+        self._vg_enabled_cb.setStyleSheet("color: #3A3A5C;")
+        form.addRow("", self._vg_enabled_cb)
+
+        self._vg_model_edit = QLineEdit()
+        self._vg_model_edit.setPlaceholderText("agnes-video-v2.0")
+        self._vg_model_edit.setFont(QFont("Consolas", 10))
+        self._apply_field_style(self._vg_model_edit)
+        form.addRow("视频模型:", self._vg_model_edit)
+
+        self._vg_duration_combo = QComboBox()
+        self._vg_duration_combo.setFont(QFont("Microsoft YaHei UI", 9))
+        self._vg_duration_combo.addItems(["3 秒 — 短视频", "5 秒 — 常用", "10 秒 — 长视频", "18 秒 — 超长"])
+        self._vg_duration_combo.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #D8D8EE;
+                border-radius: 8px;
+                padding: 4px 10px;
+                background-color: #FFFFFF;
+                color: #3A3A5C;
+            }
+        """)
+        self._vg_duration_combo.setCurrentIndex(1)
+        form.addRow("默认时长:", self._vg_duration_combo)
+
+        self._vg_fps_combo = QComboBox()
+        self._vg_fps_combo.setFont(QFont("Microsoft YaHei UI", 9))
+        self._vg_fps_combo.addItems(["16", "24 — 标准", "30", "60 — 流畅"])
+        self._vg_fps_combo.setCurrentIndex(1)
+        self._vg_fps_combo.setStyleSheet(self._vg_duration_combo.styleSheet())
+        form.addRow("默认帧率:", self._vg_fps_combo)
+
+        layout.addLayout(form)
+
+        layout.addSpacing(8)
+        test_row = QHBoxLayout()
+        test_row.addStretch()
+        self._vg_test_btn = QPushButton("🎬 测试生成一段视频")
+        self._vg_test_btn.setFixedHeight(36)
+        self._vg_test_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        self._vg_test_btn.setCursor(Qt.PointingHandCursor)
+        self._vg_test_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9500;
+                color: white;
+                border-radius: 8px;
+                border: none;
+                padding: 0 20px;
+            }
+            QPushButton:hover   { background-color: #E08600; }
+            QPushButton:pressed { background-color: #C07600; }
+            QPushButton:disabled{ background-color: #CCCCCC; }
+        """)
+        self._vg_test_btn.clicked.connect(self._on_video_gen_test)
+        test_row.addWidget(self._vg_test_btn)
+        test_row.addStretch()
+        layout.addLayout(test_row)
+
+        layout.addStretch()
+
     # ── 和风天气选项卡 ───────────────────────────────────────
 
     def _build_tab_qweather(self, parent: QWidget):
@@ -1106,6 +1302,26 @@ class ApiConfigDialog(QDialog):
         self._qw_auto_remind.setChecked(qw_cfg.get("auto_remind", True))
         self._qw_host_edit.setText(qw_cfg.get("api_host", ""))
         self._qw_dev_id_edit.setText(qw_cfg.get("dev_id", ""))
+
+        # 图片生成配置
+        from config import get_image_gen_config
+        ig_cfg = get_image_gen_config()
+        self._ig_enabled_cb.setChecked(ig_cfg.get("enabled", True))
+        self._ig_model_edit.setText(ig_cfg.get("model", "agnes-image-2.1-flash"))
+        self._ig_quality_combo.setCurrentIndex(0 if ig_cfg.get("default_quality") != "hd" else 1)
+        size_map = {"1024x1024": 0, "1792x1024": 1, "1024x1792": 2, "4k": 3}
+        self._ig_size_combo.setCurrentIndex(size_map.get(ig_cfg.get("default_size", "1024x1024"), 0))
+
+        # 视频生成配置
+        from config import get_video_gen_config
+        vg_cfg = get_video_gen_config()
+        self._vg_enabled_cb.setChecked(vg_cfg.get("enabled", True))
+        self._vg_model_edit.setText(vg_cfg.get("model", "agnes-video-v2.0"))
+        dur_map = {3: 0, 5: 1, 10: 2, 18: 3}
+        self._vg_duration_combo.setCurrentIndex(dur_map.get(vg_cfg.get("default_duration", 5), 1))
+        fps_map = {16: 0, 24: 1, 30: 2, 60: 3}
+        self._vg_fps_combo.setCurrentIndex(fps_map.get(vg_cfg.get("default_frame_rate", 24), 1))
+
         self._qw_remind_time.setCurrentText(qw_cfg.get("remind_time", "07:00"))
         remind_time = qw_cfg.get("remind_time", "07:00")
         idx = self._qw_remind_time.findText(remind_time)
@@ -1142,6 +1358,32 @@ class ApiConfigDialog(QDialog):
             "api_key":  self._agnes_key_edit.text().strip(),
             "base_url": "https://apihub.agnes-ai.com/v1",
             "model":    self._agnes_model_edit.text().strip() or "agnes-2.0-flash",
+        }
+
+    def _collect_image_gen(self) -> dict:
+        """收集图片生成配置。"""
+        size_map = ["1024x1024", "1792x1024", "1024x1792", "4k"]
+        quality_map = ["standard", "hd"]
+        return {
+            "enabled":         self._ig_enabled_cb.isChecked(),
+            "model":           self._ig_model_edit.text().strip() or "agnes-image-2.1-flash",
+            "default_size":    size_map[self._ig_size_combo.currentIndex()],
+            "default_quality": quality_map[self._ig_quality_combo.currentIndex()],
+            "save_dir":        "",
+        }
+
+    def _collect_video_gen(self) -> dict:
+        """收集视频生成配置。"""
+        duration_map = [3, 5, 10, 18]
+        fps_map = [16, 24, 30, 60]
+        return {
+            "enabled":            self._vg_enabled_cb.isChecked(),
+            "model":              self._vg_model_edit.text().strip() or "agnes-video-v2.0",
+            "default_duration":   duration_map[self._vg_duration_combo.currentIndex()],
+            "default_frame_rate": fps_map[self._vg_fps_combo.currentIndex()],
+            "default_width":      1152,
+            "default_height":     768,
+            "save_dir":           "",
         }
 
     def _collect_aliyun(self) -> dict:
@@ -1219,8 +1461,182 @@ class ApiConfigDialog(QDialog):
         qw_cfg = self._collect_qweather()
         save_qweather_config(qw_cfg)
 
+        # 图片生成
+        ig_cfg = self._collect_image_gen()
+        from config import save_image_gen_config
+        save_image_gen_config(ig_cfg)
+
+        # 视频生成
+        vg_cfg = self._collect_video_gen()
+        from config import save_video_gen_config
+        save_video_gen_config(vg_cfg)
+
         self.config_saved.emit()
         self.accept()
+
+    def _on_image_gen_test(self):
+        """测试图片生成。"""
+        from config import get_agnes_config
+        agnes_cfg = get_agnes_config()
+        api_key = agnes_cfg.get("api_key", "").strip()
+        if not api_key:
+            QMessageBox.warning(self, "提示", "请先在 DeepSeek API 选项卡中选择 Agnes AI 并填写 API Key！")
+            return
+
+        self._ig_test_btn.setEnabled(False)
+        self._ig_test_btn.setText("生成中…")
+
+        def _test():
+            import requests, tempfile, os
+            size_map = ["1024x1024", "1792x1024", "1024x1792", "4k"]
+            quality_map = ["standard", "hd"]
+            size = size_map[self._ig_size_combo.currentIndex()]
+            quality = quality_map[self._ig_quality_combo.currentIndex()]
+            model = self._ig_model_edit.text().strip() or "agnes-image-2.1-flash"
+
+            try:
+                resp = requests.post(
+                    "https://apihub.agnes-ai.com/v1/images/generations",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={"model": model, "prompt": "一只可爱的卡通小猫，坐在窗台上看月亮", "size": size, "quality": quality, "n": 1},
+                    timeout=120,
+                )
+                if resp.status_code != 200:
+                    self._ig_test_btn.setText("🖼 测试生成")
+                    self._ig_test_btn.setEnabled(True)
+                    QMessageBox.warning(self, "生成失败", f"HTTP {resp.status_code}: {resp.text[:300]}")
+                    return
+
+                data = resp.json()
+                img_url = data["data"][0].get("url") or data["data"][0].get("b64_json")
+                if not img_url:
+                    self._ig_test_btn.setText("🖼 测试生成")
+                    self._ig_test_btn.setEnabled(True)
+                    QMessageBox.warning(self, "生成失败", "返回数据中未找到图片 URL")
+                    return
+
+                if img_url.startswith("http"):
+                    img_resp = requests.get(img_url, timeout=60)
+                    save_dir = os.path.join(os.path.expanduser("~"), ".lianxin", "generated_images")
+                    os.makedirs(save_dir, exist_ok=True)
+                    save_path = os.path.join(save_dir, f"test_{int(__import__('time').time())}.png")
+                    with open(save_path, "wb") as f:
+                        f.write(img_resp.content)
+                else:
+                    import base64
+                    save_dir = os.path.join(os.path.expanduser("~"), ".lianxin", "generated_images")
+                    os.makedirs(save_dir, exist_ok=True)
+                    save_path = os.path.join(save_dir, f"test_{int(__import__('time').time())}.png")
+                    with open(save_path, "wb") as f:
+                        f.write(base64.b64decode(img_url))
+
+                self._ig_test_btn.setText("🖼 测试生成")
+                self._ig_test_btn.setEnabled(True)
+                QMessageBox.information(self, "生成成功", f"图片已保存到：\n{save_path}")
+            except Exception as e:
+                self._ig_test_btn.setText("🖼 测试生成")
+                self._ig_test_btn.setEnabled(True)
+                QMessageBox.warning(self, "生成失败", str(e))
+
+        import threading
+        threading.Thread(target=_test, daemon=True).start()
+
+    def _on_video_gen_test(self):
+        """测试视频生成（文生视频，异步轮询）。"""
+        from config import get_agnes_config
+        agnes_cfg = get_agnes_config()
+        api_key = agnes_cfg.get("api_key", "").strip()
+        if not api_key:
+            QMessageBox.warning(self, "提示", "请先在 DeepSeek API 选项卡中选择 Agnes AI 并填写 API Key！")
+            return
+
+        self._vg_test_btn.setEnabled(False)
+        self._vg_test_btn.setText("生成中…")
+
+        def _test():
+            import requests, time, os
+            duration_map = [3, 5, 10, 18]
+            fps_map = [16, 24, 30, 60]
+            dur = duration_map[self._vg_duration_combo.currentIndex()]
+            fps = fps_map[self._vg_fps_combo.currentIndex()]
+            num_frames = dur * fps
+            # 确保 num_frames ≤ 441 且满足 8n+1
+            if num_frames > 441:
+                num_frames = 441
+            num_frames = ((num_frames - 1) // 8) * 8 + 1
+            model = self._vg_model_edit.text().strip() or "agnes-video-v2.0"
+
+            try:
+                resp = requests.post(
+                    "https://apihub.agnes-ai.com/v1/videos",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": model,
+                        "prompt": "A cute cat playing with a ball of yarn in a sunny room, soft lighting",
+                        "num_frames": num_frames,
+                        "frame_rate": fps,
+                    },
+                    timeout=120,
+                )
+                if resp.status_code != 200:
+                    self._vg_test_btn.setText("🎬 测试生成")
+                    self._vg_test_btn.setEnabled(True)
+                    QMessageBox.warning(self, "创建失败", f"HTTP {resp.status_code}: {resp.text[:200]}")
+                    return
+
+                data = resp.json()
+                video_id = data.get("video_id", "")
+                if not video_id:
+                    self._vg_test_btn.setText("🎬 测试生成")
+                    self._vg_test_btn.setEnabled(True)
+                    QMessageBox.warning(self, "创建失败", "未获取到 video_id")
+                    return
+
+                for _ in range(60):
+                    time.sleep(5)
+                    q_resp = requests.get(
+                        f"https://apihub.agnes-ai.com/agnesapi?video_id={video_id}",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=120,
+                    )
+                    if q_resp.status_code != 200:
+                        continue
+                    q_data = q_resp.json()
+                    status = q_data.get("status", "")
+                    if status == "completed":
+                        video_url = q_data.get("remixed_from_video_id", "")
+                        if not video_url:
+                            self._vg_test_btn.setText("🎬 测试生成")
+                            self._vg_test_btn.setEnabled(True)
+                            QMessageBox.warning(self, "生成失败", "未获取到视频 URL")
+                            return
+                        save_dir = os.path.join(os.path.expanduser("~"), ".lianxin", "videos")
+                        os.makedirs(save_dir, exist_ok=True)
+                        save_path = os.path.join(save_dir, f"test_{int(time.time())}.mp4")
+                        v_resp = requests.get(video_url, timeout=300)
+                        with open(save_path, "wb") as f:
+                            f.write(v_resp.content)
+                        self._vg_test_btn.setText("🎬 测试生成")
+                        self._vg_test_btn.setEnabled(True)
+                        QMessageBox.information(self, "生成成功", f"视频已保存到：\n{save_path}")
+                        return
+                    elif status == "failed":
+                        self._vg_test_btn.setText("🎬 测试生成")
+                        self._vg_test_btn.setEnabled(True)
+                        QMessageBox.warning(self, "生成失败", q_data.get("error", "未知错误"))
+                        return
+
+                self._vg_test_btn.setText("🎬 测试生成")
+                self._vg_test_btn.setEnabled(True)
+                QMessageBox.warning(self, "超时", "视频生成超时（5 分钟），请稍后重试")
+
+            except Exception as e:
+                self._vg_test_btn.setText("🎬 测试生成")
+                self._vg_test_btn.setEnabled(True)
+                QMessageBox.warning(self, "生成异常", str(e))
+
+        import threading
+        threading.Thread(target=_test, daemon=True).start()
 
     # ── 测试 DeepSeek 连接 ────────────────────────────────────
 
