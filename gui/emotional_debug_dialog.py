@@ -67,6 +67,15 @@ class EmotionalDebugDialog(QDialog):
 
         self._layout.addWidget(overview_group)
 
+        # ── 滑块修改标记（保护用户手动调节不被定时刷新覆盖）──
+        self._slider_modified = False
+
+        # ── 滑块修改标记（保护用户手动调节不被定时刷新覆盖）──
+        self._slider_modified = False
+
+        # ── 滑块修改标记（保护用户手动调节不被定时刷新覆盖）──
+        self._slider_modified = False
+
         # ── 需求进度条 ──────────────────────────────────────
         needs_group = QGroupBox("需求状态（实时）")
         needs_layout = QGridLayout(needs_group)
@@ -113,7 +122,10 @@ class EmotionalDebugDialog(QDialog):
             val_lbl = QLabel("50")
             val_lbl.setFixedWidth(30)
             slider.valueChanged.connect(
-                lambda v, k=key, lbl=val_lbl: lbl.setText(str(v))
+                lambda v, k=key, lbl=val_lbl: (
+                    lbl.setText(str(v)),
+                    setattr(self, '_slider_modified', True)
+                )
             )
             slider_row.addWidget(slider, row, 1)
             slider_row.addWidget(val_lbl, row, 2)
@@ -244,8 +256,8 @@ class EmotionalDebugDialog(QDialog):
             bar.setValue(val)
             bar.setStyleSheet(bar_style)
             self._need_labels[key].setText(str(val))
-            # 滑块同步（只在用户未拖拽时刷新）
-            if not self._sliders[key].isSliderDown():
+            # 滑块同步（保护用户手动修改，直到点击「应用到莲心」）
+            if not self._slider_modified:
                 self._sliders[key].setValue(val)
 
         # 事件日志
@@ -268,6 +280,7 @@ class EmotionalDebugDialog(QDialog):
             mgr = _get_emotion_mgr()
             kwargs = {k: s.value() for k, s in self._sliders.items()}
             mgr.set_needs(**kwargs)
+            self._slider_modified = False
             self._refresh_display()
         except Exception as e:
             self._log_view.append(f"[错误] 应用失败: {e}")

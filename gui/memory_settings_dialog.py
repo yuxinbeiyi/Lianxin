@@ -77,6 +77,22 @@ class MemorySettingsDialog(QDialog):
                 color: #E0E0E0;
                 font-weight: bold;
             }
+            QComboBox {
+                background: #2D2D3F;
+                color: #E0E0E0;
+                border: 1px solid #3D3D5A;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QComboBox QAbstractItemView {
+                background: #2D2D3F;
+                color: #E0E0E0;
+                selection-background-color: #3D3D5A;
+                outline: none;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
         """)
         layout.addWidget(tabs)
 
@@ -295,7 +311,7 @@ class MemorySettingsDialog(QDialog):
             "· 原全量历史 → 30轮后 Token > 6000，持续增长"
         )
         estimate_label.setWordWrap(True)
-        estimate_label.setStyleSheet("color: #666; font-size: 13px; background: #F5F5FF; padding: 8px; border-radius: 4px;")
+        estimate_label.setStyleSheet("color: #CCC; font-size: 13px; background: #1E1E30; padding: 8px; border-radius: 4px;")
         tab3_layout.addWidget(estimate_label)
 
         tab3_layout.addStretch()
@@ -350,8 +366,8 @@ class MemorySettingsDialog(QDialog):
         self._add_form = QFrame()
         self._add_form.setStyleSheet("""
             QFrame {
-                background: #F0F4FF; border-radius: 8px;
-                border: 1px solid #C0C8E8;
+                background: #1E1E30; border-radius: 8px;
+                border: 1px solid #3D3D5A;
             }
         """)
         add_form_layout = QVBoxLayout(self._add_form)
@@ -376,9 +392,9 @@ class MemorySettingsDialog(QDialog):
         self._new_content_input.setMaximumHeight(60)
         self._new_content_input.setStyleSheet("""
             QTextEdit {
-                border: 1px solid #D0D0E0; border-radius: 6px;
-                padding: 6px; background: #FFFFFF;
-                color: #2C2C2C;
+                border: 1px solid #3D3D5A; border-radius: 6px;
+                padding: 6px; background: #2D2D3F;
+                color: #E0E0E0;
                 font-size: 12px;
             }
         """)

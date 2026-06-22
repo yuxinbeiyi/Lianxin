@@ -340,7 +340,7 @@ class CharacterWidget(QWidget):
         self._btn_api_config = self._create_button("🔑 API Key", color="#FF9500")
         self._btn_alarm      = self._create_button("⏰ 闹钟&提醒")
         self._btn_camera     = self._create_button("视觉理解")
-        self._btn_emotion    = self._create_button("🧪 情感状态", color="#8E44AD")
+        self._btn_emotion    = self._create_button("🧪 涟漪情感系统", color="#8E44AD")
 
         grid.addWidget(self._btn_accompany, 0, 0)
         grid.addWidget(self._btn_settings, 0, 1)
@@ -355,7 +355,7 @@ class CharacterWidget(QWidget):
         grid.addWidget(self._btn_memory, 4, 1)
         self._btn_network = self._create_button("🌐 网络设置", color="#3498DB")
         grid.addWidget(self._btn_network, 5, 0)
-        self._btn_capability = self._create_button("🧩 能力", color="#9B59B6")
+        self._btn_capability = self._create_button("🧩 能力中枢", color="#9B59B6")
         grid.addWidget(self._btn_capability, 3, 1)
 
         popup_layout.addLayout(grid)

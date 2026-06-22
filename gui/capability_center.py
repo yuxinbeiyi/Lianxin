@@ -1,5 +1,5 @@
 # gui/capability_center.py
-"""能力中心 — 浏览和管理莲心的 Skills 与 MCP 服务"""
+"""能力中枢 — 浏览和管理莲心的 Skills 与 MCP 服务"""
 
 from datetime import datetime
 from PyQt5.QtWidgets import (
@@ -14,7 +14,7 @@ from PyQt5.QtGui import QFont
 class CapabilityCenter(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("🧩 能力中心")
+        self.setWindowTitle("🧩 能力中枢")
         self.setMinimumSize(700, 560)
         self.resize(750, 600)
         self.setStyleSheet("""
@@ -84,7 +84,7 @@ class CapabilityCenter(QDialog):
 
         # 标题栏 + 刷新按钮
         header = QHBoxLayout()
-        title = QLabel("🧩 能力中心")
+        title = QLabel("🧩 能力中枢")
         title.setFont(QFont("Microsoft YaHei UI", 14, QFont.Bold))
         title.setStyleSheet("color: #2C2C2C;")
         header.addWidget(title)
