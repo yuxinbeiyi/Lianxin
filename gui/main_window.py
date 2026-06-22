@@ -146,6 +146,30 @@ class MainWindow(QMainWindow):
 
         # ── 备忘本模块 ────────────────────────────────────────
         self.note_dialog = NoteDialog(None)
+
+        # ── 非模态对话框（改为 show() 打开，不阻塞主窗口）────
+        self._history_dialog = None
+        self._accompany_dialog = None
+        self._api_config_dialog = None
+        self._sound_settings_dialog = None
+        self._memory_settings_dialog = None
+        self._proactive_dialog = None
+        self._network_settings_dialog = None
+        self._capability_center_dialog = None
+        self._settings_dialog = None
+        self._emotion_debug_dialog = None
+        self._diary_dialog = None
+        self._qq_settings_dialog = None
+        self._music_list_dialog = None
+
+        # ── 非模态对话框（改为 show() 打开，不阻塞主窗口）────
+        self._network_settings_dialog = None
+        self._capability_center_dialog = None
+        self._settings_dialog = None
+        self._emotion_debug_dialog = None
+        self._diary_dialog = None
+        self._qq_settings_dialog = None
+        self._music_list_dialog = None
         # ── 闹钟模块 ──────────────────────────────────────────
         self._alarm_manager = AlarmManager()
         self._alarm_dialog: AlarmDialog | None = None
@@ -1192,13 +1216,16 @@ class MainWindow(QMainWindow):
 
     def _on_history_clicked(self):
         play_sound("ButtonAll.mp3")
-        dlg = HistoryDialog(
-            self._agent.get_history_manager(),
-            current_session_id=self._agent._session_id,
-            parent=self,
-        )
-        dlg.import_memory.connect(self._on_import_memory)
-        dlg.exec_()
+        if self._history_dialog is None:
+            self._history_dialog = HistoryDialog(
+                self._agent.get_history_manager(),
+                current_session_id=self._agent._session_id,
+                parent=self,
+            )
+            self._history_dialog.import_memory.connect(self._on_import_memory)
+        self._history_dialog.show()
+        self._history_dialog.raise_()
+        self._history_dialog.activateWindow()
         self._ensure_valid_session()
 
     def _ensure_valid_session(self):
@@ -1291,9 +1318,12 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.Yes:
                 self._on_settings_clicked()
             return
-        dlg = AccompanyDialog(self._accompany_stats, self.music_stats, self)
-        dlg.dialog_closed.connect(self._on_accompany_dialog_closed)
-        dlg.exec_()
+        if self._accompany_dialog is None:
+            self._accompany_dialog = AccompanyDialog(self._accompany_stats, self.music_stats, self)
+            self._accompany_dialog.dialog_closed.connect(self._on_accompany_dialog_closed)
+        self._accompany_dialog.show()
+        self._accompany_dialog.raise_()
+        self._accompany_dialog.activateWindow()
 
     def _on_accompany_dialog_closed(self):
         duration_str = self._accompany_stats.get_current_formatted_duration()
@@ -1360,36 +1390,51 @@ class MainWindow(QMainWindow):
 
     def _show_api_config(self):
         play_sound("ButtonAll.mp3")
-        dlg = ApiConfigDialog(self)
-        dlg.config_saved.connect(self._on_api_config_saved)
-        dlg.exec_()
+        if self._api_config_dialog is None:
+            self._api_config_dialog = ApiConfigDialog(self)
+            self._api_config_dialog.config_saved.connect(self._on_api_config_saved)
+        self._api_config_dialog.show()
+        self._api_config_dialog.raise_()
+        self._api_config_dialog.activateWindow()
     
     def _on_sound_settings(self):
         from utils.sound import play_sound
         play_sound("ButtonAll.mp3")
         from gui.sound_settings_dialog import SoundSettingsDialog
-        dlg = SoundSettingsDialog(self)
-        dlg.exec_()
+        if self._sound_settings_dialog is None:
+            self._sound_settings_dialog = SoundSettingsDialog(self)
+        self._sound_settings_dialog.show()
+        self._sound_settings_dialog.raise_()
+        self._sound_settings_dialog.activateWindow()
 
     def _on_memory_settings(self):
         from utils.sound import play_sound
         play_sound("ButtonAll.mp3")
         from gui.memory_settings_dialog import MemorySettingsDialog
-        dlg = MemorySettingsDialog(self)
-        dlg.exec_()
+        if self._memory_settings_dialog is None:
+            self._memory_settings_dialog = MemorySettingsDialog(self)
+        self._memory_settings_dialog.show()
+        self._memory_settings_dialog.raise_()
+        self._memory_settings_dialog.activateWindow()
 
     def _show_network_settings(self):
         from utils.sound import play_sound
         play_sound("ButtonAll.mp3")
-        dlg = NetworkSettingsDialog(self)
-        dlg.config_saved.connect(self._on_api_config_saved)
-        dlg.exec_()
+        if self._network_settings_dialog is None:
+            self._network_settings_dialog = NetworkSettingsDialog(self)
+            self._network_settings_dialog.config_saved.connect(self._on_api_config_saved)
+        self._network_settings_dialog.show()
+        self._network_settings_dialog.raise_()
+        self._network_settings_dialog.activateWindow()
 
     def _show_capability_center(self):
         from utils.sound import play_sound
         play_sound("ButtonAll.mp3")
-        dlg = CapabilityCenter(self)
-        dlg.exec_()
+        if self._capability_center_dialog is None:
+            self._capability_center_dialog = CapabilityCenter(self)
+        self._capability_center_dialog.show()
+        self._capability_center_dialog.raise_()
+        self._capability_center_dialog.activateWindow()
 
     def _on_api_config_saved(self):
         self._agent = AgentCore()
@@ -1403,16 +1448,22 @@ class MainWindow(QMainWindow):
 
     def _on_settings_clicked(self):
         play_sound("ButtonAll.mp3")
-        dlg = SettingsDialog(self)
-        dlg.date_saved.connect(self._on_first_meet_date_saved)
-        dlg.exec_()
+        if self._settings_dialog is None:
+            self._settings_dialog = SettingsDialog(self)
+            self._settings_dialog.date_saved.connect(self._on_first_meet_date_saved)
+        self._settings_dialog.show()
+        self._settings_dialog.raise_()
+        self._settings_dialog.activateWindow()
 
     def _on_open_emotion_debug(self):
         """打开涟漪情感系统调试面板。"""
         play_sound("ButtonAll.mp3")
         from gui.emotional_debug_dialog import EmotionalDebugDialog
-        dlg = EmotionalDebugDialog(self)
-        dlg.exec_()
+        if self._emotion_debug_dialog is None:
+            self._emotion_debug_dialog = EmotionalDebugDialog(self)
+        self._emotion_debug_dialog.show()
+        self._emotion_debug_dialog.raise_()
+        self._emotion_debug_dialog.activateWindow()
 
     def _on_first_meet_date_saved(self):
         self._accompany_stats.reload()
@@ -1634,11 +1685,18 @@ class MainWindow(QMainWindow):
 
     def _on_proactive_clicked(self):
         play_sound("ButtonAll.mp3")
-        dlg = ProactiveDialog(self._proactive_scheduler, self)
-        dlg.debug_trigger.connect(self._on_proactive_debug)
-        dlg.debug_observe_signal.connect(self._on_proactive_debug_observe)
-        if dlg.exec_():
-            self._update_proactive_button()
+        if self._proactive_dialog is None:
+            self._proactive_dialog = ProactiveDialog(self._proactive_scheduler, self)
+            self._proactive_dialog.debug_trigger.connect(self._on_proactive_debug)
+            self._proactive_dialog.debug_observe_signal.connect(self._on_proactive_debug_observe)
+            self._proactive_dialog.finished.connect(self._on_proactive_dialog_finished)
+        self._proactive_dialog.show()
+        self._proactive_dialog.raise_()
+        self._proactive_dialog.activateWindow()
+
+    def _on_proactive_dialog_finished(self):
+        self._update_proactive_button()
+
 
     def _update_proactive_button(self):
         if self._proactive_scheduler.desktop_enabled:
@@ -2282,9 +2340,12 @@ class MainWindow(QMainWindow):
 
     def _open_diary_dialog(self):
         play_sound("OpenDiary.mp3")
-        dlg = DiaryDialog(None, main_window=self)
-        dlg.diary_changed.connect(self._refresh_diary_display)
-        dlg.exec_()
+        if self._diary_dialog is None:
+            self._diary_dialog = DiaryDialog(None, main_window=self)
+            self._diary_dialog.diary_changed.connect(self._refresh_diary_display)
+        self._diary_dialog.show()
+        self._diary_dialog.raise_()
+        self._diary_dialog.activateWindow()
 
     def _refresh_diary_display(self):
         """刷新日记显示（预留）"""
@@ -2563,10 +2624,13 @@ class MainWindow(QMainWindow):
         if not self.playlist:
             return
         from gui.music_list_dialog import MusicListDialog
-        dlg = MusicListDialog(self.playlist, self.current_track_index, self)
-        dlg.track_selected.connect(self._switch_to_track)
-        dlg.order_changed.connect(self._reorder_playlist)   # 新增
-        dlg.exec_()
+        if self._music_list_dialog is None:
+            self._music_list_dialog = MusicListDialog(self.playlist, self.current_track_index, self)
+            self._music_list_dialog.track_selected.connect(self._switch_to_track)
+            self._music_list_dialog.order_changed.connect(self._reorder_playlist)
+        self._music_list_dialog.show()
+        self._music_list_dialog.raise_()
+        self._music_list_dialog.activateWindow()
 
 
     def _reorder_playlist(self, new_order):
@@ -2753,10 +2817,18 @@ class MainWindow(QMainWindow):
         """点击 QQ聊天 按钮：打开 QQ 聊天面板（含桥接开关和参数设置）。"""
         play_sound("ButtonAll.mp3")
         self._heartbeat_time = time.monotonic()
-        dlg = QqSettingsDialog(self)
-        if dlg.exec_() == QDialog.Accepted:
+        if self._qq_settings_dialog is None:
+            self._qq_settings_dialog = QqSettingsDialog(self)
+            self._qq_settings_dialog.finished.connect(self._on_qq_settings_finished)
+        self._qq_settings_dialog.show()
+        self._qq_settings_dialog.raise_()
+        self._qq_settings_dialog.activateWindow()
+
+    def _on_qq_settings_finished(self, result: int):
+        if result == QDialog.Accepted:
             if self._qq_bridge and self._qq_bridge.isRunning():
                 self._qq_bridge.reload_timing_config()
+                self._chat_widget.add_system_tip("✅ QQ 聊天参数已更新（即时生效）")
 
     def _start_qq_bridge(self):
         """创建并启动 QQBridgeWorker"""
@@ -2843,11 +2915,12 @@ class MainWindow(QMainWindow):
 
     def _on_qq_settings_clicked(self):
         """打开 QQ 聊天参数设置对话框。"""
-        dlg = QqSettingsDialog(self)
-        if dlg.exec_() == QDialog.Accepted:
-            if self._qq_bridge and self._qq_bridge.isRunning():
-                self._qq_bridge.reload_timing_config()
-                self._chat_widget.add_system_tip("✅ QQ 聊天参数已更新（即时生效）")
+        if self._qq_settings_dialog is None:
+            self._qq_settings_dialog = QqSettingsDialog(self)
+            self._qq_settings_dialog.finished.connect(self._on_qq_settings_finished)
+        self._qq_settings_dialog.show()
+        self._qq_settings_dialog.raise_()
+        self._qq_settings_dialog.activateWindow()
 
     def _update_qq_bridge_button(self):
         """根据 QQ 桥接状态更新按钮外观"""

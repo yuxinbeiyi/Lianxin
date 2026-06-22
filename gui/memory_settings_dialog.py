@@ -21,7 +21,7 @@ class MemorySettingsDialog(QDialog):
         self.setWindowTitle("🧠 记忆系统设置")
         self.setMinimumSize(620, 480)
         self.resize(660, 540)
-        self.setModal(True)
+        self.setWindowFlags(Qt.Window)
         
         self._build_ui()
         self._load_from_config()

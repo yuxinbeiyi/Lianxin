@@ -38,7 +38,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("全局设置")
         self.setMinimumSize(540, 780)
         self.resize(580, 800)
-        self.setModal(True)
+        self.setWindowFlags(Qt.Window)
     
         self._build_ui()
         self._load_from_settings()

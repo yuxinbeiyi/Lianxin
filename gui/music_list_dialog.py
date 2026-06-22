@@ -17,7 +17,7 @@ class MusicListDialog(QDialog):
         self.setWindowTitle("音乐列表")
         self.setMinimumSize(300, 400)
         self.resize(350, 450)
-        self.setModal(True)
+        self.setWindowFlags(Qt.Window)
 
         # 设置背景图片
         bg_path = Path(__file__).parent.parent / "assets" / "音乐列表.jpg"

@@ -24,7 +24,7 @@ class SoundSettingsDialog(QDialog):
         self.setWindowTitle("🔊 声音设置")
         self.setMinimumSize(500, 620)
         self.resize(520, 660)
-        self.setModal(True)
+        self.setWindowFlags(Qt.Window)
     
         self._build_ui()
         self._load_from_settings()

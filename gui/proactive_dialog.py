@@ -106,7 +106,7 @@ class ProactiveDialog(QDialog):
         self.setWindowTitle("主动聊天设置")
         self.resize(520, 680)
         self.setMinimumSize(460, 480)
-        self.setModal(True)
+        self.setWindowFlags(Qt.Window)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
 

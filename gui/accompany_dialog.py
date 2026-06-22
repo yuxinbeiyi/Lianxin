@@ -22,9 +22,8 @@ class AccompanyDialog(QDialog):
         self._stats = accompany_stats
         self._music_stats = music_stats   # 可选
         self.setWindowTitle("📊 陪伴统计")
-        self.setMinimumSize(500, 480)    # 高度增加以容纳新内容
+        self.setMinimumSize(500, 480)
         self.resize(600, 520)
-        self.setModal(True)
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         self._build_ui()
