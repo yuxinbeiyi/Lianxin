@@ -18,6 +18,7 @@ from config import (
     get_search_fallback_config, save_search_fallback_config,
     get_proxy_config, save_proxy_config,
     get_builtin_tool_config, save_builtin_tool_config,
+    get_bilibili_config, save_bilibili_config,
 )
 
 
@@ -98,6 +99,11 @@ class NetworkSettingsDialog(QDialog):
         tab_proxy = QWidget()
         self._build_tab_proxy(tab_proxy)
         tabs.addTab(tab_proxy, "🛡️ 代理设置")
+
+        # ── Tab 6: B站账号 ─────────────────────────────
+        tab_bilibili = QWidget()
+        self._build_tab_bilibili(tab_bilibili)
+        tabs.addTab(tab_bilibili, "📺 B站账号")
 
         # 底部按钮
         btn_row = QHBoxLayout()
@@ -212,7 +218,7 @@ class NetworkSettingsDialog(QDialog):
         self._fc_key_edit.setStyleSheet("""
             QLineEdit {
                 border: 1px solid #D0D0E0; border-radius: 6px;
-                padding: 6px 10px; background: #FFFFFF;
+                padding: 6px 10px; background: #FFFFFF; color: #2C2C2C;
             }
             QLineEdit:focus { border-color: #6C7BFF; }
         """)
@@ -268,7 +274,7 @@ class NetworkSettingsDialog(QDialog):
         self._zhihu_key_edit.setStyleSheet("""
             QLineEdit {
                 border: 1px solid #D0D0E0; border-radius: 6px;
-                padding: 6px 10px; background: #FFFFFF;
+                padding: 6px 10px; background: #FFFFFF; color: #2C2C2C;
             }
             QLineEdit:focus { border-color: #6C7BFF; }
         """)
@@ -415,7 +421,100 @@ class NetworkSettingsDialog(QDialog):
         layout.addWidget(tip)
         layout.addStretch()
 
-    # ── 加载与保存 ────────────────────────────────────────
+    # ── B站账号 ─────────────────────────────────────────
+    def _build_tab_bilibili(self, parent: QWidget):
+        layout = QVBoxLayout(parent)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+
+        section_title = QLabel("📺 B站账号 Cookie 配置")
+        section_title.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
+        section_title.setStyleSheet("color: #3A3A5C;")
+        layout.addWidget(section_title)
+
+        desc = QLabel(
+            "配置 B站登录 Cookie 后，莲心就能提取视频的 AI 自动字幕，\n"
+            "生成带时间戳的结构化视频摘要。\n"
+            "获取方式：浏览器登录 B站 → F12 → Application → Cookies → bilibili.com"
+        )
+        desc.setFont(QFont("Microsoft YaHei UI", 9))
+        desc.setStyleSheet("color: #888888;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+        layout.addSpacing(8)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+        form.setSpacing(10)
+
+        # SESSDATA
+        sess_row = QHBoxLayout()
+        self._bl_sess_edit = QLineEdit()
+        self._bl_sess_edit.setPlaceholderText("从浏览器 Cookies 中复制 SESSDATA 的值")
+        self._bl_sess_edit.setEchoMode(QLineEdit.Password)
+        self._bl_sess_edit.setFont(QFont("Consolas", 10))
+        self._bl_sess_edit.setStyleSheet("""
+            QLineEdit { border: 1px solid #D0D0E0; border-radius: 6px;
+                padding: 6px 10px; background: #FFFFFF; color: #2C2C2C; }
+            QLineEdit:focus { border-color: #6C7BFF; }
+        """)
+        sess_row.addWidget(self._bl_sess_edit)
+
+        self._show_bl_sess_btn = QPushButton("显示")
+        self._show_bl_sess_btn.setFixedSize(60, 34)
+        self._show_bl_sess_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        self._show_bl_sess_btn.setCursor(Qt.PointingHandCursor)
+        self._show_bl_sess_btn.setCheckable(True)
+        self._show_bl_sess_btn.clicked.connect(self._toggle_bl_sess_visibility)
+        sess_row.addWidget(self._show_bl_sess_btn)
+        form.addRow("SESSDATA：", sess_row)
+
+        # bili_jct
+        jct_row = QHBoxLayout()
+        self._bl_jct_edit = QLineEdit()
+        self._bl_jct_edit.setPlaceholderText("从浏览器 Cookies 中复制 bili_jct 的值")
+        self._bl_jct_edit.setEchoMode(QLineEdit.Password)
+        self._bl_jct_edit.setFont(QFont("Consolas", 10))
+        self._bl_jct_edit.setStyleSheet("""
+            QLineEdit { border: 1px solid #D0D0E0; border-radius: 6px;
+                padding: 6px 10px; background: #FFFFFF; color: #2C2C2C; }
+            QLineEdit:focus { border-color: #6C7BFF; }
+        """)
+        jct_row.addWidget(self._bl_jct_edit)
+
+        self._show_bl_jct_btn = QPushButton("显示")
+        self._show_bl_jct_btn.setFixedSize(60, 34)
+        self._show_bl_jct_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        self._show_bl_jct_btn.setCursor(Qt.PointingHandCursor)
+        self._show_bl_jct_btn.setCheckable(True)
+        self._show_bl_jct_btn.clicked.connect(self._toggle_bl_jct_visibility)
+        jct_row.addWidget(self._show_bl_jct_btn)
+        form.addRow("bili_jct：", jct_row)
+
+        layout.addLayout(form)
+        layout.addSpacing(8)
+
+        help_text = QLabel(
+            "💡 提示：\n"
+            "· SESSDATA 是 B站登录的核心凭证，有效期约 30 天，过期需重新获取\n"
+            "· Cookie 保存在本地用户数据目录（user_config.json），不会上传到 Git\n"
+            "· 未配置 Cookie 时，B站视频摘要功能只能返回视频基本信息，无法提取字幕"
+        )
+        help_text.setFont(QFont("Microsoft YaHei UI", 8))
+        help_text.setStyleSheet("color: #999999; background-color: #1E1E30; padding: 8px; border-radius: 6px;")
+        help_text.setWordWrap(True)
+        layout.addWidget(help_text)
+        layout.addStretch()
+
+    def _toggle_bl_sess_visibility(self, checked: bool):
+        self._bl_sess_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+        self._show_bl_sess_btn.setText("隐藏" if checked else "显示")
+
+    def _toggle_bl_jct_visibility(self, checked: bool):
+        self._bl_jct_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+        self._show_bl_jct_btn.setText("隐藏" if checked else "显示")
+
+    # ── 重试与回退 ────────────────────────────────────────
     def _load_config(self):
         tv_cfg = get_tavily_config()
         self._tv_key_edit.setText(tv_cfg.get("api_key", ""))
@@ -447,6 +546,14 @@ class NetworkSettingsDialog(QDialog):
         self._bt_fetch_browser.setChecked(builtin.get("fetch_webpage_browser", True))
         self._bt_fetch_stealth.setChecked(builtin.get("fetch_webpage_stealth", True))
 
+        bl_cfg = get_bilibili_config()
+        self._bl_sess_edit.setText(bl_cfg.get("sessdata", ""))
+        self._bl_jct_edit.setText(bl_cfg.get("bili_jct", ""))
+
+        bl_cfg = get_bilibili_config()
+        self._bl_sess_edit.setText(bl_cfg.get("sessdata", ""))
+        self._bl_jct_edit.setText(bl_cfg.get("bili_jct", ""))
+
     def _on_save(self):
         save_tavily_config({"api_key": self._tv_key_edit.text().strip()})
         save_firecrawl_config({"api_key": self._fc_key_edit.text().strip()})
@@ -468,6 +575,16 @@ class NetworkSettingsDialog(QDialog):
             "fetch_webpage_via_api":   self._bt_fetch_via_api.isChecked(),
             "fetch_webpage_browser":   self._bt_fetch_browser.isChecked(),
             "fetch_webpage_stealth":   self._bt_fetch_stealth.isChecked(),
+        })
+
+        save_bilibili_config({
+            "sessdata":  self._bl_sess_edit.text().strip(),
+            "bili_jct":  self._bl_jct_edit.text().strip(),
+        })
+
+        save_bilibili_config({
+            "sessdata":  self._bl_sess_edit.text().strip(),
+            "bili_jct":  self._bl_jct_edit.text().strip(),
         })
 
         self.config_saved.emit()

@@ -874,3 +874,43 @@ def save_tts_config(config: dict):
     full = _load_full_config()
     full["tts"] = config
     _save_full_config(full)
+
+
+# ── B站 Cookie（用于获取视频 AI 字幕，需要登录态）──────────────
+# 获取方式：浏览器登录 B站 → F12 → Application → Cookies → bilibili.com
+# 复制 SESSDATA 和 bili_jct 的 Value
+# 配置入口：莲心主界面 → 联网搜索 → 「📺 B站账号」选项卡
+_BILIBILI_DEFAULTS = {
+    "sessdata": "",
+    "bili_jct": "",
+}
+
+
+def get_bilibili_config() -> dict:
+    """读取 B站 Cookie 配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    bl = full.get("bilibili", {})
+    result = {}
+    for k, v in _BILIBILI_DEFAULTS.items():
+        result[k] = bl.get(k, v)
+    return result
+
+
+def save_bilibili_config(config: dict):
+    """保存 B站 Cookie 配置（仅更新 bilibili 部分）。"""
+    full = _load_full_config()
+    full["bilibili"] = config
+    _save_full_config(full)
+
+
+def get_bilibili_cookie() -> str:
+    """获取完整的 B站 Cookie 字符串，用于请求头。"""
+    cfg = get_bilibili_config()
+    sessdata = cfg.get("sessdata", "")
+    jct = cfg.get("bili_jct", "")
+    if not sessdata:
+        return ""
+    parts = [f"SESSDATA={sessdata}"]
+    if jct:
+        parts.append(f"bili_jct={jct}")
+    return "; ".join(parts)
