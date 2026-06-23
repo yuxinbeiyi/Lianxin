@@ -137,7 +137,15 @@ class HistoryManager:
             "FROM sessions ORDER BY is_pinned DESC, id DESC"
         )
         return [dict(row) for row in cur.fetchall()]
-
+    def get_sessions_by_date(self, date_str: str) -> list[dict]:
+        """返回指定日期创建的所有会话（按创建时间正序）。"""
+        conn = self._conn()
+        cur = conn.execute(
+            "SELECT id, title, created_at, summary, is_pinned "
+            "FROM sessions WHERE created_at LIKE ? || '%' ORDER BY id ASC",
+            (date_str,)
+        )
+        return [dict(row) for row in cur.fetchall()]
     def search_sessions(self, keyword: str) -> list[dict]:
         """按关键词搜索标题、摘要、消息内容，返回匹配会话列表。"""
         conn = self._conn()

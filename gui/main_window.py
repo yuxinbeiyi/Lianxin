@@ -1221,6 +1221,7 @@ class MainWindow(QMainWindow):
                 self._agent.get_history_manager(),
                 current_session_id=self._agent._session_id,
                 parent=self,
+                first_meet_date=self._accompany_stats.get_first_meet_date(),
             )
             self._history_dialog.import_memory.connect(self._on_import_memory)
         self._history_dialog.show()

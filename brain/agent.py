@@ -125,11 +125,16 @@ class AgentCore:
         self._last_emotion = None     # 本轮回复的情绪标签（供 GUI 选图用）
         self._last_raw_response = None  # 本轮回复原始文本（含标签）
         self._last_reasoning = None    # 本轮回复的 COT 推理链
+        self._last_reply_time = None   # 上次回复时间（用于自适应时间精度缓存）
+        # 对话历史（OpenAI messages 格式）
+
         # 对话历史（OpenAI messages 格式）
         self.history: list[dict] = []
 
         # 会话历史持久化
         self._history_mgr = HistoryManager()
+        self._last_reply_time = self._load_last_reply_time()
+
 
         # ── 自动记忆提取跟踪（从配置读取） ──────────────────
         self._extraction_counter = 0   # 对话轮次计数
@@ -341,7 +346,9 @@ class AgentCore:
             '', display_response
         ).strip()
 
+        self._last_reply_time = datetime.now()
         return display_response  # 返回干净文本，不含标签和 emoji
+
 
     def _trigger_auto_extraction(self):
         """在后台线程中自动提取记忆（不阻塞对话）。本地模型跳过（不擅长 JSON 格式化输出）。"""
@@ -420,6 +427,8 @@ class AgentCore:
         self._session_titled = False
         self._conversation_summary = ""
         self._summarized_history_idx = 0
+        self._last_reply_time = None
+
 
 
     def get_history_manager(self) -> HistoryManager:
@@ -669,7 +678,49 @@ class AgentCore:
 
             return last is None or last != current
 
+    # ── 自适应时间精度缓存 ───────────────────────────────────
+
+    def _load_last_reply_time(self):
+        try:
+            conn = self._history_mgr._conn()
+            row = conn.execute(
+                "SELECT timestamp FROM messages WHERE role='assistant' "
+                "ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if row and row[0]:
+                return datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+        return None
+
+    def _build_realtime_message(self) -> dict:
+        now = datetime.now()
+
+        if self._last_reply_time is not None:
+            diff = (now - self._last_reply_time).total_seconds()
+            use_minute = diff > 15 * 60
+        else:
+            use_minute = True
+
+        weekday_names = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+        weekday = weekday_names[now.weekday()]
+        date_str = now.strftime("%Y年%m月%d日")
+        time_str = now.strftime("%H:%M") if use_minute else now.strftime("%H:00")
+
+        lunar_info = self._get_lunar_info(now)
+        holiday_info = self._get_holiday_info(now)
+
+        realtime = f"【实时时间】\n公历：{date_str} {time_str} {weekday}"
+        if lunar_info:
+            realtime += f"\n农历：{lunar_info}"
+        if holiday_info:
+            realtime += f"\n{holiday_info}"
+        if not self._use_local:
+            realtime += "\n注意：涉及时间、日期、节气、节日相关的问题时，必须先调用 get_current_time 工具获取最新信息，不要依赖记忆或猜测。"
+        return {"role": "system", "content": realtime}
+
     # ── 内部实现 ─────────────────────────────────────────────
+
 
     def _execute_tool_calls_parallel(self, tool_calls, messages, on_tool_call=None, on_tool_result=None):
         """资源感知的工具并行执行。
@@ -989,22 +1040,9 @@ class AgentCore:
        
         messages = [{"role": "system", "content": self._system_prompt}]
 
-        # ── 注入实时时间信息 ────────────────────────────────
-        now = datetime.now()
-        weekday_names = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
-        weekday = weekday_names[now.weekday()]
-        date_str = now.strftime("%Y年%m月%d日")
-        time_str = now.strftime("%H:%M:%S")
-        lunar_info = self._get_lunar_info(now)
-        holiday_info = self._get_holiday_info(now)
-        realtime = f"【实时时间】\n公历：{date_str} {time_str} {weekday}"
-        if lunar_info:
-            realtime += f"\n农历：{lunar_info}"
-        if holiday_info:
-            realtime += f"\n{holiday_info}"
-        if not self._use_local:
-            realtime += "\n注意：涉及时间、日期、节气、节日相关的问题时，必须先调用 get_current_time 工具获取最新信息，不要依赖记忆或猜测。"
-        messages.append({"role": "system", "content": realtime})
+        # ── 注入实时时间信息（自适应精度：间隔>15分钟用分钟级，否则小时级） ──
+        messages.append(self._build_realtime_message())
+
 
         # ── 注入情感状态（涟漪系统） ──────────────────────────
         if not self._use_local:

@@ -9,12 +9,12 @@ from PyQt5.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QListWidget, QListWidgetItem,
     QTextBrowser, QPushButton, QLabel, QSplitter, QWidget,
     QInputDialog, QLineEdit, QMenu, QFileDialog, QMessageBox,
+    QDateEdit, QCheckBox,
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QThread
+from PyQt5.QtCore import Qt, pyqtSignal, QThread, QDate
 from PyQt5.QtGui import QFont, QColor
-
 from memory.history_manager import HistoryManager
-
+from utils.diary import DiaryWorker, has_diary_for_date
 
 # ── 后台摘要生成线程 ──────────────────────────────────────────────
 
@@ -70,12 +70,15 @@ class HistoryDialog(QDialog):
     import_memory = pyqtSignal(int)   # 携带 session_id，供主窗口导入记忆
 
     def __init__(self, history_manager: HistoryManager,
-                 current_session_id: int = -1, parent=None):
+                 current_session_id: int = -1, parent=None,
+                 first_meet_date: str = ""):
         super().__init__(parent)
         self._mgr                = history_manager
         self._current_session_id = current_session_id   # 主窗口当前会话，删除时判断
         self._sessions: list     = []
         self._summary_workers: list = []   # 防止 QThread 被 GC
+        self._diary_worker       = None    # 日记生成线程
+        self._first_meet_date    = first_meet_date
 
         self.setWindowTitle("历史对话记录")
         self.resize(960, 620)
@@ -93,14 +96,9 @@ class HistoryDialog(QDialog):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(6)
 
-        # 顶部标题
-        title_label = QLabel("历史对话记录")
-        title_label.setFont(QFont("Microsoft YaHei UI", 13, QFont.Bold))
-        title_label.setStyleSheet("color: #3A3A5C; padding: 4px 0;")
-        root.addWidget(title_label)
 
         # ── 主体分割器 ────────────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
@@ -112,10 +110,6 @@ class HistoryDialog(QDialog):
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(4)
-
-        left_layout.addWidget(
-            self._make_label("对话列表")
-        )
 
         self._search_box = QLineEdit()
         self._search_box.setPlaceholderText("搜索标题、内容、摘要…")
@@ -129,7 +123,72 @@ class HistoryDialog(QDialog):
         self._search_box.textChanged.connect(self._on_search_changed)
         left_layout.addWidget(self._search_box)
 
+        # ── 日期筛选 + 生成日记按钮 ─────────────────────────
+        date_row = QHBoxLayout()
+        date_row.setSpacing(4)
+        self._date_filter = QDateEdit()
+        self._date_filter.setCalendarPopup(True)
+        self._date_filter.setDisplayFormat("yyyy-MM-dd")
+        self._date_filter.setSpecialValueText("全部日期")
+        if self._first_meet_date:
+            try:
+                y, m, d = map(int, self._first_meet_date.split("-"))
+                self._date_filter.setDate(QDate(y, m, d))
+            except (ValueError, TypeError):
+                self._date_filter.setDate(QDate(2000, 1, 1))
+        else:
+            self._date_filter.setDate(QDate(2000, 1, 1))
+
+        self._date_filter.setStyleSheet("""
+            QDateEdit {
+                background: #2D2D3F; color: #E0E0E0;
+                border: 1px solid #3D3D5A; border-radius: 4px; padding: 2px 4px;
+            }
+            QDateEdit:focus { border-color: #1ABC9C; }
+            QDateEdit::drop-down { border: none; width: 16px; }
+        """)
+        self._date_filter.dateChanged.connect(self._on_date_changed)
+        date_row.addWidget(self._date_filter)
+
+        clear_date_btn = QPushButton("✕")
+        clear_date_btn.setFixedSize(24, 24)
+        clear_date_btn.setStyleSheet("""
+            QPushButton {
+                background: #3D3D5A; color: #AAA; border-radius: 4px; border: none;
+            }
+            QPushButton:hover {
+                background: #5A3A3A; color: #FF8080;
+            }
+        """)
+        clear_date_btn.setToolTip("清除日期筛选")
+        clear_date_btn.clicked.connect(lambda: self._date_filter.setDate(QDate(2000, 1, 1)))
+        date_row.addWidget(clear_date_btn)
+
+        self._select_all_cb = QCheckBox("全选")
+
+        self._select_all_cb.setStyleSheet("color: #E0E0E0;")
+        self._select_all_cb.stateChanged.connect(self._on_select_all)
+        self._select_all_cb.hide()
+        date_row.addWidget(self._select_all_cb)
+
+        date_row.addStretch()
+
+        self._btn_diary = QPushButton("📔 生成日记")
+        self._btn_diary.setFixedSize(110, 26)
+        self._btn_diary.setStyleSheet("""
+            QPushButton { background:#6C7BFF; color:white; border-radius:6px; border:none; }
+            QPushButton:hover   { background:#5A6AEE; }
+            QPushButton:disabled{ background:#3D3D5A; color:#666; }
+        """)
+        self._btn_diary.clicked.connect(self._on_generate_diary)
+        self._btn_diary.setEnabled(False)
+        self._btn_diary.hide()
+        date_row.addWidget(self._btn_diary)
+
+        left_layout.addLayout(date_row)
+
         self._session_list = QListWidget()
+
         self._session_list.setStyleSheet("""
             QListWidget {
                 background: #1E1E2E;
@@ -147,9 +206,12 @@ class HistoryDialog(QDialog):
             }
             QListWidget::item:hover {
                 background: #2D2D3F;
+                color: #FFFFFF;                         
             }
         """)
         self._session_list.currentRowChanged.connect(self._on_session_selected)
+        self._session_list.itemChanged.connect(self._on_item_checked)
+
         self._session_list.itemDoubleClicked.connect(self._on_rename_session)
         self._session_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self._session_list.customContextMenuRequested.connect(self._on_context_menu)
@@ -161,8 +223,6 @@ class HistoryDialog(QDialog):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
-
-        right_layout.addWidget(self._make_label("对话内容"))
 
         self._content_browser = QTextBrowser()
         self._content_browser.setFont(QFont("Microsoft YaHei UI", 10))
@@ -270,15 +330,25 @@ class HistoryDialog(QDialog):
 
     # ── 数据加载 ─────────────────────────────────────────────
 
-    def _load_sessions(self, keyword: str = ""):
-        """加载（或按关键词过滤）会话列表，保持当前选中行。"""
+    def _load_sessions(self, keyword: str = "", date_str: str = None):
+        """加载（或按关键词+日期过滤）会话列表，保持当前选中行。"""
         cur_row = self._session_list.currentRow()
         cur_id  = self._sessions[cur_row]["id"] if 0 <= cur_row < len(self._sessions) else -1
 
-        if keyword.strip():
+        if date_str:
+            self._sessions = self._mgr.get_sessions_by_date(date_str)
+        elif keyword.strip():
             self._sessions = self._mgr.search_sessions(keyword.strip())
         else:
             self._sessions = self._mgr.get_sessions()
+
+        if date_str and keyword.strip():
+            kw = keyword.strip().lower()
+            self._sessions = [
+                s for s in self._sessions
+                if kw in s["title"].lower() or kw in (s.get("summary") or "").lower()
+            ]
+
 
         self._session_list.clear()
         if not self._sessions:
@@ -299,6 +369,10 @@ class HistoryDialog(QDialog):
             display   = f"{pin_mark}{date_str}\n{s['title']}  [{count}条]"
             item = QListWidgetItem(display)
             item.setData(Qt.UserRole, s["id"])
+            if date_str:
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Unchecked)
+
             if s.get("is_pinned"):
                 item.setBackground(QColor("#FFFBEE"))
             # 高亮匹配关键词的条目
@@ -396,7 +470,11 @@ class HistoryDialog(QDialog):
     # ── 搜索 ─────────────────────────────────────────────────
 
     def _on_search_changed(self, text: str):
-        self._load_sessions(keyword=text)
+        date_str = None
+        if self._date_filter.date().year() > 2000:
+            date_str = self._date_filter.date().toString("yyyy-MM-dd")
+        self._load_sessions(keyword=text, date_str=date_str)
+
 
     # ── 双击重命名 ───────────────────────────────────────────
 
@@ -449,7 +527,15 @@ class HistoryDialog(QDialog):
     def _on_summary_error_single(self, _sid: int, err: str):
         self._btn_summary.setEnabled(True)
         self._btn_summary.setText("生成摘要")
-        QMessageBox.warning(self, "摘要生成失败", f"调用 API 出错：{err}")
+        self._summary_label.setText(f"⚠️ 摘要生成失败：{err}")
+        self._summary_label.setStyleSheet("""
+            QLabel {
+                background: #3A1A1A; border: 1px solid #7A3D3D;
+                border-radius: 6px; padding: 6px 10px; color: #FFA0A0;
+            }
+        """)
+        self._summary_label.show()
+
 
     def _on_batch_summary(self):
         """批量为所有消息数 ≥10 条且没有摘要的会话生成摘要。"""
@@ -480,6 +566,8 @@ class HistoryDialog(QDialog):
         self._btn_batch.setEnabled(False)
         self._btn_batch.setText(f"0/{self._batch_total}")
         self._next_batch()
+
+        
 
     def _next_batch(self):
         if not self._batch_queue:
@@ -633,27 +721,39 @@ class HistoryDialog(QDialog):
     # ── 删除 ─────────────────────────────────────────────────
 
     def _on_delete_clicked(self):
+        # 日期筛选模式：批量删除勾选的会话
+        if self._select_all_cb.isVisible():
+            ids_to_delete = []
+            for i in range(self._session_list.count()):
+                item = self._session_list.item(i)
+                if item.checkState() == Qt.Checked:
+                    sid = item.data(Qt.UserRole)
+                    if sid is not None:
+                        ids_to_delete.append(sid)
+            if not ids_to_delete:
+                return
+            reply = QMessageBox.question(
+                self, "批量删除",
+                f"确定要删除选中的 {len(ids_to_delete)} 个会话吗？\n（删除后不可恢复）",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            for sid in ids_to_delete:
+                self._mgr.delete_session(sid)
+            self._load_sessions(
+                keyword=self._search_box.text(),
+                date_str=self._date_filter.date().toString("yyyy-MM-dd")
+            )
+            return
+
+        # 普通模式：删除当前选中
         row = self._session_list.currentRow()
         if not (0 <= row < len(self._sessions)):
             return
         s     = self._sessions[row]
         count = self._mgr.get_message_count(s["id"])
 
-        extra = ""
-        if s["id"] == self._current_session_id:
-            extra = "\n\n⚠️ 这是当前正在使用的会话，删除后将自动切换到其他会话。"
-
-        reply = QMessageBox.question(
-            self, "删除会话",
-            f"确定要删除「{s['title']}」吗？\n"
-            f"（共 {count} 条消息，删除后不可恢复）{extra}",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
-            return
-
-        self._mgr.delete_session(s["id"])
-        self._load_sessions(self._search_box.text())
 
     # ── 导入记忆 ─────────────────────────────────────────────
 
@@ -688,3 +788,81 @@ class HistoryDialog(QDialog):
         menu.addSeparator()
         menu.addAction("删除", self._on_delete_clicked)
         menu.exec_(self._session_list.mapToGlobal(pos))
+    # ── 日期筛选 + 日记生成 ─────────────────────────────────
+
+    def _on_date_changed(self, date: QDate):
+        if date.year() > 2000:
+            date_str = date.toString("yyyy-MM-dd")
+            self._load_sessions(keyword=self._search_box.text(), date_str=date_str)
+            self._select_all_cb.show()
+            self._select_all_cb.setChecked(False)
+            self._btn_diary.show()
+            self._btn_diary.setText("📔 生成日记")
+            self._btn_diary.setEnabled(False)
+        else:
+            self._load_sessions(keyword=self._search_box.text())
+            self._select_all_cb.hide()
+            self._btn_diary.hide()
+
+    def _on_select_all(self, state):
+        check = Qt.Checked if state == Qt.Checked else Qt.Unchecked
+        for i in range(self._session_list.count()):
+            item = self._session_list.item(i)
+            if item.flags() & Qt.ItemIsUserCheckable:
+                item.setCheckState(check)
+        self._update_diary_btn()
+
+    def _on_item_checked(self, _item):
+        self._update_diary_btn()
+
+    def _update_diary_btn(self):
+        count = 0
+        for i in range(self._session_list.count()):
+            item = self._session_list.item(i)
+            if item.flags() & Qt.ItemIsUserCheckable and item.checkState() == Qt.Checked:
+                count += 1
+        self._btn_diary.setText(f"📔 生成日记（{count}）")
+        self._btn_diary.setEnabled(count > 0)
+
+    def _on_generate_diary(self):
+        date_str = self._date_filter.date().toString("yyyy-MM-dd")
+        checked_ids = []
+        for i in range(self._session_list.count()):
+            item = self._session_list.item(i)
+            if item.checkState() == Qt.Checked:
+                sid = item.data(Qt.UserRole)
+                if sid is not None:
+                    checked_ids.append(sid)
+        if not checked_ids:
+            return
+
+        if has_diary_for_date(date_str):
+            reply = QMessageBox.question(self, "覆盖确认",
+                f"{date_str} 已有日记，是否覆盖？",
+                QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
+
+        all_msgs = []
+        for sid in checked_ids:
+            for m in self._mgr.get_messages(sid):
+                all_msgs.append({"role": m["role"], "content": m["content"]})
+        if not all_msgs:
+            QMessageBox.information(self, "提示", "所选会话没有消息内容。")
+            return
+
+        self._btn_diary.setEnabled(False)
+        self._btn_diary.setText("生成中…")
+        self._diary_worker = DiaryWorker(date_str, all_msgs)
+        self._diary_worker.finished.connect(self._on_diary_finished)
+        self._diary_worker.start()
+
+    def _on_diary_finished(self, success: bool, info: str):
+        self._btn_diary.setEnabled(True)
+        self._btn_diary.setText("📔 生成日记")
+        self._update_diary_btn()
+        if success:
+            QMessageBox.information(self, "日记已生成",
+                f"已生成 {info} 的日记，可在日记本中查看。")
+        else:
+            QMessageBox.warning(self, "生成失败", f"错误：{info}")
