@@ -328,9 +328,9 @@ class AgentCore:
                 self._extraction_counter = 0
                 self._trigger_auto_extraction()
 
-        # 防御性过滤：确保没有任何残留的【表情：XXX】泄漏到显示文本
+        # 防御性过滤：确保没有任何残留的表情标签泄漏到显示文本
         display_response = re.sub(
-            r"[【［\[]表情[：:]\s*[^】\]］\]]*[】\]］\]]?", "", display_response
+            r"(?:[【［\[]|\*\*)表情[：:]\s*[^】\]］\]\*]*(?:[】\]］\]]|\*\*)?", "", display_response
         ).strip()
         display_response = re.sub(r'\n\s*\n', '\n', display_response).strip()
 

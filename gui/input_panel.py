@@ -679,17 +679,18 @@ class InputPanel(QWidget):
         self._input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._input.setStyleSheet("""
             QTextEdit {
-                border: 2px solid #FFB347;
+                border: 2px solid #5B9A8B;
                 border-radius: 10px;
                 padding: 8px 12px;
-                background-color: #2D2A20;
-                color: #E0E0E0;
+                background-color: #1A2A26;
+                color: #CCCCCC;
                 font-size: 12pt;
                 font-family: "Microsoft YaHei UI";
             }
             QTextEdit:focus {
-                border: 2px solid #6C7BFF;
-                background-color: #252540;
+                border: 2px solid #7EC8A4;
+                background-color: #1E302C;
+                color: #FFFFFF;
             }
         """)
         self._input.enter_pressed.connect(self._on_send)
@@ -887,33 +888,35 @@ class InputPanel(QWidget):
             self._input.setFocus()
             self._input.setStyleSheet("""
                 QTextEdit {
-                    border: 1px solid #3D3D5A;
+                    border: 2px solid #5B9A8B;
                     border-radius: 10px;
                     padding: 8px 12px;
-                    background-color: #1E1E30;
-                    color: #E0E0E0;
+                    background-color: #1A2A26;
+                    color: #CCCCCC;
                     font-size: 12pt;
                     font-family: "Microsoft YaHei UI";
                 }
                 QTextEdit:focus {
-                    border: 1px solid #6C7BFF;
-                    background-color: #252540;
+                    border: 2px solid #7EC8A4;
+                    background-color: #1E302C;
+                    color: #FFFFFF;
                 }
             """)
         else:
             self._input.setStyleSheet("""
                 QTextEdit {
-                    border: 1px solid #3D3D5A;
+                    border: 2px solid #5B9A8B;
                     border-radius: 10px;
                     padding: 8px 12px;
-                    background-color: #1E1E30;
+                    background-color: #1A2A26;
                     color: #707070;
                     font-size: 12pt;
                     font-family: "Microsoft YaHei UI";
                 }
                 QTextEdit:focus {
-                    border: 1px solid #6C7BFF;
-                    background-color: #252540;
+                    border: 2px solid #7EC8A4;
+                    background-color: #1E302C;
+                    color: #FFFFFF;
                 }
             """)
 
@@ -975,17 +978,17 @@ class InputPanel(QWidget):
     def _highlight_input(self):
         self._input.setStyleSheet("""
             QTextEdit {
-                border: 2px solid #FFB347;
+                border: 2px solid #7EC8A4;
                 border-radius: 10px;
                 padding: 8px 12px;
-                background-color: #2D2A20;
-                color: #E0E0E0;
+                background-color: #1E302C;
+                color: #FFFFFF;
                 font-size: 12pt;
                 font-family: "Microsoft YaHei UI";
             }
             QTextEdit:focus {
-                border: 2px solid #6C7BFF;
-                background-color: #FFFFFF;
+                border: 2px solid #7EC8A4;
+                background-color: #1E302C;
             }
         """)
         self._highlight_timer.start(3000)
@@ -993,17 +996,18 @@ class InputPanel(QWidget):
     def _clear_highlight(self):
         self._input.setStyleSheet("""
             QTextEdit {
-                border: 1px solid #3D3D5A;
+                border: 2px solid #5B9A8B;
                 border-radius: 10px;
                 padding: 8px 12px;
-                background-color: #1E1E30;
-                color: #E0E0E0;
+                background-color: #1A2A26;
+                color: #CCCCCC;
                 font-size: 12pt;
                 font-family: "Microsoft YaHei UI";
             }
             QTextEdit:focus {
-                border: 1px solid #6C7BFF;
-                background-color: #252540;
+                border: 2px solid #7EC8A4;
+                background-color: #1E302C;
+                color: #FFFFFF;
             }
         """)
 

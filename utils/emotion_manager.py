@@ -59,21 +59,20 @@ def parse_emotion_tag(text: str) -> tuple:
     """
     从文本中解析情绪标签，返回 (cleaned_text, emotion)
     例如: "你好呀【表情：开心】" -> ("你好呀", "开心")
+    兼容: "你好呀**表情：开心**" -> ("你好呀", "开心")
     如果没有标签，返回 (text, None)
     """
     import re
-    # 兼容全角/半角括号和冒号的各种混用情况
-    pattern = r"[【［\[]表情[：:]\s*([^】\]］\]]+)[】\]］\]]?"
+    # 兼容【表情：XXX】、**表情：XXX**、[表情：XXX] 等格式
+    pattern = r"(?:[【［\[]|\*\*)表情[：:]\s*([^】\]］\]\*]+)(?:[】\]］\]]|\*\*)?"
     match = re.search(pattern, text)
     if match:
         emotion = match.group(1).strip()
-        # 移除匹配到的这个子串
         cleaned = text.replace(match.group(0), "").strip()
-        # 如果移除后留下单独的空行，再清理一下
         cleaned = re.sub(r'\n\s*\n', '\n', cleaned).strip()
         return cleaned, emotion
-    # 二次兜底：移除所有残留的 【表情：*】 类模式（防止格式变化导致泄露）
-    cleaned = re.sub(r"[【［\[]表情[：:]\s*[^】\]］\]]*[】\]］\]]?", "", text).strip()
+    # 二次兜底：移除所有残留的表情标签格式
+    cleaned = re.sub(r"(?:[【［\[]|\*\*)表情[：:]\s*[^】\]］\]\*]*(?:[】\]］\]]|\*\*)?", "", text).strip()
     cleaned = re.sub(r'\n\s*\n', '\n', cleaned).strip()
     return cleaned, None
 

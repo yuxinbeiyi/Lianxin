@@ -1803,6 +1803,11 @@ class MainWindow(QMainWindow):
             dst = obs_dir / f"obs_{ts}{ext}"
             import shutil
             shutil.copy2(img_path, dst)
+            # 清理临时文件
+            try:
+                os.remove(img_path)
+            except Exception:
+                pass
 
             # 清理旧观察图片：保留最近 50 张
             try:

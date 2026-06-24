@@ -51,12 +51,12 @@ class MessageBubble(QWidget):
         if self.is_user:
             bubble.setStyleSheet("""
                 QWidget {
-                    background-color: #2D2D3F;
+                    background-color: #1E302C;
                     border-radius: 14px;
-                    border: 1px solid #3D3D5A;
+                    border: 1px solid #7EC8A4;
                 }
                 QLabel {
-                    color: #E0E0E0;
+                    color: #FFFFFF;
                     padding: 10px 16px;
                     background: transparent;
                 }
@@ -68,7 +68,7 @@ class MessageBubble(QWidget):
                 QWidget {
                     background-color: #2D2D3F;
                     border-radius: 14px;
-                    border: 1px solid #3D3D5A;
+                    border: 2px solid #8A98F0;
                 }
                 QLabel {
                     color: #E0E0E0;
