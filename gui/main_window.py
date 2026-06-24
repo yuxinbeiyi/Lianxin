@@ -1968,8 +1968,6 @@ class MainWindow(QMainWindow):
             self._observation_tip = None
         self._chat_widget.add_system_tip(f"主动消息生成失败：{err}")
 
-
-
     # ── 心跳自检 ─────────────────────────────────────────────
 
     def _reset_heartbeat_timer(self):
@@ -1990,14 +1988,10 @@ class MainWindow(QMainWindow):
 
     def _on_heartbeat_check(self):
         """心跳自检触发：检查活跃时段后启动 Worker。"""
-        if not self._global_settings.is_active_hour():
-            return
-
         self._heartbeat_check_worker = HeartbeatWorker(self._agent._session_id)
         self._heartbeat_check_worker.response_ready.connect(self._on_heartbeat_response)
         self._heartbeat_check_worker.finished_silent.connect(self._on_heartbeat_finished_silent)
         self._heartbeat_check_worker.start()
-
 
     def _on_heartbeat_response(self, text: str):
         """心跳自检有提醒内容，显示给用户。"""
