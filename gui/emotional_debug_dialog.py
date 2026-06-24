@@ -48,6 +48,31 @@ class EmotionalDebugDialog(QDialog):
         self._refresh_display()
 
     def _build_ui(self):
+        # ── 启用/禁用开关 ──────────────────────────────────────
+        toggle_row = QHBoxLayout()
+        self._toggle_btn = QPushButton()
+        self._toggle_btn.setCheckable(True)
+        self._toggle_btn.setFixedHeight(40)
+        self._toggle_btn.setStyleSheet("""
+            QPushButton {
+                color: white;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: bold;
+                border: none;
+                padding: 6px 16px;
+            }
+            QPushButton:checked {
+                background-color: #27AE60;
+            }
+            QPushButton:!checked {
+                background-color: #E74C3C;
+            }
+        """)
+        self._toggle_btn.toggled.connect(self._on_toggle_emotion)
+        toggle_row.addWidget(self._toggle_btn)
+        self._layout.addLayout(toggle_row)
+
         # ── 状态总览 ──────────────────────────────────────
         overview_group = QGroupBox("当前状态")
         overview_layout = QVBoxLayout(overview_group)
@@ -200,6 +225,12 @@ class EmotionalDebugDialog(QDialog):
         try:
             from brain.emotional import get_manager as _get_emotion_mgr
             mgr = _get_emotion_mgr()
+            # 同步启用/禁用按钮状态
+            enabled = mgr.enabled
+            self._toggle_btn.blockSignals(True)
+            self._toggle_btn.setChecked(enabled)
+            self._update_toggle_text(enabled)
+            self._toggle_btn.blockSignals(False)
             info = mgr.get_debug_info()
         except Exception as e:
             self._mid_layer_label.setText(f"情感基调: 无法连接 ({e})")
@@ -321,6 +352,24 @@ class EmotionalDebugDialog(QDialog):
             self._refresh_display()
         except Exception as e:
             self._log_view.append(f"[错误] 模拟失败: {e}")
+    def _on_toggle_emotion(self, checked: bool):
+        """切换涟漪情感系统启用/禁用状态。"""
+        try:
+            from brain.emotional import get_manager as _get_emotion_mgr
+            mgr = _get_emotion_mgr()
+            mgr.enabled = checked
+            self._update_toggle_text(checked)
+            self._log_view.append(
+                f"[系统] 涟漪情感系统已{'启用' if checked else '禁用'}"
+            )
+        except Exception as e:
+            self._log_view.append(f"[错误] 切换失败: {e}")
+
+    def _update_toggle_text(self, enabled: bool):
+        if enabled:
+            self._toggle_btn.setText("🟢 涟漪情感系统：已启用")
+        else:
+            self._toggle_btn.setText("🔴 涟漪情感系统：已禁用")
 
     def closeEvent(self, event):
         self._refresh_timer.stop()

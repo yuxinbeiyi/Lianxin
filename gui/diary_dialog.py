@@ -153,7 +153,7 @@ class DiaryDialog(QDialog):
         settings_btn.setStyleSheet("""
             QPushButton {
                 background-color: #E8D8C0;
-                color: #D8C8A0;
+                color: #000000;
                 border-radius: 6px;
                 border: none;
             }
@@ -246,7 +246,7 @@ class DiaryDialog(QDialog):
         if not filtered:
             empty_label = QLabel("没有找到符合条件的日记。")
             empty_label.setAlignment(Qt.AlignCenter)
-            empty_label.setStyleSheet("color: #A0522D; padding: 40px;")
+            empty_label.setStyleSheet("color: #FFFFFF; padding: 40px;")
 
             self.content_layout.addWidget(empty_label)
             return

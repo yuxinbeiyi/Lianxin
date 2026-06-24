@@ -59,6 +59,19 @@ class ChatWidget(QScrollArea):
         bubble = MessageBubble(text, is_user=False)
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._scroll_to_bottom()
+    def add_image_message(self, image_path: str, desc: str = "", full_text: str = "", is_ai: bool = False):
+        """添加图片消息气泡。
+        Args:
+            image_path: 图片文件路径
+            desc: 图片描述/OCR 文本
+            is_ai: True=莲心发的（左侧白色气泡），False=用户发的（右侧紫色气泡）
+        """
+        self._hide_thinking()
+        self._maybe_insert_timestamp()
+        sender = "ai" if is_ai else "user"
+        bubble = ImageMessageBubble(image_path, ocr_text=desc, full_text=full_text, sender=sender)
+        self._layout.insertWidget(self._layout.count() - 1, bubble)
+        self._scroll_to_bottom()
 
     def show_thinking(self, tool_name: str = ""):
         hint = f"  莲心调用工具: {tool_name}..." if tool_name else "  莲心思考中..."
@@ -83,6 +96,7 @@ class ChatWidget(QScrollArea):
         label.setFont(QFont("Microsoft YaHei UI", 10))
         label.setStyleSheet("background: transparent; padding: 2px;")
         self._layout.insertWidget(self._layout.count() - 1, label)
+        return label  # 返回引用，供调用方后续 hide()
 
     def add_user_image(self, image_path: str, ocr_text: str = "", full_text: str = ""):
         """插入用户图片消息气泡（右侧）。ocr_text 为摘要，full_text 为完整描述（支持展开）。"""

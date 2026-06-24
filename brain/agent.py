@@ -279,7 +279,7 @@ class AgentCore:
         effective_disable = disable_tools or self._disable_tools or self._use_local
         response_text = self._function_calling_loop(on_tool_call, on_tool_result, forced_tool,
                                                       effective_disable, interrupt_queue,
-                                                      on_interrupt, on_progress)
+                                                      on_interrupt, on_progress, user_message)
 
 
         # ── 剥离情绪标签：只存/显示干净文本，情绪通过属性传递 ──
@@ -719,7 +719,73 @@ class AgentCore:
             realtime += "\n注意：涉及时间、日期、节气、节日相关的问题时，必须先调用 get_current_time 工具获取最新信息，不要依赖记忆或猜测。"
         return {"role": "system", "content": realtime}
 
+    # ── 日记智能回忆 ──────────────────────────────────────────
+
+    def _should_search_diary(self, user_message: str) -> int:
+        """判断是否需要搜索日记，返回 0=不搜, 1=关键词搜, 2=近期回顾"""
+
+        LEVEL1_TRIGGERS = [
+            "上次", "之前", "那天", "还记得", "你记得", "说过",
+            "聊过", "以前", "过去", "曾经", "不是说过", "不是聊过"
+        ]
+        LEVEL2_PATTERNS = [
+            r"最近怎么样", r"最近如何", r"最近过得",
+            r"这几天怎么样", r"这几天如何", r"这周怎么样",
+            r"最近发生了什么", r"最近有啥.*事", r"最近有没有.*事",
+            r"最近.*变化", r"最近.*新鲜"
+        ]
+
+        # Level 1: 回忆触发词匹配
+        if any(t in user_message for t in LEVEL1_TRIGGERS):
+            return 1
+
+        # Level 2: 时间词 + 状态询问匹配
+        for pat in LEVEL2_PATTERNS:
+            if re.search(pat, user_message):
+                return 2
+
+        return 0
+
+    def _build_diary_context(self, level: int, user_message: str) -> dict | None:
+        """搜索日记并构建上下文消息，无结果返回 None"""
+        from utils.diary import search_diaries_by_keyword, get_recent_diaries
+
+        if level == 1:
+            # Level 1: 去掉触发词后，整句当关键词搜
+            LEVEL1_TRIGGERS = [
+                "上次", "之前", "那天", "还记得", "你记得", "说过",
+                "聊过", "以前", "过去", "曾经", "不是说过", "不是聊过"
+            ]
+            kw = user_message
+            for t in LEVEL1_TRIGGERS:
+                kw = kw.replace(t, "")
+            kw = kw.strip()
+            if not kw:
+                kw = user_message.strip()
+            diaries = search_diaries_by_keyword(kw, limit=3)
+            if not diaries:
+                return None
+            title = "【日记回忆】你在日记中记录过这些相关内容：\n"
+        elif level == 2:
+            # Level 2: 最近 7 天日记
+            diaries = get_recent_diaries(limit=7)
+            if not diaries:
+                return None
+            title = "【日记回忆】最近一周你写的日记：\n"
+        else:
+            return None
+
+        lines = [title]
+        for d in diaries:
+            content = d["content"]
+            if len(content) > 150:
+                content = content[:150] + "..."
+            lines.append(f"- {d['date']}: {content}")
+
+        return {"role": "system", "content": "\n".join(lines)}
+
     # ── 内部实现 ─────────────────────────────────────────────
+
 
 
     def _execute_tool_calls_parallel(self, tool_calls, messages, on_tool_call=None, on_tool_result=None):
@@ -1035,7 +1101,7 @@ class AgentCore:
     def _function_calling_loop(self, on_tool_call=None, on_tool_result=None, forced_tool: str = None,
                                disable_tools: bool = False,
                                interrupt_queue=None, on_interrupt=None,
-                               on_progress=None) -> str:
+                               on_progress=None, user_message: str = "") -> str:
 
        
         messages = [{"role": "system", "content": self._system_prompt}]
@@ -1043,8 +1109,16 @@ class AgentCore:
         # ── 注入实时时间信息（自适应精度：间隔>15分钟用分钟级，否则小时级） ──
         messages.append(self._build_realtime_message())
 
+        # ── 日记智能回忆：命中触发词自动搜索注入 ──────────────
+        if not self._use_local:
+            level = self._should_search_diary(user_message) # type: ignore
+            if level > 0:
+                diary_msg = self._build_diary_context(level, user_message) # type: ignore
+                if diary_msg:
+                    messages.append(diary_msg)
 
         # ── 注入情感状态（涟漪系统） ──────────────────────────
+
         if not self._use_local:
             try:
                 from brain.emotional import get_manager as _get_emotion_mgr

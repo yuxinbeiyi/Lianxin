@@ -64,11 +64,21 @@ class EmotionManager:
         self._last_command_reset = time.time()
         self._last_interaction_time = time.time()
         self._in_current_conversation = False  # 避免重复分析
+    # ── 启用/禁用开关 ─────────────────────────────────────
+    @property
+    def enabled(self) -> bool:
+        return self.state.enabled
 
+    @enabled.setter
+    def enabled(self, val: bool):
+        self.state.enabled = val
+        self.state.save()
     # ── prompt 注入 ─────────────────────────────────────
 
     def build_prompt_snippet(self) -> str:
         """构建情感状态的自然语言描述，注入到 LLM system prompt。"""
+        if not self.enabled:          
+            return ""                
         layer = self.state.middle_layer
         parts = []
 
@@ -152,6 +162,8 @@ class EmotionManager:
             user_messages: 本轮用户消息列表（纯文本）
             tool_call_count: 本轮 LLM 执行的工具调用次数
         """
+        if not self.enabled:           # ← 新增
+            return                  # ← 新增
         if not user_messages:
             return
 
@@ -213,6 +225,8 @@ class EmotionManager:
         Returns:
             (allowed: bool, reason: str)
         """
+        if not self.enabled:           # ← 新增
+            return True, ""                  # ← 新增
         layer = self.state.middle_layer
 
         # 寒冬模式：拒绝侵入性工具
@@ -230,7 +244,8 @@ class EmotionManager:
 
     @property
     def proactive_allowed(self) -> bool:
-        """根据当前状态决定是否允许主动聊天。"""
+        if not self.enabled:
+            return True              
         layer = self.state.middle_layer
         if layer == "寒冬":
             return False

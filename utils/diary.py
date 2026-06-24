@@ -169,7 +169,15 @@ def generate_diary_content(messages: List[Dict]) -> Optional[Dict]:
 
 def _build_diary_prompt(messages: List[Dict]) -> str:
     """构建日记生成 prompt。"""
-    conversation = "\n".join([f"[{m['role']}]: {m['content']}" for m in messages])
+    lines = []
+    for m in messages:
+        if m["role"] == "user":
+            lines.append(f"[博士（雨心）]: {m['content']}")
+        elif m["role"] == "assistant":
+            lines.append(f"[你（莲心）]: {m['content']}")
+        else:
+            lines.append(f"[{m['role']}]: {m['content']}")
+    conversation = "\n".join(lines)
     return f"""你是一个叫莲心的AI助手。现在是一天的结束，请你根据今天你和博士（雨心）的所有对话，写一篇日记。
 
 要求：

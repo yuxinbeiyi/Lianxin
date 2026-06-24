@@ -77,13 +77,15 @@ class EmotionalState:
                  deep_layer: float = _DEFAULT_DEEP,
                  aggression: float = 0.0,
                  event_history: Optional[list] = None,
-                 last_update: float = 0):
+                 last_update: float = 0,
+                 enabled: bool = True):
         self.needs = needs or NeedsState()
         self.deep_layer = _clamp(deep_layer, 10, 95)
         self.aggression = _clamp(aggression, 0, 100)
         self.event_history: list[Event] = event_history or []
         self.last_update = last_update or time.time()
         self._last_interaction = self.last_update  # 末次交互时间
+        self.enabled = enabled    
     # ── 属性：中层情感基调（从需求实时计算） ─────────────
     @property
     def middle_layer(self) -> str:
@@ -164,6 +166,7 @@ class EmotionalState:
             "aggression": round(self.aggression, 1),
             "last_update": time.time(),
             "last_interaction": self._last_interaction,
+            "enabled": self.enabled, 
             "history": [
                 {"type": e.type, "primary_need": e.primary_need,
                  "primary_delta": e.primary_delta, "severity": e.severity,
@@ -210,9 +213,12 @@ class EmotionalState:
                         timestamp=float(h.get("timestamp", 0)),
                     ))
                 aggression = _clamp(float(data.get("aggression", 0)), 0, 100)
+                enabled = data.get("enabled", True)                             # ← 新增
                 state = cls(needs=needs, deep_layer=deep,
                             aggression=aggression,
-                            event_history=history, last_update=last_update)
+                            event_history=history, last_update=last_update,
+                            enabled=enabled)                                     # ← 新增
+
                 state._last_interaction = last_interaction
                 # 应用时间差衰减
                 now = time.time()

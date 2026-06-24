@@ -1755,7 +1755,7 @@ class MainWindow(QMainWindow):
         if not self._proactive_scheduler.observe_enabled:
             self._chat_widget.add_system_tip("请先启用调皮观察功能再使用调试。")
             return
-        self._chat_widget.add_system_tip(f"正在{mode}观察中…")
+        self._observation_tip = self._chat_widget.add_system_tip(f"正在{mode}观察中…")
         self._launch_proactive_message(force_observe=mode)
 
     def _launch_proactive_message(self, force_observe: str = ""):
@@ -1791,6 +1791,11 @@ class MainWindow(QMainWindow):
     def _on_observation_image(self, img_path: str, desc: str):
         """收到观察图片和视觉描述，保存并显示在聊天界面。"""
         try:
+            # 清除"正在观察中"提示
+            if hasattr(self, '_observation_tip') and self._observation_tip:
+                self._observation_tip.hide()
+                self._observation_tip.deleteLater()
+                self._observation_tip = None        
             obs_dir = Path.home() / ".lianxin" / "observations"
             obs_dir.mkdir(parents=True, exist_ok=True)
             ts = int(time.monotonic() * 1000)
@@ -1807,16 +1812,28 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-            self._chat_widget.add_user_image(str(dst), desc[:80], desc)
+            self._agent.get_history_manager().save_message(
+                self._agent._session_id, "assistant", f"[观察] 莲心看了一眼屏幕"
+            )
+            summary = desc[:100] + "..." if len(desc) > 100 else desc
+            self._chat_widget.add_image_message(str(dst), desc=summary, full_text=desc, is_ai=True)
         except Exception as e:
             self._chat_widget.add_system_tip(f"[观察图片显示失败: {e}]")
 
     def _on_proactive_response(self, text: str):
         """主动聊天回复"""
+        # 清除"正在观察中"提示
+        if hasattr(self, '_observation_tip') and self._observation_tip:
+            self._observation_tip.hide()
+            self._observation_tip.deleteLater()
+            self._observation_tip = None
         self._proactive_scheduler.notify_fired()
         if not text:
             return
-
+        # 新增：过滤掉【表情：XXX】标签
+        import re
+        text = re.sub(r"[【［\[]表情[：:]\s*[^】\]］\]]*[】\]］\]]?", "", text).strip()
+        text = re.sub(r'\n\s*\n', '\n', text).strip()
         # 桌面主动消息
         if self._proactive_scheduler.desktop_enabled:
             self._agent.get_history_manager().save_message(
@@ -1840,7 +1857,13 @@ class MainWindow(QMainWindow):
             self._qq_bridge.send_to_owner(text)
 
     def _on_proactive_error(self, err: str):
+        if hasattr(self, '_observation_tip') and self._observation_tip:
+            self._observation_tip.hide()
+            self._observation_tip.deleteLater()
+            self._observation_tip = None
         self._chat_widget.add_system_tip(f"主动消息生成失败：{err}")
+
+
 
     # ── 心跳自检 ─────────────────────────────────────────────
 

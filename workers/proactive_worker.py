@@ -92,54 +92,75 @@ class ProactiveWorker(QThread):
         self._camera_wait = camera_wait
 
     def run(self):
+        print("[观察-调试] 工作线程启动")
         # ── 情感系统：检查是否允许主动聊天 ────────────────────
         try:
             from brain.emotional import get_manager as _get_emotion_mgr
             if not _get_emotion_mgr().proactive_allowed:
+                print("[观察-调试] 情感系统禁用了主动聊天，退出")
                 self.response_ready.emit("")
                 return
-        except Exception:
-            pass
-    
+        except Exception as e:
+            print(f"[观察-调试] 情感检查异常: {e}")
+
         try:
             obs_path = None
             obs_text = self._observation_desc
             is_shoulder_explore = (self._observation_mode == "shoulder_explore")
+            print(f"[观察-调试] 模式={self._observation_mode}, 已有描述={bool(obs_text)}")
             if self._observation_mode and not obs_text:
+                print(f"[观察-调试] 开始观察: {self._observation_mode}")
                 obs_path, obs_text = self._do_observation()
+                print(f"[观察-调试] 观察完成: path={obs_path}, text_len={len(obs_text or '')}")
             self.observation_text.emit(obs_text or "")
             if obs_path and obs_text:
+                print("[观察-调试] 发射 observation_image 信号")
                 self.observation_image.emit(obs_path, obs_text)
+            print("[观察-调试] 构建上下文...")
             context = self._build_context(obs_text)
+            print("[观察-调试] 生成回复...")
             message = self._generate(context, obs_text is not None, is_shoulder_explore)
+            print(f"[观察-调试] 回复完成: len={len(message)}")
             self.response_ready.emit(message)
         except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"[观察-调试] 异常: {e}")
             self.error_occurred.emit(str(e))
+
 
     # ── 内部方法 ──────────────────────────────────────────────
 
     def _do_observation(self) -> tuple[Optional[str], Optional[str]]:
-        """执行观察（截图/摄像头/肩载探索）。返回 (图片路径, 画面描述)。
-        图片由调用方负责清理，这里不删除。
-        """
+        print(f"[观察-调试] _do_observation: mode={self._observation_mode}")
         from brain.observation import capture_screen, capture_camera, analyze_observation
 
         if self._observation_mode == "shoulder_explore":
+            print("[观察-调试] → shoulder_explore 分支")
             return self._do_shoulder_explore()
         elif self._observation_mode == "screenshot":
+            print("[观察-调试] → 调用 capture_screen()...")
             path = capture_screen()
+            print(f"[观察-调试] capture_screen 返回: {path}")
             source = "截图"
         elif self._observation_mode == "camera":
+            print("[观察-调试] → 调用 capture_camera()...")
             path = capture_camera(self._camera_index, self._camera_wait)
+            print(f"[观察-调试] capture_camera 返回: {path}")
             source = "摄像头"
         else:
+            print(f"[观察-调试] 未知模式: {self._observation_mode}")
             return None, None
 
         if path is None:
+            print("[观察-调试] path 为空，返回 None")
             return None, None
 
+        print(f"[观察-调试] → 调用 analyze_observation({path})...")
         desc = analyze_observation(path, source)
+        print(f"[观察-调试] analyze_observation 完成: len={len(desc)}")
         return path, desc
+
 
     def _do_shoulder_explore(self) -> tuple[Optional[str], Optional[str]]:
         """执行肩载摄像头自主探索。返回 (代表性图片路径, 探索摘要)。"""
