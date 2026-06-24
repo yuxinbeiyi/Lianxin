@@ -613,6 +613,23 @@ class InputPanel(QWidget):
         self._image_preview_widgets: list[QWidget] = []
         self._build_ui()
         self.setAcceptDrops(True)
+        # 下边栏空白处支持拖拽窗口
+        self._drag_pos = None
+        def _panel_press(event):
+            if event.button() == Qt.LeftButton:
+                self._drag_pos = event.globalPos()
+        def _panel_move(event):
+            if event.buttons() == Qt.LeftButton and self._drag_pos is not None:
+                delta = event.globalPos() - self._drag_pos
+                self._drag_pos = event.globalPos()
+                w = self.window()
+                w.move(w.x() + delta.x(), w.y() + delta.y())
+        def _panel_release(event):
+            self._drag_pos = None
+        self.mousePressEvent = _panel_press
+        self.mouseMoveEvent = _panel_move
+        self.mouseReleaseEvent = _panel_release
+
         self._input.installEventFilter(self)
 
     def _build_ui(self):

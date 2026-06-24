@@ -9,8 +9,8 @@ from ctypes import wintypes
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox,QDialog,QTextEdit
 )
-from PyQt5.QtCore import Qt, QTimer, QAbstractNativeEventFilter
-from PyQt5.QtGui import QFont
+from PyQt5.QtCore import Qt, QTimer, QAbstractNativeEventFilter, QPoint
+from PyQt5.QtGui import QFont, QIcon
 from pathlib import Path
 from brain.agent import AgentCore
 from utils.emotion_manager import parse_emotion_tag as _strip_emotion_tag
@@ -107,6 +107,10 @@ class MainWindow(QMainWindow):
     def __init__(self, autostart_mode: bool = False):
         super().__init__()
         self._autostart_mode = autostart_mode
+        # 无边框窗口 + 圆角
+        self.setWindowFlags(Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._drag_pos = None
         # 添加：窗口闪烁相关
         self._is_minimized = False  # 记录窗口是否最小化
         self._pending_arms_cross = False   # 是否需要播放抱胸动画
@@ -439,20 +443,20 @@ class MainWindow(QMainWindow):
             pass
     
     def changeEvent(self, event):
-        """监听窗口状态变化（最小化/还原）"""
+        """监听窗口状态变化（最小化/还原 + 最大化按钮文字）"""
         if event.type() == event.WindowStateChange:
             if self.isMinimized():
                 self._is_minimized = True
             else:
                 if self._is_minimized:
                     self._is_minimized = False
-                    self.stop_flash()  # 窗口还原时停止闪烁
+                    self.stop_flash()
+            # 最大化按钮文字同步
+            if self.isMaximized():
+                self._btn_maximize.setText("❐")
+            else:
+                self._btn_maximize.setText("□")
         super().changeEvent(event)
-
-
-
-
-
 
     # ── 界面构建 ─────────────────────────────────────────────
 
@@ -470,6 +474,14 @@ class MainWindow(QMainWindow):
         self.resize(960, 680)
 
         central = QWidget()
+        central.setObjectName("centralWidget")
+        central.setStyleSheet("""
+            #centralWidget {
+                background-color: #1A1A2E;
+                border: 2px solid #5B9A8B;
+                border-radius: 12px;
+            }
+        """)
         self.setCentralWidget(central)
 
         main_layout = QVBoxLayout(central)
@@ -483,11 +495,48 @@ class MainWindow(QMainWindow):
         top_bar_layout = QHBoxLayout(top_bar)
         top_bar_layout.setContentsMargins(12, 0, 12, 0)
 
+        # 顶部栏空白处支持拖拽窗口
+        top_bar._drag_pos = None
+        def _top_bar_press(event):
+            if event.button() == Qt.LeftButton:
+                top_bar._drag_pos = event.globalPos()
+        def _top_bar_move(event):
+            if event.buttons() == Qt.LeftButton and top_bar._drag_pos is not None:
+                delta = event.globalPos() - top_bar._drag_pos
+                top_bar._drag_pos = event.globalPos()
+                w = top_bar.window()
+                w.move(w.x() + delta.x(), w.y() + delta.y())
+        def _top_bar_release(event):
+            top_bar._drag_pos = None
+        top_bar.mousePressEvent = _top_bar_press
+        top_bar.mouseMoveEvent = _top_bar_move
+        top_bar.mouseReleaseEvent = _top_bar_release
+
         app_label = QLabel("莲心AI")
         app_label.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
         app_label.setStyleSheet("color: #A0B0FF;")
         top_bar_layout.addWidget(app_label)
         top_bar_layout.addStretch()
+
+        # 标题拖拽：按住标题文字可拖动窗口
+        app_label._drag_pos = None
+        def _title_press(event):
+            if event.button() == Qt.LeftButton:
+                app_label._drag_pos = event.globalPos()
+        def _title_move(event):
+            if event.buttons() == Qt.LeftButton and app_label._drag_pos is not None:
+                delta = event.globalPos() - app_label._drag_pos
+                app_label._drag_pos = event.globalPos()
+                w = app_label.window()
+                w.move(w.x() + delta.x(), w.y() + delta.y())
+        def _title_release(event):
+            app_label._drag_pos = None
+        app_label.mousePressEvent = _title_press
+        app_label.mouseMoveEvent = _title_move
+        app_label.mouseReleaseEvent = _title_release
+       
+
+
 
         self._btn_history = QPushButton("历史记录")
         self._btn_history.setFixedSize(72, 24)
@@ -623,6 +672,56 @@ class MainWindow(QMainWindow):
         self._btn_standby.clicked.connect(self._on_standby_clicked)
         self._update_standby_button()
         top_bar_layout.addWidget(self._btn_standby)
+        top_bar_layout.addStretch()
+
+        # 窗口控制按钮（最右侧）
+        self._btn_minimize = QPushButton("—")
+        self._btn_minimize.setFixedSize(28, 24)
+        self._btn_minimize.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        self._btn_minimize.setCursor(Qt.PointingHandCursor)
+        self._btn_minimize.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #A0B0FF;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #3D3D5A; }
+        """)
+        self._btn_minimize.clicked.connect(self.showMinimized)
+        top_bar_layout.addWidget(self._btn_minimize)
+
+        self._btn_maximize = QPushButton("□")
+        self._btn_maximize.setFixedSize(28, 24)
+        self._btn_maximize.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        self._btn_maximize.setCursor(Qt.PointingHandCursor)
+        self._btn_maximize.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #A0B0FF;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #3D3D5A; }
+        """)
+        self._btn_maximize.clicked.connect(self._toggle_maximize)
+        top_bar_layout.addWidget(self._btn_maximize)
+
+        self._btn_close = QPushButton("✕")
+        self._btn_close.setFixedSize(28, 24)
+        self._btn_close.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        self._btn_close.setCursor(Qt.PointingHandCursor)
+        self._btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #A0B0FF;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #E04040; color: #FFFFFF; }
+        """)
+        self._btn_close.clicked.connect(self.close)
+        top_bar_layout.addWidget(self._btn_close)
 
         main_layout.addWidget(top_bar)
 
@@ -726,12 +825,15 @@ class MainWindow(QMainWindow):
             central = self.centralWidget()
             if central:
                 central.setStyleSheet(f"""
-                    background-image: url("{bg_path.replace('\\', '/')}");
-                    background-position: center;
-                    background-repeat: no-repeat;
-                    background-attachment: fixed;
-                    background-color: rgba(0, 0, 0, 0);
-                    border: none;
+                    #centralWidget {{
+                        background-image: url("{bg_path.replace('\\', '/')}");
+                        background-position: center;
+                        background-repeat: no-repeat;
+                        background-attachment: fixed;
+                        background-color: rgba(0, 0, 0, 0);
+                        border: 2px solid #5B9A8B;
+                        border-radius: 12px;
+                    }}
                 """)
             self.setAttribute(Qt.WA_StyledBackground, True)
 
@@ -753,6 +855,45 @@ class MainWindow(QMainWindow):
             )
         else:
             self._chat_widget.add_ai_message("让我看看...现实稳定锚就绪，坐标稳定...这里是莲心，收到请回复~")
+
+    # ── 窗口拖拽 & 边框拉伸（WM_NCHITTEST）─────────────────
+
+    _RESIZE_MARGIN = 8
+
+    def nativeEvent(self, eventType, message):
+        """Windows 原生消息：WM_NCHITTEST 实现无边框窗口的拖拽和拉伸。"""
+        if eventType == "windows_generic_MSG":
+            msg = ctypes.wintypes.MSG.from_address(int(message))
+            if msg.message == 0x0084:  # WM_NCHITTEST
+                x = msg.lParam & 0xFFFF
+                y = (msg.lParam >> 16) & 0xFFFF
+                # 屏幕坐标 → 窗口坐标
+                pt = self.mapFromGlobal(QPoint(x, y))
+                w, h = self.width(), self.height()
+
+                left = pt.x() < self._RESIZE_MARGIN
+                right = pt.x() > w - self._RESIZE_MARGIN
+                top = pt.y() < self._RESIZE_MARGIN
+                bottom = pt.y() > h - self._RESIZE_MARGIN
+
+                if top and left:
+                    return True, 13   # HTTOPLEFT
+                if top and right:
+                    return True, 14   # HTTOPRIGHT
+                if bottom and left:
+                    return True, 16   # HTBOTTOMLEFT
+                if bottom and right:
+                    return True, 17   # HTBOTTOMRIGHT
+                if top:
+                    return True, 12   # HTTOP
+                if bottom:
+                    return True, 15   # HTBOTTOM
+                if left:
+                    return True, 10   # HTLEFT
+                if right:
+                    return True, 11   # HTRIGHT
+                
+        return False, 0
 
     # ── Whisper 预加载 ───────────────────────────────────────
 
@@ -2950,6 +3091,14 @@ class MainWindow(QMainWindow):
         self._qq_settings_dialog.show()
         self._qq_settings_dialog.raise_()
         self._qq_settings_dialog.activateWindow()
+        
+    def _toggle_maximize(self):
+        if self.isMaximized():
+            self.showNormal()
+            self._btn_maximize.setText("□")
+        else:
+            self.showMaximized()
+            self._btn_maximize.setText("❐")
 
     def _update_qq_bridge_button(self):
         """根据 QQ 桥接状态更新按钮外观"""
