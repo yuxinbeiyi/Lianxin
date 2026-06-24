@@ -7,19 +7,31 @@ MessageBubble：单条消息气泡组件
 """
 
 from pathlib import Path
-from PyQt5.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSizePolicy
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (
+    QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSizePolicy,
+    QApplication, QMenu, QAction,
+)
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QPixmap, QMovie
 
 from utils.settings import get_settings
 
 
 class MessageBubble(QWidget):
+    quote_requested = pyqtSignal(str, str)  # (text, sender_name)
+    speak_requested = pyqtSignal(str)       # 朗读请求
+    delete_requested = pyqtSignal()         # 删除请求
+
     def __init__(self, text: str, is_user: bool, parent=None):
+
         super().__init__(parent)
         self.is_user = is_user
+        self._text = text
         self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
         self._build_ui(text)
+
 
     def _build_ui(self, text: str):
         outer = QHBoxLayout(self)
@@ -40,7 +52,8 @@ class MessageBubble(QWidget):
         label.setWordWrap(True)
         label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        
+        label.setContextMenuPolicy(Qt.NoContextMenu)
+
         # 从全局设置读取字体大小
         settings = get_settings()
         font_size = settings.font_size
@@ -78,6 +91,47 @@ class MessageBubble(QWidget):
             """)
             outer.addWidget(bubble)
             outer.addStretch(1)
+
+    def _show_context_menu(self, pos):
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #2D2D3F;
+                color: #E0E0E0;
+                border: 1px solid #5B5B7A;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 24px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #4A4A6A;
+            }
+        """)
+
+        copy_action = QAction("📋 复制", menu)
+        copy_action.triggered.connect(lambda: QApplication.clipboard().setText(self._text))
+        menu.addAction(copy_action)
+
+        quote_action = QAction("💬 引用", menu)
+        sender_name = "你" if self.is_user else "莲心"
+        quote_action.triggered.connect(lambda: self.quote_requested.emit(self._text, sender_name))
+        menu.addAction(quote_action)
+
+        menu.addSeparator()
+
+        speak_action = QAction("🔊 朗读", menu)
+        speak_action.triggered.connect(lambda: self.speak_requested.emit(self._text))
+        menu.addAction(speak_action)
+
+        delete_action = QAction("🗑️ 删除", menu)
+        delete_action.triggered.connect(lambda: self.delete_requested.emit())
+        menu.addAction(delete_action)
+
+        menu.exec_(self.mapToGlobal(pos))
+
 
 
 class ImageMessageBubble(QWidget):

@@ -721,7 +721,10 @@ class MainWindow(QMainWindow):
         # 下半：输入栏（全宽）
         self._input_panel = InputPanel()
         self._input_panel.message_submitted.connect(self._on_user_message)
+        self._chat_widget.quote_requested.connect(self._input_panel.set_quote)
+        self._chat_widget.speak_requested.connect(self._on_speak_request)
         self._input_panel.voice_clicked.connect(self._on_voice_clicked)
+
 
         self._input_panel.clear_clicked.connect(self._on_clear_note)
         self._input_panel.image_submitted.connect(self._on_user_image)
@@ -883,6 +886,17 @@ class MainWindow(QMainWindow):
         from brain.task_tracker import get_task_tracker
         c, t, label = get_task_tracker().get_progress()
         self._task_progress.refresh(c, t, label)
+
+    def _on_speak_request(self, text: str):
+        """右键朗读消息文字。"""
+        try:
+            if self._speaker_worker and self._speaker_worker.isRunning():
+                self._speaker.stop()
+            self._speaker_worker = SpeakerWorker(self._speaker, text, self)
+            self._speaker_worker.start()
+        except Exception as e:
+            print(f"[右键朗读] 失败: {e}")
+
 
     def _on_user_message(self, text: str, images: list = None):
         # 用户发消息 → 立即停止语音播放、重置语音标记

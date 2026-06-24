@@ -8,7 +8,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QScrollArea, QWidget, QVBoxLayout, QLabel, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
 from gui.message_bubble import MessageBubble, ImageMessageBubble
 
@@ -16,6 +16,8 @@ _TIMESTAMP_GAP_SECONDS = 5 * 60   # 超过此间隔则在气泡前插入时间�
 
 
 class ChatWidget(QScrollArea):
+    quote_requested = pyqtSignal(str, str)
+    speak_requested = pyqtSignal(str)
     def __init__(self, parent=None):
         super().__init__(parent)
         self._last_message_time: datetime | None = None
@@ -50,15 +52,26 @@ class ChatWidget(QScrollArea):
         self._hide_thinking()
         self._maybe_insert_timestamp()
         bubble = MessageBubble(text, is_user=True)
+        bubble.quote_requested.connect(self.quote_requested.emit)
+        bubble.speak_requested.connect(self.speak_requested.emit)
+        bubble.delete_requested.connect(lambda b=bubble: self._delete_message_bubble(b))
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._scroll_to_bottom()
+
+        return bubble
 
     def add_ai_message(self, text: str):
         self._hide_thinking()
         self._maybe_insert_timestamp()
         bubble = MessageBubble(text, is_user=False)
+        bubble.quote_requested.connect(self.quote_requested.emit)
+        bubble.speak_requested.connect(self.speak_requested.emit)
+        bubble.delete_requested.connect(lambda b=bubble: self._delete_message_bubble(b))
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._scroll_to_bottom()
+
+        return bubble
+
     def add_image_message(self, image_path: str, desc: str = "", full_text: str = "", is_ai: bool = False):
         """添加图片消息气泡。
         Args:
@@ -139,3 +152,18 @@ class ChatWidget(QScrollArea):
         bubble = ImageMessageBubble(image_path, sender="ai", parent=self)
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._scroll_to_bottom()
+    def _delete_message_bubble(self, bubble):
+        """删除消息气泡，并从历史记录中移除。"""
+        from PyQt5.QtWidgets import QMessageBox
+        from PyQt5.QtCore import Qt
+        reply = QMessageBox.question(
+            self, "确认删除",
+            "确定要删除这条消息吗？\n（删除后无法恢复）",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        # 从布局中移除
+        self._layout.removeWidget(bubble)
+        bubble.deleteLater()

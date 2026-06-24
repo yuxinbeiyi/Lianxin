@@ -611,6 +611,8 @@ class InputPanel(QWidget):
         self._selected_tool = None
         self._pending_images: list[str] = []    # 暂存的图片路径
         self._image_preview_widgets: list[QWidget] = []
+        self._quote_text = ""
+        self._quote_sender = ""
         self._build_ui()
         self.setAcceptDrops(True)
         # 下边栏空白处支持拖拽窗口
@@ -644,6 +646,41 @@ class InputPanel(QWidget):
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(0)
+
+        # ── 引用预览条 ──
+        self._quote_bar = QWidget()
+        self._quote_bar.setVisible(False)
+        self._quote_bar.setStyleSheet("""
+            QWidget#quoteBar {
+                background-color: rgba(45, 45, 63, 180);
+                border-left: 3px solid #8A98F0;
+                border-radius: 4px;
+                margin: 0px 8px 4px 8px;
+            }
+        """)
+        self._quote_bar.setObjectName("quoteBar")
+        quote_layout = QHBoxLayout(self._quote_bar)
+        quote_layout.setContentsMargins(10, 6, 8, 6)
+        self._quote_label = QLabel()
+        self._quote_label.setWordWrap(False)
+        self._quote_label.setStyleSheet("color: #B0B0C0; background: transparent; font-size: 10pt;")
+        quote_layout.addWidget(self._quote_label, 1)
+        self._quote_close = QPushButton("✕")
+        self._quote_close.setFixedSize(20, 20)
+        self._quote_close.setCursor(Qt.PointingHandCursor)
+        self._quote_close.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #888; border: none; font-size: 10pt;
+            }
+            QPushButton:hover { color: #FFF; }
+        """)
+        self._quote_close.clicked.connect(self.clear_quote)
+        quote_layout.addWidget(self._quote_close)
+        outer_layout.addWidget(self._quote_bar)
+        # ── 引用条结束 ──
+
+        # 主行：输入框 + 按钮
+        main_layout = QHBoxLayout()
 
         # ── 图片预览栏 ──
         self._image_preview = QWidget()
@@ -1054,7 +1091,13 @@ class InputPanel(QWidget):
         has_images = bool(self._pending_images)
         if not text and not has_images:
             return
-        # 如果只有图片没有文字，给一个默认文本
+
+        # 构建引用消息
+        if self._quote_text:
+            quoted = self._quote_text[:200]
+            text = f"[引用回复] {self._quote_sender}说：\"{quoted}\"\n---\n我的回复：{text}"
+            self.clear_quote()
+
         if not text and has_images:
             text = "看看这张图"
         images = list(self._pending_images)
@@ -1253,3 +1296,28 @@ class InputPanel(QWidget):
 
     def set_resend_visible(self, visible: bool):
         self._btn_resend.setVisible(visible)
+
+    def set_quote(self, text: str, sender: str):
+        """设置引用消息。"""
+        self._quote_text = text
+        self._quote_sender = sender
+        preview = text[:60] + ("..." if len(text) > 60 else "")
+        self._quote_label.setText(f"引用 {sender}: \"{preview}\"")
+        # 根据发送者改左边框颜色
+        color = "#7EC8A4" if sender == "你" else "#8A98F0"
+        self._quote_bar.setStyleSheet(f"""
+            QWidget#quoteBar {{
+                background-color: rgba(45, 45, 63, 180);
+                border-left: 3px solid {color};
+                border-radius: 4px;
+                margin: 0px 8px 4px 8px;
+            }}
+        """)
+        self._quote_bar.setVisible(True)
+        self._input.setFocus()
+
+    def clear_quote(self):
+        """清除引用消息。"""
+        self._quote_text = ""
+        self._quote_sender = ""
+        self._quote_bar.setVisible(False)
