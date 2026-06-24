@@ -357,7 +357,12 @@ class CharacterWidget(QWidget):
         grid.addWidget(self._btn_network, 5, 0)
         self._btn_capability = self._create_button("🧩 能力中枢", color="#9B59B6")
         grid.addWidget(self._btn_capability, 3, 1)
-
+        self._btn_proactive = self._create_button("💬 主动聊天", color="#27AE60")
+        grid.addWidget(self._btn_proactive, 5, 1)
+        self._btn_qq_bridge = self._create_button("🐧 QQ聊天", color="#2980B9")
+        grid.addWidget(self._btn_qq_bridge, 6, 0)
+        self._btn_diary = self._create_button("📔 日记本", color="#E67E22")
+        grid.addWidget(self._btn_diary, 6, 1)
         popup_layout.addLayout(grid)
         popup_layout.addStretch()
 
@@ -659,6 +664,12 @@ class CharacterWidget(QWidget):
 
     def get_capability_button(self):
         return self._btn_capability
+    def get_proactive_button(self):
+        return self._btn_proactive
+    def get_qq_bridge_button(self):
+        return self._btn_qq_bridge
+    def get_diary_button(self):
+        return self._btn_diary
 
     def _update_status_label(self, state: str):
         text, color = STATE_CONFIG.get(state, ("● 待机中", "#6C7BFF"))

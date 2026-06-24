@@ -114,16 +114,17 @@ class GalgameDialog(QWidget):
         self._settings_btn.setFont(QFont("Segoe UI Emoji", 12))
         self._settings_btn.setFixedSize(28, 28)
         self._settings_btn.setCursor(Qt.PointingHandCursor)
-        self._settings_btn.setToolTip("字体设置")
+        self._settings_btn.setToolTip("字体设置\n快捷键 Shift+Ctrl+X 启动")
         self._settings_btn.setStyleSheet("""
             QPushButton {
                 background: rgba(200,200,210,120);
-                color: #555;
+                color: #000000;
                 border: none;
                 border-radius: 6px;
             }
             QPushButton:hover  { background: rgba(180,180,200,160); }
         """)
+
         self._settings_btn.clicked.connect(self._on_font_settings)
         btn_layout.addWidget(self._settings_btn)
 
@@ -406,7 +407,6 @@ class GalgameDialog(QWidget):
         self.setGeometry(geo)
 
 
-
 class GalgameFontSettingsDialog(QDialog):
     """Galgame 模式字体设置小弹窗。"""
 
@@ -415,28 +415,41 @@ class GalgameFontSettingsDialog(QDialog):
         from utils.settings import get_settings
         self._settings = get_settings()
         self.setWindowTitle("Galgame 字体设置")
-        self.setFixedSize(260, 120)
+        self.setFixedSize(320, 200)
         self.setWindowFlags(Qt.Dialog | Qt.WindowStaysOnTopHint)
-        self.setStyleSheet("background-color: #F8F8FC;")
+        self.setStyleSheet("background-color: #F8F8FC; color: #000000;")
 
-        layout = QFormLayout(self)
+        layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(20, 16, 20, 16)
+
+        form_layout = QFormLayout()
+        form_layout.setSpacing(10)
 
         self._size_spin = QSpinBox()
         self._size_spin.setRange(8, 24)
         self._size_spin.setValue(self._settings.galgame_font_size)
         self._size_spin.setSuffix(" pt")
-        layout.addRow("字体大小:", self._size_spin)
+        form_layout.addRow("字体大小:", self._size_spin)
 
         self._bold_cb = QCheckBox("加粗")
         self._bold_cb.setChecked(self._settings.galgame_font_bold)
-        layout.addRow("字体粗细:", self._bold_cb)
+        form_layout.addRow("字体粗细:", self._bold_cb)
+
+        layout.addLayout(form_layout)
+
+        # 快捷键提示
+        hotkey_label = QLabel("启动快捷键：<b>Shift+Ctrl+X</b>")
+        hotkey_label.setStyleSheet("color: #555555; font-size: 10pt;")
+        layout.addWidget(hotkey_label)
+
+        layout.addStretch()
 
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btn_box.accepted.connect(self._on_accept)
         btn_box.rejected.connect(self.reject)
-        layout.addRow(btn_box)
+        layout.addWidget(btn_box)
+
 
     def _on_accept(self):
         self._settings.galgame_font_size = self._size_spin.value()

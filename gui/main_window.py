@@ -572,24 +572,7 @@ class MainWindow(QMainWindow):
         self._btn_new_chat.clicked.connect(self._on_new_chat_clicked)
         top_bar_layout.addWidget(self._btn_new_chat)
 
-        # 日记本按钮
-        self._btn_diary = QPushButton("📔 日记本")
-        self._btn_diary.setFixedSize(80, 24)
-        self._btn_diary.setFont(QFont("Microsoft YaHei UI", 8))
-        self._btn_diary.setCursor(Qt.PointingHandCursor)
-        self._btn_diary.setStyleSheet("""
-            QPushButton {
-                background-color: #2D2D3F;
-                color: #C8A060;
-                border-radius: 6px;
-                border: 1px solid #5A4A30;
-            }
-            QPushButton:hover { background-color: #3D3D55; }
-        """)
-        self._btn_diary.clicked.connect(self._open_diary_dialog)
-        top_bar_layout.addWidget(self._btn_diary)
-
-                # 备忘本按钮
+        # 备忘本按钮
         self._btn_note = QPushButton("📝 备忘本")
         self._btn_note.setFixedSize(80, 24)
         self._btn_note.setFont(QFont("Microsoft YaHei UI", 8))
@@ -605,45 +588,6 @@ class MainWindow(QMainWindow):
         """)
         self._btn_note.clicked.connect(self._open_note_dialog)
         top_bar_layout.addWidget(self._btn_note)
-
-        # 主动聊天按钮（带状态指示）
-        self._btn_proactive = QPushButton("主动聊天 ○")
-        self._btn_proactive.setFixedSize(96, 24)
-        self._btn_proactive.setFont(QFont("Microsoft YaHei UI", 8))
-        self._btn_proactive.setCursor(Qt.PointingHandCursor)
-        self._btn_proactive.setToolTip("设置莲心主动发消息的时间和频率")
-        self._btn_proactive.setStyleSheet("""
-            QPushButton {
-                background-color: #2D2D3F;
-                color: #A0A0B0;
-                border-radius: 6px;
-                border: 1px solid #3D3D5A;
-            }
-            QPushButton:hover  { background-color: #3D3D55; }
-            QPushButton:pressed{ background-color: #4D4D65; }
-        """)
-        self._btn_proactive.clicked.connect(self._on_proactive_clicked)
-        top_bar_layout.addWidget(self._btn_proactive)
-
-        # 心跳自检按钮（带状态指示）
-        self._btn_heartbeat = QPushButton("心跳自检 ●")
-        self._btn_heartbeat.setFixedSize(88, 24)
-        self._btn_heartbeat.setFont(QFont("Microsoft YaHei UI", 8))
-        self._btn_heartbeat.setCursor(Qt.PointingHandCursor)
-        self._btn_heartbeat.setToolTip("对话结束后自动检查是否有遗漏的待办事项")
-        self._btn_heartbeat.clicked.connect(self._on_heartbeat_btn_clicked)
-        self._update_heartbeat_button()
-        top_bar_layout.addWidget(self._btn_heartbeat)
-
-        # QQ 聊天按钮（一键开关，状态由 _update_qq_bridge_button 维护）
-        self._btn_qq_bridge = QPushButton("QQ聊天 ○")
-        self._btn_qq_bridge.setFixedSize(84, 24)
-        self._btn_qq_bridge.setFont(QFont("Microsoft YaHei UI", 8))
-        self._btn_qq_bridge.setCursor(Qt.PointingHandCursor)
-        self._btn_qq_bridge.setToolTip("开启后即可通过 QQ 小号与莲心聊天")
-        self._btn_qq_bridge.clicked.connect(self._on_qq_bridge_clicked)
-        self._update_qq_bridge_button()
-        top_bar_layout.addWidget(self._btn_qq_bridge)
 
         # Galgame 窗口按钮
         self._galgame_btn = QPushButton("🎮 Galgame")
@@ -745,6 +689,9 @@ class MainWindow(QMainWindow):
         self._char_widget.get_memory_button().clicked.connect(self._on_memory_settings)
         self._char_widget.get_network_button().clicked.connect(self._show_network_settings)
         self._char_widget.get_capability_button().clicked.connect(self._show_capability_center)
+        self._char_widget.get_proactive_button().clicked.connect(self._on_proactive_clicked)
+        self._char_widget.get_qq_bridge_button().clicked.connect(self._on_qq_bridge_clicked)
+        self._char_widget.get_diary_button().clicked.connect(self._open_diary_dialog)
 
         top_layout.addWidget(self._char_widget)
 
@@ -1841,30 +1788,42 @@ class MainWindow(QMainWindow):
 
 
     def _update_proactive_button(self):
+        btn = self._char_widget.get_proactive_button()
         if self._proactive_scheduler.desktop_enabled:
-            self._btn_proactive.setText("主动聊天 ●")
-            self._btn_proactive.setStyleSheet("""
+            btn.setText("💬 主动聊天")
+            btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #2D2D3F;
-                    color: #A0A0B0;
-                    border-radius: 6px;
-                    border: 1px solid #3D3D5A;
+                    background-color: #27AE60;
+                    color: white;
+                    border-radius: 16px;
+                    border: none;
+                    padding: 6px 12px;
                 }
-                QPushButton:hover  { background-color: #3D3D55; }
-                QPushButton:pressed{ background-color: #4D4D65; }
+                QPushButton:hover {
+                    background-color: #229954;
+                }
+                QPushButton:pressed {
+                    background-color: #1E8449;
+                }
             """)
         else:
-            self._btn_proactive.setText("主动聊天 ○")
-            self._btn_proactive.setStyleSheet("""
+            btn.setText("✋ 主动聊天")
+            btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #F0F0F8;
-                    color: #777777;
-                    border-radius: 6px;
-                    border: 1px solid #D8D8EE;
+                    background-color: #7F8C8D;
+                    color: white;
+                    border-radius: 16px;
+                    border: none;
+                    padding: 6px 12px;
                 }
-                QPushButton:hover  { background-color: #E4E4F0; }
-                QPushButton:pressed{ background-color: #D8D8E8; }
+                QPushButton:hover {
+                    background-color: #707B7C;
+                }
+                QPushButton:pressed {
+                    background-color: #616A6B;
+                }
             """)
+
 
     def _on_proactive_tick(self):
         if self._pomodoro_active:
@@ -2031,28 +1990,14 @@ class MainWindow(QMainWindow):
 
     def _on_heartbeat_check(self):
         """心跳自检触发：检查活跃时段后启动 Worker。"""
-        cfg = get_heartbeat_config()
-        if not cfg.get("enabled", True):
-            return
-        # 检查活跃时段
-        start_str = cfg.get("active_hours_start", "08:00")
-        end_str = cfg.get("active_hours_end", "23:00")
-        try:
-            now = datetime.now().time()
-            start = datetime.strptime(start_str, "%H:%M").time()
-            end = datetime.strptime(end_str, "%H:%M").time()
-            if not (start <= now <= end):
-                return
-        except Exception:
-            pass
-
-        if self._heartbeat_check_worker and self._heartbeat_check_worker.isRunning():
+        if not self._global_settings.is_active_hour():
             return
 
         self._heartbeat_check_worker = HeartbeatWorker(self._agent._session_id)
         self._heartbeat_check_worker.response_ready.connect(self._on_heartbeat_response)
         self._heartbeat_check_worker.finished_silent.connect(self._on_heartbeat_finished_silent)
         self._heartbeat_check_worker.start()
+
 
     def _on_heartbeat_response(self, text: str):
         """心跳自检有提醒内容，显示给用户。"""
@@ -2067,49 +2012,7 @@ class MainWindow(QMainWindow):
     def _on_heartbeat_finished_silent(self):
         """心跳自检静默完成（无需提醒或失败）。"""
 
-    def _on_heartbeat_btn_clicked(self):
-        """切换心跳自检开关。"""
-        from utils.sound import play_sound
-        play_sound("ButtonAll.mp3")
-        cfg = get_heartbeat_config()
-        new_enabled = not cfg.get("enabled", True)
-        from config import save_heartbeat_config
-        save_heartbeat_config({**cfg, "enabled": new_enabled})
-        self._update_heartbeat_button()
-        if new_enabled:
-            self._reset_heartbeat_timer()
-            self._chat_widget.add_system_tip("心跳自检已开启，对话结束后会自动检查遗漏事项")
-        else:
-            self._heartbeat_check_timer.stop()
-            self._chat_widget.add_system_tip("心跳自检已关闭")
 
-    def _update_heartbeat_button(self):
-        """更新心跳自检按钮样式。"""
-        cfg = get_heartbeat_config()
-        if cfg.get("enabled", True):
-            self._btn_heartbeat.setText("心跳自检 ●")
-            self._btn_heartbeat.setStyleSheet("""
-                QPushButton {
-                    background-color: #EDFFF2;
-                    color: #34C759;
-                    border-radius: 6px;
-                    border: 1px solid #B0ECC4;
-                }
-                QPushButton:hover  { background-color: #D8F5E4; }
-                QPushButton:pressed{ background-color: #C0EBD2; }
-            """)
-        else:
-            self._btn_heartbeat.setText("心跳自检 ○")
-            self._btn_heartbeat.setStyleSheet("""
-                QPushButton {
-                    background-color: #F0F0F8;
-                    color: #777777;
-                    border-radius: 6px;
-                    border: 1px solid #D8D8EE;
-                }
-                QPushButton:hover  { background-color: #E4E4F0; }
-                QPushButton:pressed{ background-color: #D8D8E8; }
-            """)
 
     def _is_shoulder_available(self) -> bool:
         """检查肩载设备（ESP32-CAM）是否在线（通过 socket 探测）。"""
@@ -3102,31 +3005,62 @@ class MainWindow(QMainWindow):
 
     def _update_qq_bridge_button(self):
         """根据 QQ 桥接状态更新按钮外观"""
+        btn = self._char_widget.get_qq_bridge_button()
         connected = self._qq_bridge is not None and self._qq_bridge.isRunning()
+        enabled = self._global_settings.qq_bridge_enabled
         if connected:
-            self._btn_qq_bridge.setText("QQ聊天 ●")
-            self._btn_qq_bridge.setStyleSheet("""
+            btn.setText("✅ QQ聊天")
+            btn.setStyleSheet("""
                 QPushButton {
                     background-color: #1A3D2A;
-                    color: #34C759;
-                    border-radius: 6px;
-                    border: 1px solid #2A5D3A;
+                    color: white;
+                    border-radius: 16px;
+                    border: none;
+                    padding: 6px 12px;
                 }
-                QPushButton:hover  { background-color: #2A4D3A; }
-                QPushButton:pressed{ background-color: #3A5D4A; }
+                QPushButton:hover {
+                    background-color: #153322;
+                }
+                QPushButton:pressed {
+                    background-color: #0F281A;
+                }
+            """)
+        elif enabled:
+            btn.setText("🔌 QQ聊天")
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #2980B9;
+                    color: white;
+                    border-radius: 16px;
+                    border: none;
+                    padding: 6px 12px;
+                }
+                QPushButton:hover {
+                    background-color: #2471A3;
+                }
+                QPushButton:pressed {
+                    background-color: #1F618D;
+                }
             """)
         else:
-            self._btn_qq_bridge.setText("QQ聊天 ○")
-            self._btn_qq_bridge.setStyleSheet("""
+            btn.setText("🐧 QQ聊天")
+            btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #2D2D3F;
-                    color: #A0A0B0;
-                    border-radius: 6px;
-                    border: 1px solid #3D3D5A;
+                    background-color: #2980B9;
+                    color: white;
+                    border-radius: 16px;
+                    border: none;
+                    padding: 6px 12px;
                 }
-                QPushButton:hover  { background-color: #3D3D55; }
-                QPushButton:pressed{ background-color: #4D4D65; }
+                QPushButton:hover {
+                    background-color: #2471A3;
+                }
+                QPushButton:pressed {
+                    background-color: #1F618D;
+                }
             """)
+
+
 class _ImageVisionWorker(QThread):
     """后台线程：调用视觉API理解图片内容。"""
     finished = pyqtSignal(str)
