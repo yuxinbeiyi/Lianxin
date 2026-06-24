@@ -10,6 +10,7 @@ import random
 import os
 from datetime import datetime
 from pathlib import Path
+from config import get_user_name
 
 # 通过 brain.tools 模块访问全局变量（避免 import 绑死值）
 import brain.tools as _brain_tools
@@ -395,7 +396,7 @@ def shoulder_observe() -> str:
                             "- 控制在 300 字以内，越短越好\n"
                             "- 保留视觉识别的核心内容\n"
                             "- 语气活泼好奇，可以加颜文字\n"
-                            "- 称呼用户为'雨心'\n"
+                            f"- 称呼用户为'{get_user_name()}'\n"
                             "- 直接说看到的内容"
                         ),
                     },

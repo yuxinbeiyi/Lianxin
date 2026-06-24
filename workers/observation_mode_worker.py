@@ -8,6 +8,7 @@ import os
 import random
 import time
 from pathlib import Path
+from config import get_user_name
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -330,7 +331,7 @@ class ObservationModeWorker(QThread):
                             "- 控制在 300 字以内，越短越好\n"
                             "- 保留视觉识别的核心内容（人物/物体/场景/动作）\n"
                             "- 语气活泼好奇，可以加颜文字 (｀・ω・´)\n"
-                            "- 称呼用户为'雨心'\n"
+                            f"- 称呼用户为'{get_user_name()}'\n"
                             "- 直接说看到的内容，不要'我看到了'开头\n"
                             "- 每次描述角度不同，不重复说法"
                         ),

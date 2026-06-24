@@ -454,9 +454,9 @@ class DiaryDialog(QDialog):
             )
             if reply != QMessageBox.Yes:
                 return
-        self._main_window._write_diary_now()
-        self.accept()
         QMessageBox.information(self, "提示", "正在生成今天的日记，请稍候...")
+        self._main_window._write_diary_now()
+
 
     def _on_diary_settings(self):
         """打开日记设置对话框。"""

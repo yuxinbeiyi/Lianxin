@@ -1672,8 +1672,12 @@ class MainWindow(QMainWindow):
                     print(f"[写日记音效] 文件不存在: {sound_path}")
             except Exception as e:
                 print(f"[写日记音效] 播放失败: {e}")
+            # 刷新日记本列表
+            if self._diary_dialog is not None and self._diary_dialog.isVisible():
+                self._diary_dialog._load_diaries()
         else:
             self._chat_widget.add_system_tip(f"📔 日记生成失败：{result}")
+
 
     def _show_full_content(self, content):
         # 播放随机翻页音效

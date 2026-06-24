@@ -9,6 +9,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional
+from config import get_user_name
 
 from PyQt5.QtCore import QThread, pyqtSignal
 from config import get_diary_config, save_diary_config, get_api_config
@@ -172,13 +173,16 @@ def _build_diary_prompt(messages: List[Dict]) -> str:
     lines = []
     for m in messages:
         if m["role"] == "user":
-            lines.append(f"[博士（雨心）]: {m['content']}")
+            name = get_user_name()
+            lines.append(f"[{name}]: {m['content']}")
+
         elif m["role"] == "assistant":
             lines.append(f"[你（莲心）]: {m['content']}")
         else:
             lines.append(f"[{m['role']}]: {m['content']}")
     conversation = "\n".join(lines)
-    return f"""你是一个叫莲心的AI助手。现在是一天的结束，请你根据今天你和博士（雨心）的所有对话，写一篇日记。
+    name = get_user_name()
+    return f"""你是一个叫莲心的AI助手。现在是一天的结束，请你根据今天你和{name}的所有对话，写一篇日记。
 
 要求：
 1. 用莲心的第一人称，语气自然、细腻，像在写私人日记，不是工作报告。
@@ -188,7 +192,7 @@ def _build_diary_prompt(messages: List[Dict]) -> str:
 
 请输出 JSON 格式（不要有其他多余字符）：
 {{
-  "content": "今天博士告诉我……",
+  "content": f"今天{name}告诉我……",
   "weather": "☀️ 晴",
   "is_red_line": true,
   "echo_text": "那天他说的那句话，我会一直记得。"
