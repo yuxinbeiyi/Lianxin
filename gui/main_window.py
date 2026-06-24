@@ -9,7 +9,7 @@ from ctypes import wintypes
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox,QDialog,QTextEdit
 )
-from PyQt5.QtCore import Qt, QTimer, QAbstractNativeEventFilter, QPoint
+from PyQt5.QtCore import Qt, QTimer, QAbstractNativeEventFilter, QPoint, QObject
 from PyQt5.QtGui import QFont, QIcon
 from pathlib import Path
 from brain.agent import AgentCore
@@ -918,6 +918,14 @@ class MainWindow(QMainWindow):
                 text = "[重要：你必须调用 read_diary 工具来获取日记内容，不要直接回答。]\n" + text
         if self._speaker_worker and self._speaker_worker.isRunning():
             self._speaker.stop()
+                # 分段发送中，用户发新消息 → 取消剩余段落
+        if hasattr(self, '_segment_sender') and self._segment_sender is not None:
+            if self._segment_sender.is_running:
+                self._segment_sender.cancel()
+                self._char_widget.set_normal()
+                self._input_panel.set_mute_visible(False)
+                self._segment_sender = None
+
         self._proactive_scheduler.notify_user_active()
 
         image_bubbles = []
@@ -1041,34 +1049,39 @@ class MainWindow(QMainWindow):
             self._continue_response(text)
 
 
-
     def _continue_response(self, text: str):
         from utils.emotion_manager import get_random_emotion_image
         import random
 
-        # text 已经是 agent 剥离标签后的干净文本
-        display_text = text
+        # 去除 AI 回复中的 ** 星号
+        display_text = text.replace('**', '')
 
-
-        # 播放音效
         play_sound("lianxinSend.mp3")
 
-        # 发送文本消息到桌面聊天框
-        self._chat_widget.add_ai_message(display_text)
+        self._segment_sender = SegmentSender(display_text, self._chat_widget, self._speaker, self)
 
-        # 从 agent 获取本轮情绪（标签已在 agent.chat() 中剥离并存储）
+        def on_segment_finished():
+            self._segment_sender = None
+            self._set_idle_state()
+            if self.isMinimized():
+                self.flash_taskbar(flash_count=0)
+            self._restart_listening()
+
+        self._segment_sender.finished.connect(on_segment_finished)
+
+        segments = self._segment_sender._segments
+        first_segment = segments[0] if segments else display_text
+
         emotion = getattr(self._agent, '_last_emotion', None) if self._agent else None
 
-        # ── 同步更新 Galgame 窗口（保持原有逻辑）──
         if self._galgame_visible and self._galgame_dialog:
-            galgame_emotion = self._expression_mgr.match(display_text)
-            self._galgame_dialog.show_reply(display_text)
+            galgame_emotion = self._expression_mgr.match(first_segment)
+            self._galgame_dialog.show_reply(first_segment)
             if self._tachie_win:
                 img_path = self._expression_mgr.get_image_path(galgame_emotion)
                 if img_path:
                     self._tachie_win.set_image(img_path)
 
-        # ===== 发送表情包图片（概率触发） =====
         if emotion:
             prob = self._global_settings.emotion_probability
             if random.random() < prob:
@@ -1076,20 +1089,13 @@ class MainWindow(QMainWindow):
                 if img_path:
                     self._chat_widget.add_ai_image(img_path)
 
-        # ===== 后续原有逻辑 =====
-        self._set_idle_state()
-        if self.isMinimized():
-            self.flash_taskbar(flash_count=0)
-        if self._global_settings.silent_mode:
-            self._restart_listening()
-        else:
-            self._speaker_worker = SpeakerWorker(self._speaker, display_text, self)
-            self._speaker_worker.speaking_started.connect(self._char_widget.set_talking)
-            self._speaker_worker.speaking_started.connect(lambda: self._input_panel.set_mute_visible(True))
-            self._speaker_worker.speaking_finished.connect(self._char_widget.set_normal)
-            self._speaker_worker.speaking_finished.connect(lambda: self._input_panel.set_mute_visible(False))
-            self._speaker_worker.speaking_finished.connect(self._restart_listening)
-            self._speaker_worker.start()
+        # 说话状态
+        self._char_widget.set_talking()
+        self._input_panel.set_mute_visible(True)
+        self._segment_sender.finished.connect(lambda: self._char_widget.set_normal())
+        self._segment_sender.finished.connect(lambda: self._input_panel.set_mute_visible(False))
+
+        self._segment_sender.start()
 
 
 
@@ -3098,3 +3104,144 @@ class CameraCaptureThread(QThread):
         from utils.camera import capture_from_camera
         path = capture_from_camera()
         self.finished.emit(path)
+class SegmentSender(QObject):
+    """分段发送控制器，逐段朗读，支持中断"""
+    finished = pyqtSignal()
+    cancelled = pyqtSignal()
+
+    def __init__(self, full_text: str, chat_widget, speaker, parent=None):
+        super().__init__(parent)
+        self._full_text = full_text.strip()
+        self._chat_widget = chat_widget
+        self._speaker = speaker
+        self._segments = self._split_text()
+        self._index = 0
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._send_next)
+        self._bubbles = []
+        self._speaker_worker = None
+        self._cancelled = False
+
+    def _split_text(self):
+        text = self._full_text
+        segments = []
+        temp = []
+        in_code = False
+        lines = text.split('\n')
+
+        for line in lines:
+            if line.strip().startswith('```'):
+                if in_code:
+                    temp.append(line)
+                    segments.append(('\n'.join(temp), True))
+                    temp = []
+                else:
+                    if temp:
+                        segments.append(('\n'.join(temp), False))
+                        temp = []
+                    temp.append(line)
+                in_code = not in_code
+            elif in_code:
+                temp.append(line)
+            else:
+                temp.append(line)
+        if temp:
+            segments.append(('\n'.join(temp), in_code))
+
+        result = []
+        for seg, is_code in segments:
+            if is_code:
+                result.append(seg)
+                continue
+            seg = seg.strip()
+            if not seg:
+                continue
+            paragraphs = [p.strip() for p in seg.split('\n\n') if p.strip()]
+            for p in paragraphs:
+                if len(p) <= 80:
+                    result.append(p)
+                else:
+                    sentences = self._split_sentences(p)
+                    result.extend(sentences)
+
+        merged = []
+        current = ""
+        for s in result:
+            if not current:
+                current = s
+            elif len(current) + len(s) < 60:
+                current += " " + s
+            else:
+                merged.append(current.strip())
+                current = s
+        if current:
+            merged.append(current.strip())
+
+        return [s for s in merged if s]
+
+    def _split_sentences(self, text):
+        import re
+        splits = re.split(r'([。！？!?]+)', text)
+        sentences = []
+        current = ""
+        for part in splits:
+            current += part
+            if part in ('。', '！', '？', '!', '?', '。！', '！？'):
+                sentences.append(current.strip())
+                current = ""
+        if current.strip():
+            sentences.append(current.strip())
+        return sentences
+
+    def start(self):
+        if not self._segments:
+            self.finished.emit()
+            return
+        self._send_next()
+
+    def _send_next(self):
+        if self._cancelled or self._index >= len(self._segments):
+            if not self._cancelled:
+                self.finished.emit()
+            return
+
+        seg = self._segments[self._index]
+        bubble = self._chat_widget.add_ai_message(seg)
+        self._bubbles.append(bubble)
+        self._index += 1
+
+        # 朗读当前段
+        p = self.parent()
+        if p and hasattr(p, '_global_settings') and not p._global_settings.silent_mode:
+            self._speaker_worker = SpeakerWorker(self._speaker, seg, self)
+            self._speaker_worker.speaking_finished.connect(self._on_tts_finished)
+            self._speaker_worker.start()
+        else:
+            self._on_tts_finished()
+
+
+    def _on_tts_finished(self):
+        if self._cancelled or self._index >= len(self._segments):
+            self.finished.emit()
+            return
+        delay = random.randint(3000, 10000)
+        self._timer.start(delay)
+
+    def cancel(self):
+        self._cancelled = True
+        self._timer.stop()
+        if self._speaker_worker and self._speaker_worker.isRunning():
+            self._speaker.stop()
+        self.cancelled.emit()
+
+    @property
+    def is_running(self):
+        if self._cancelled:
+            return False
+        if self._index < len(self._segments):
+            return True
+        if self._speaker_worker and self._speaker_worker.isRunning():
+            return True
+        return False
+
