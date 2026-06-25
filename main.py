@@ -17,6 +17,60 @@ warnings.simplefilter("ignore", ResourceWarning)
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 os.chdir(_PROJECT_ROOT)
 
+# ── 终端防卡：双通道输出（终端 + 日志文件）─────────────────────
+# Windows 终端"快速编辑模式"（点击选中文本）会锁定 stdout 缓冲区，
+# 导致 print() 调用阻塞。解决：终端写入走独立线程，日志文件实时落盘。
+# 终端可正常查看 print，选中复制不影响程序运行。
+if sys.platform == "win32":
+    import threading
+    import queue as _queue_mod
+
+    _LOG_DIR = os.path.join(_PROJECT_ROOT, "logs")
+    os.makedirs(_LOG_DIR, exist_ok=True)
+    _LOG_PATH = os.path.join(_LOG_DIR, "debug.log")
+    try:
+        if os.path.getsize(_LOG_PATH) > 5 * 1024 * 1024:
+            _backup = _LOG_PATH + ".old"
+            if os.path.exists(_backup):
+                os.remove(_backup)
+            os.rename(_LOG_PATH, _backup)
+    except OSError:
+        pass
+
+    _REAL_STDOUT = sys.stdout
+    _REAL_STDERR = sys.stderr
+
+    class _TeeWriter:
+        """同时写入日志文件和终端；终端写入走独立线程，避免 Quick Edit 阻塞。"""
+        def __init__(self, log_path, real_stream):
+            self._log = open(log_path, "a", encoding="utf-8", buffering=1)
+            self._real = real_stream
+            self._queue = _queue_mod.Queue()
+            self._worker = threading.Thread(target=self._drain, daemon=True)
+            self._worker.start()
+
+        def _drain(self):
+            while True:
+                text = self._queue.get()
+                if text is None:
+                    break
+                try:
+                    self._real.write(text)
+                    self._real.flush()
+                except Exception:
+                    pass
+
+        def write(self, text):
+            self._log.write(text)
+            self._log.flush()
+            self._queue.put(text)
+
+        def flush(self):
+            self._log.flush()
+
+    sys.stdout = _TeeWriter(_LOG_PATH, _REAL_STDOUT)
+    sys.stderr = _TeeWriter(_LOG_PATH, _REAL_STDERR)
+
 # 确保项目根目录在路径中
 sys.path.insert(0, _PROJECT_ROOT)
 
