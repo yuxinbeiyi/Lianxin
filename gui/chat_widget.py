@@ -56,6 +56,7 @@ class ChatWidget(QScrollArea):
         bubble.speak_requested.connect(self.speak_requested.emit)
         bubble.delete_requested.connect(lambda b=bubble: self._delete_message_bubble(b))
         self._layout.insertWidget(self._layout.count() - 1, bubble)
+        self._container.updateGeometry()
         self._scroll_to_bottom()
 
         return bubble
@@ -68,6 +69,7 @@ class ChatWidget(QScrollArea):
         bubble.speak_requested.connect(self.speak_requested.emit)
         bubble.delete_requested.connect(lambda b=bubble: self._delete_message_bubble(b))
         self._layout.insertWidget(self._layout.count() - 1, bubble)
+        self._container.updateGeometry()
         self._scroll_to_bottom()
 
         return bubble
@@ -84,6 +86,7 @@ class ChatWidget(QScrollArea):
         sender = "ai" if is_ai else "user"
         bubble = ImageMessageBubble(image_path, ocr_text=desc, full_text=full_text, sender=sender)
         self._layout.insertWidget(self._layout.count() - 1, bubble)
+        self._container.updateGeometry()
         self._scroll_to_bottom()
 
     def show_thinking(self, tool_name: str = ""):
@@ -109,6 +112,7 @@ class ChatWidget(QScrollArea):
         label.setFont(QFont("Microsoft YaHei UI", 10))
         label.setStyleSheet("background: transparent; padding: 2px;")
         self._layout.insertWidget(self._layout.count() - 1, label)
+        self._container.updateGeometry()
         return label  # 返回引用，供调用方后续 hide()
 
     def add_user_image(self, image_path: str, ocr_text: str = "", full_text: str = ""):
@@ -141,9 +145,12 @@ class ChatWidget(QScrollArea):
         self._thinking_label.hide()
 
     def _scroll_to_bottom(self):
-        QTimer.singleShot(50, lambda: self.verticalScrollBar().setValue(
-            self.verticalScrollBar().maximum()
-        ))
+        def _do():
+            self._container.updateGeometry()
+            self.verticalScrollBar().setValue(
+                self.verticalScrollBar().maximum()
+            )
+        QTimer.singleShot(50, _do)
     
     def add_ai_image(self, image_path: str):
         """在聊天区域添加一张 AI 发送的图片气泡（左对齐）"""

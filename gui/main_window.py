@@ -132,6 +132,7 @@ class MainWindow(QMainWindow):
         self._speaker_worker:    SpeakerWorker    | None = None
         self._proactive_worker:  ProactiveWorker  | None = None
         self._ocr_worker = None
+        self._generation = 0                                 # 世代计数器，防止旧回复污染
         self._is_recording = False
     
 
@@ -918,7 +919,23 @@ class MainWindow(QMainWindow):
                 text = "[重要：你必须调用 read_diary 工具来获取日记内容，不要直接回答。]\n" + text
         if self._speaker_worker and self._speaker_worker.isRunning():
             self._speaker.stop()
-                # 分段发送中，用户发新消息 → 取消剩余段落
+
+        # ── 风暴式打断：终止旧 AgentWorker，防止旧回复污染 ──
+        if self._agent_worker and self._agent_worker.isRunning():
+            self._agent_worker.terminate()
+            self._agent_worker.wait(1000)
+            try:
+                self._agent_worker.response_ready.disconnect()
+                self._agent_worker.progress_update.disconnect()
+                self._agent_worker.tool_called.disconnect()
+                self._agent_worker.error_occurred.disconnect()
+            except Exception:
+                pass
+            self._agent_worker = None
+
+        self._generation += 1
+
+        # 分段发送中，用户发新消息 → 取消剩余段落
         if hasattr(self, '_segment_sender') and self._segment_sender is not None:
             if self._segment_sender.is_running:
                 self._segment_sender.cancel()
@@ -1058,6 +1075,12 @@ class MainWindow(QMainWindow):
 
         play_sound("lianxinSend.mp3")
 
+        # 再次检查：如果在上一个 segment_sender 还没结束就收到了新回复，取消旧段
+        if hasattr(self, '_segment_sender') and self._segment_sender is not None:
+            if self._segment_sender.is_running:
+                self._segment_sender.cancel()
+                self._segment_sender = None
+
         self._segment_sender = SegmentSender(display_text, self._chat_widget, self._speaker, self)
 
         def on_segment_finished():
@@ -1076,7 +1099,7 @@ class MainWindow(QMainWindow):
 
         if self._galgame_visible and self._galgame_dialog:
             galgame_emotion = self._expression_mgr.match(first_segment)
-            self._galgame_dialog.show_reply(first_segment)
+            self._galgame_dialog.show_reply(display_text)
             if self._tachie_win:
                 img_path = self._expression_mgr.get_image_path(galgame_emotion)
                 if img_path:
@@ -3244,4 +3267,3 @@ class SegmentSender(QObject):
         if self._speaker_worker and self._speaker_worker.isRunning():
             return True
         return False
-

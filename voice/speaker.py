@@ -111,6 +111,13 @@ class VoiceSpeaker:
             # 11b. 英文省略号 → 句号
             text = re.sub(r'\.{3,}', '。', text)
 
+            # 11b2. 省略号/破折号/间隔号 → Edge-TTS 无法朗读，替换为逗号
+            text = text.replace('……', '，')
+            text = text.replace('…', '，')
+            text = text.replace('——', '，')
+            text = text.replace('—', '，')
+            text = text.replace('·', '，')
+
             # 11c. 删除所有残留的 Unicode 颜文字/特殊符号
             text = re.sub(
                 r'[^\u4e00-\u9fff\u3400-\u4dbf'
