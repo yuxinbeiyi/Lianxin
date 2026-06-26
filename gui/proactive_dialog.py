@@ -8,10 +8,12 @@ from PyQt5.QtWidgets import (
     QSlider, QCheckBox, QGroupBox, QScrollArea,
     QWidget, QSizePolicy, QFrame, QSpinBox,
     QTabWidget, QComboBox, QMessageBox,
+    QLineEdit, QListWidget, QListWidgetItem,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont
 import os
+import webbrowser
 
 from utils.proactive_chat import ProactiveChatScheduler
 
@@ -163,6 +165,15 @@ class ProactiveDialog(QDialog):
 
         self._build_observe_tab(obs_layout)
         tab.addTab(obs_tab, "调皮观察")
+
+        # ────── Tab 3: B站冲浪 ──────
+        bl_tab = QWidget()
+        bl_layout = QVBoxLayout(bl_tab)
+        bl_layout.setSpacing(8)
+        bl_layout.setContentsMargins(8, 8, 8, 8)
+
+        self._build_bilibili_tab(bl_layout)
+        tab.addTab(bl_tab, "B站冲浪")
 
         # ── 底部按钮 ──
         btn_row = QHBoxLayout()
@@ -599,6 +610,392 @@ class ProactiveDialog(QDialog):
         # 不自动扫描摄像头（避免物理激活 + 刷屏警告），仅在用户点"刷新"时扫描
         self._cam_combo.addItem('（点击"刷新"检测摄像头）', -1)
 
+    # ────────── B站冲浪选项卡 ────────────────────────────
+
+    def _build_bilibili_tab(self, layout: QVBoxLayout):
+        hint = QLabel(
+            "莲心会偷偷去B站搜索你感兴趣的视频，然后推荐给你。\n"
+            "兴趣标签会根据你的聊天记录自动提取，也可以手动添加。"
+        )
+        hint.setFont(QFont("Microsoft YaHei UI", 9))
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        # 启用开关
+        toggle_row = QHBoxLayout()
+        toggle_lbl = QLabel("启用B站冲浪")
+        toggle_lbl.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        toggle_lbl.setStyleSheet("color: #3A3A5C;")
+        toggle_row.addWidget(toggle_lbl)
+        toggle_row.addStretch()
+        self._bl_enable_cb = QCheckBox()
+        self._bl_enable_cb.setFixedSize(20, 20)
+        toggle_row.addWidget(self._bl_enable_cb)
+        layout.addLayout(toggle_row)
+
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("color: #E0E0E8;")
+        layout.addWidget(line)
+
+        # 触发概率
+        prob_row = QHBoxLayout()
+        prob_lbl = QLabel("触发概率")
+        prob_lbl.setFont(QFont("Microsoft YaHei UI", 9))
+        prob_row.addWidget(prob_lbl)
+        prob_row.addStretch()
+        self._bl_prob_slider = QSlider(Qt.Horizontal)
+        self._bl_prob_slider.setRange(0, 100)
+        self._bl_prob_slider.setFixedWidth(140)
+        self._bl_prob_slider.setFixedHeight(18)
+        self._bl_prob_slider.valueChanged.connect(
+            lambda v: self._bl_prob_val.setText(f"{v}%"))
+        prob_row.addWidget(self._bl_prob_slider)
+        self._bl_prob_val = QLabel("40%")
+        self._bl_prob_val.setFixedWidth(36)
+        self._bl_prob_val.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
+        self._bl_prob_val.setStyleSheet("color: #FF6B8A;")
+        prob_row.addWidget(self._bl_prob_val)
+        layout.addLayout(prob_row)
+
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.HLine)
+        line2.setStyleSheet("color: #E0E0E8;")
+        layout.addWidget(line2)
+
+        # 兴趣标签区域
+        tag_group = QGroupBox("兴趣标签")
+        tag_group.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
+        tag_group.setStyleSheet("""
+            QGroupBox {
+                border: 1px solid #D8D8EE;
+                border-radius: 8px;
+                margin-top: 8px;
+                padding: 8px;
+                color: #5060DD;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 4px;
+            }
+        """)
+        tag_inner = QVBoxLayout(tag_group)
+
+        tag_input_row = QHBoxLayout()
+        self._bl_tag_input = QLineEdit()
+        self._bl_tag_input.setPlaceholderText("输入兴趣关键词，如：口琴、赛博朋克")
+        self._bl_tag_input.setFont(QFont("Microsoft YaHei UI", 9))
+        self._bl_tag_input.setFixedHeight(28)
+        tag_input_row.addWidget(self._bl_tag_input)
+
+        btn_add_tag = QPushButton("添加")
+        btn_add_tag.setFixedHeight(28)
+        btn_add_tag.setFont(QFont("Microsoft YaHei UI", 9))
+        btn_add_tag.setCursor(Qt.PointingHandCursor)
+        btn_add_tag.setStyleSheet("""
+            QPushButton {
+                background-color: #6C7BFF;
+                color: white;
+                border-radius: 6px;
+                border: none;
+            }
+            QPushButton:hover { background-color: #5A6AEE; }
+        """)
+        btn_add_tag.clicked.connect(self._on_bl_add_tag)
+        tag_input_row.addWidget(btn_add_tag)
+        tag_inner.addLayout(tag_input_row)
+
+        tag_btn_row = QHBoxLayout()
+        btn_pause = QPushButton("暂停/恢复")
+        btn_pause.setFixedHeight(24)
+        btn_pause.setFont(QFont("Microsoft YaHei UI", 8))
+        btn_pause.setCursor(Qt.PointingHandCursor)
+        btn_pause.setStyleSheet("""
+            QPushButton {
+                background-color: #ECEEFF;
+                color: #5060DD;
+                border-radius: 6px;
+                border: 1px solid #C8CCEE;
+            }
+            QPushButton:hover { background-color: #DDE0FF; }
+        """)
+        btn_pause.clicked.connect(self._on_bl_pause_tag)
+        tag_btn_row.addWidget(btn_pause)
+
+        btn_delete = QPushButton("删除")
+        btn_delete.setFixedHeight(24)
+        btn_delete.setFont(QFont("Microsoft YaHei UI", 8))
+        btn_delete.setCursor(Qt.PointingHandCursor)
+        btn_delete.setStyleSheet("""
+            QPushButton {
+                background-color: #FFE0E0;
+                color: #D64040;
+                border-radius: 6px;
+                border: 1px solid #FCC0C0;
+            }
+            QPushButton:hover { background-color: #FFD0D0; }
+        """)
+        btn_delete.clicked.connect(self._on_bl_delete_tag)
+        tag_btn_row.addWidget(btn_delete)
+        tag_btn_row.addStretch()
+        tag_inner.addLayout(tag_btn_row)
+
+        self._bl_tag_list = QListWidget()
+        self._bl_tag_list.setFixedHeight(100)
+        self._bl_tag_list.setFont(QFont("Microsoft YaHei UI", 9))
+        tag_inner.addWidget(self._bl_tag_list)
+        layout.addWidget(tag_group)
+
+        # 浏览记录区域
+        hist_group = QGroupBox("浏览记录")
+        hist_group.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
+        hist_group.setStyleSheet("""
+            QGroupBox {
+                border: 1px solid #D8D8EE;
+                border-radius: 8px;
+                margin-top: 8px;
+                padding: 8px;
+                color: #5060DD;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 4px;
+            }
+        """)
+        hist_inner = QVBoxLayout(hist_group)
+
+        hist_filter_row = QHBoxLayout()
+        self._bl_hist_filter = QLineEdit()
+        self._bl_hist_filter.setPlaceholderText("搜索关键词过滤...")
+        self._bl_hist_filter.setFont(QFont("Microsoft YaHei UI", 9))
+        self._bl_hist_filter.setFixedHeight(26)
+        self._bl_hist_filter.textChanged.connect(self._on_bl_filter_history)
+        hist_filter_row.addWidget(self._bl_hist_filter)
+
+        btn_clear = QPushButton("清空")
+        btn_clear.setFixedHeight(26)
+        btn_clear.setFont(QFont("Microsoft YaHei UI", 8))
+        btn_clear.setCursor(Qt.PointingHandCursor)
+        btn_clear.setStyleSheet("""
+            QPushButton {
+                background-color: #FFE0E0;
+                color: #D64040;
+                border-radius: 6px;
+                border: 1px solid #FCC0C0;
+            }
+            QPushButton:hover { background-color: #FFD0D0; }
+        """)
+        btn_clear.clicked.connect(self._on_bl_clear_history)
+        hist_filter_row.addWidget(btn_clear)
+        hist_inner.addLayout(hist_filter_row)
+
+        self._bl_hist_list = QListWidget()
+        self._bl_hist_list.setFont(QFont("Microsoft YaHei UI", 8))
+        self._bl_hist_list.setMinimumHeight(80)
+        hist_inner.addWidget(self._bl_hist_list)
+
+        hist_btn_row = QHBoxLayout()
+        btn_like = QPushButton("👍 点赞")
+        btn_like.setFixedHeight(26)
+        btn_like.setFont(QFont("Microsoft YaHei UI", 8))
+        btn_like.setCursor(Qt.PointingHandCursor)
+        btn_like.setStyleSheet("""
+            QPushButton {
+                background-color: #E8F8E8;
+                color: #2A8A2A;
+                border-radius: 6px;
+                border: 1px solid #C0E0C0;
+            }
+            QPushButton:hover { background-color: #D8F0D8; }
+        """)
+        btn_like.clicked.connect(lambda: self._on_bl_react("liked"))
+        hist_btn_row.addWidget(btn_like)
+
+        btn_dislike = QPushButton("👎 点踩")
+        btn_dislike.setFixedHeight(26)
+        btn_dislike.setFont(QFont("Microsoft YaHei UI", 8))
+        btn_dislike.setCursor(Qt.PointingHandCursor)
+        btn_dislike.setStyleSheet("""
+            QPushButton {
+                background-color: #FFE8E8;
+                color: #D64040;
+                border-radius: 6px;
+                border: 1px solid #FCC0C0;
+            }
+            QPushButton:hover { background-color: #FFD8D8; }
+        """)
+        btn_dislike.clicked.connect(lambda: self._on_bl_react("disliked"))
+        hist_btn_row.addWidget(btn_dislike)
+
+        btn_open = QPushButton("🔗 打开视频")
+        btn_open.setFixedHeight(26)
+        btn_open.setFont(QFont("Microsoft YaHei UI", 8))
+        btn_open.setCursor(Qt.PointingHandCursor)
+        btn_open.setStyleSheet("""
+            QPushButton {
+                background-color: #E8F0FF;
+                color: #5070DD;
+                border-radius: 6px;
+                border: 1px solid #C8D8F0;
+            }
+            QPushButton:hover { background-color: #D8E4FF; }
+        """)
+        btn_open.clicked.connect(self._on_bl_open_video)
+        hist_btn_row.addWidget(btn_open)
+        hist_btn_row.addStretch()
+        hist_inner.addLayout(hist_btn_row)
+        layout.addWidget(hist_group)
+
+        # 调试按钮
+        debug_row = QHBoxLayout()
+        self._btn_debug_bl = QPushButton("🧪 调试：立即测试B站冲浪")
+        self._btn_debug_bl.setFixedHeight(32)
+        self._btn_debug_bl.setFont(QFont("Microsoft YaHei UI", 9))
+        self._btn_debug_bl.setCursor(Qt.PointingHandCursor)
+        self._btn_debug_bl.setStyleSheet("""
+            QPushButton {
+                background-color: #FFE0E8;
+                color: #D6406A;
+                border-radius: 8px;
+                border: 1px solid #FCC0D0;
+            }
+            QPushButton:hover { background-color: #FFD0DC; }
+        """)
+        self._btn_debug_bl.clicked.connect(self._on_bl_debug)
+        debug_row.addWidget(self._btn_debug_bl)
+        debug_row.addStretch()
+        layout.addLayout(debug_row)
+
+    # ── B站标签列表刷新 ─────────────────────────────────────
+
+    def _refresh_bl_tags(self):
+        self._bl_tag_list.clear()
+        from utils.bilibili_history import get_bilibili_history
+        for t in get_bilibili_history().get_tags():
+            score = t["base_score"] + t.get("boost_score", 0)
+            stars = "★" * min(5, max(1, score // 20))
+            item = QListWidgetItem(f"{t['keyword']}  {stars}  ({t.get('source', 'auto')})")
+            item.setToolTip(f"基础分: {t['base_score']}  加成: {t.get('boost_score', 0)}")
+            self._bl_tag_list.addItem(item)
+        for t in get_bilibili_history().get_tags("paused"):
+            item = QListWidgetItem(f"{t['keyword']}  ⏸ 已暂停")
+            item.setForeground(Qt.gray)
+            self._bl_tag_list.addItem(item)
+
+    def _refresh_bl_history(self, keyword: str = ""):
+        self._bl_hist_list.clear()
+        from utils.bilibili_history import get_bilibili_history
+        records = get_bilibili_history().get_history(limit=50, keyword=keyword)
+        for rec in records:
+            date_str = rec["date"][:16].replace("T", " ")
+            header = QListWidgetItem(f"📅 {date_str}  |  🔍 {rec['keyword']}")
+            header.setFont(QFont("Microsoft YaHei UI", 8, QFont.Bold))
+            header.setFlags(header.flags() & ~Qt.ItemIsSelectable)
+            self._bl_hist_list.addItem(header)
+            for v in rec["results"]:
+                reaction = {"liked": "👍", "disliked": "👎"}.get(v.get("user_reaction"), "")
+                sub = QListWidgetItem(
+                    f"    {reaction} {v['title']} — {v['author']}  {v['play_count']}播放"
+                )
+                sub.setData(Qt.UserRole, (rec["id"], v["bvid"], v["link"]))
+                sub.setFont(QFont("Microsoft YaHei UI", 8))
+                self._bl_hist_list.addItem(sub)
+
+    # ── B站事件处理 ─────────────────────────────────────────
+
+    def _on_bl_add_tag(self):
+        kw = self._bl_tag_input.text().strip()
+        if not kw:
+            return
+        from utils.bilibili_history import get_bilibili_history
+        get_bilibili_history().add_tag(kw, source="manual")
+        get_bilibili_history().save()
+        self._bl_tag_input.clear()
+        self._refresh_bl_tags()
+
+    def _on_bl_pause_tag(self):
+        item = self._bl_tag_list.currentItem()
+        if not item:
+            return
+        kw = item.text().split("  ")[0].strip()
+        from utils.bilibili_history import get_bilibili_history
+        mgr = get_bilibili_history()
+        tags = mgr.get_tags()
+        found = False
+        for t in tags:
+            if t["keyword"] == kw:
+                if t.get("status") == "active":
+                    mgr.pause_tag(kw)
+                else:
+                    mgr.resume_tag(kw)
+                found = True
+                break
+        if not found:
+            for t in mgr.get_tags("paused"):
+                if t["keyword"] == kw:
+                    mgr.resume_tag(kw)
+                    found = True
+                    break
+        mgr.save()
+        self._refresh_bl_tags()
+
+    def _on_bl_delete_tag(self):
+        item = self._bl_tag_list.currentItem()
+        if not item:
+            return
+        kw = item.text().split("  ")[0].strip()
+        from utils.bilibili_history import get_bilibili_history
+        get_bilibili_history().remove_tag(kw)
+        get_bilibili_history().save()
+        self._refresh_bl_tags()
+
+    def _on_bl_filter_history(self):
+        kw = self._bl_hist_filter.text().strip()
+        self._refresh_bl_history(keyword=kw)
+
+    def _on_bl_clear_history(self):
+        from utils.bilibili_history import get_bilibili_history
+        get_bilibili_history().clear_history()
+        get_bilibili_history().save()
+        self._refresh_bl_history()
+
+    def _on_bl_open_video(self):
+        item = self._bl_hist_list.currentItem()
+        if not item:
+            return
+        data = item.data(Qt.UserRole)
+        if data and len(data) >= 3:
+            webbrowser.open(data[2])
+
+    def _on_bl_react(self, reaction: str):
+        item = self._bl_hist_list.currentItem()
+        if not item:
+            return
+        data = item.data(Qt.UserRole)
+        if not data or len(data) < 2:
+            return
+        record_id, bvid, _ = data
+        from utils.bilibili_history import get_bilibili_history
+        get_bilibili_history().react_to_video(record_id, bvid, reaction)
+        get_bilibili_history().save()
+        self._refresh_bl_history()
+    def _on_bl_debug(self):
+        if not self._bl_enable_cb.isChecked():
+            print("[B站冲浪] 调试按钮被点击，但B站冲浪开关未开启，请先勾选启用开关")
+            return
+        print("[B站冲浪] 调试按钮被点击，1秒后触发冲浪...")
+        self._btn_debug_bl.setEnabled(False)
+        self._btn_debug_bl.setText("正在测试...")
+        QTimer.singleShot(1000, self._do_bl_debug)
+
+    def _do_bl_debug(self):
+        print("[B站冲浪] 发射 debug_observe_signal(bilibili) → main_window")
+        self._btn_debug_bl.setEnabled(True)
+        self._btn_debug_bl.setText("🧪 调试：立即测试B站冲浪")
+        self.debug_observe_signal.emit("bilibili")
+
     # ── 摄像头扫描 ────────────────────────────────────────────
 
     def _scan_cameras(self) -> list[tuple[int, str]]:
@@ -695,6 +1092,14 @@ class ProactiveDialog(QDialog):
 
         self._update_debug_btn_state()
 
+        # 加载 B站设置
+        self._bl_enable_cb.setChecked(self._scheduler.bilibili_enabled)
+        self._bl_prob_slider.setValue(self._scheduler.bilibili_probability)
+        self._bl_prob_val.setText(f"{self._scheduler.bilibili_probability}%")
+        from utils.bilibili_history import get_bilibili_history
+        self._refresh_bl_tags()
+        self._refresh_bl_history()
+
     def _on_save(self):
         self._scheduler.desktop_enabled = self._enable_cb.isChecked()
         self._scheduler.qq_enabled = self._qq_cb.isChecked()
@@ -711,6 +1116,9 @@ class ProactiveDialog(QDialog):
         idx = self._cam_combo.currentData()
         if idx is not None and idx >= 0:
             self._scheduler.camera_index = idx
+
+        self._scheduler.bilibili_enabled = self._bl_enable_cb.isChecked()
+        self._scheduler.bilibili_probability = self._bl_prob_slider.value()
 
         self._scheduler.save_settings()
         self.accept()
@@ -763,6 +1171,13 @@ class ProactiveDialog(QDialog):
             self._enable_cb.isChecked() or self._qq_cb.isChecked()
         )
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            self._refresh_bl_tags()
+            self._refresh_bl_history()
+        except Exception:
+            pass
     def closeEvent(self, event):
         self._prob_timer.stop()
         event.accept()

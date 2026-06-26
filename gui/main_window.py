@@ -1089,7 +1089,13 @@ class MainWindow(QMainWindow):
             if self.isMinimized():
                 self.flash_taskbar(flash_count=0)
             self._restart_listening()
-
+            # 刷新B站冲浪数据
+            if self._proactive_dialog and self._proactive_dialog.isVisible():
+                try:
+                    self._proactive_dialog._refresh_bl_tags()
+                    self._proactive_dialog._refresh_bl_history()
+                except Exception:
+                    pass
         self._segment_sender.finished.connect(on_segment_finished)
 
         segments = self._segment_sender._segments
@@ -1895,9 +1901,15 @@ class MainWindow(QMainWindow):
         self._launch_proactive_message()
 
     def _on_proactive_debug_observe(self, mode: str):
-        """调试观察：强制走截图/摄像头观察模式。"""
+        """调试观察：强制走截图/摄像头/B站冲浪模式。"""
+        print(f"[B站冲浪] _on_proactive_debug_observe 收到 mode={mode}")
         if self._proactive_worker and self._proactive_worker.isRunning():
             self._chat_widget.add_system_tip("主动消息正在生成中，请稍候…")
+            return
+        if mode == "bilibili":
+            print("[B站冲浪] 进入 bilibili 分支，准备 launch")
+            self._observation_tip = self._chat_widget.add_system_tip("莲心正在B站冲浪…")
+            self._launch_proactive_message(force_observe="bilibili")
             return
         if not self._proactive_scheduler.observe_enabled:
             self._chat_widget.add_system_tip("请先启用调皮观察功能再使用调试。")
@@ -1906,22 +1918,39 @@ class MainWindow(QMainWindow):
         self._launch_proactive_message(force_observe=mode)
 
     def _launch_proactive_message(self, force_observe: str = ""):
-        """生成一条主动消息。force_observe 为 "screenshot"/"camera"/"shoulder_explore" 时强制走对应观察模式。"""
-        observe_mode = force_observe or self._proactive_scheduler.should_observe()
-        # 肩载设备在线时，优先使用 shoulder_explore 模式
-        if observe_mode and self._is_shoulder_available():
-            observe_mode = "shoulder_explore"
-        last_obs = self._proactive_scheduler.get_last_observation()
-        self._last_proactive_was_observation = bool(observe_mode)
+        """生成一条主动消息。force_observe 为 "screenshot"/"camera"/"shoulder_explore" 时强制走对应观察模式。
+        force_observe 为 "bilibili" 时强制走B站冲浪模式。"""
+        if force_observe == "bilibili":
+            print("[B站冲浪] 创建 ProactiveWorker(bilibili_mode=True)")
+            self._last_proactive_was_observation = False
+            self._proactive_worker = ProactiveWorker(
+                self._agent.get_history_manager(),
+                bilibili_mode=True,
+                parent=self,
+            )
+        elif self._proactive_scheduler.bilibili_enabled and self._proactive_scheduler.should_surf_bilibili() and not force_observe:
+            self._last_proactive_was_observation = False
+            self._proactive_worker = ProactiveWorker(
+                self._agent.get_history_manager(),
+                bilibili_mode=True,
+                parent=self,
+            )
+        else:
+            observe_mode = force_observe or self._proactive_scheduler.should_observe()
+            # 肩载设备在线时，优先使用 shoulder_explore 模式
+            if observe_mode and self._is_shoulder_available():
+                observe_mode = "shoulder_explore"
+            last_obs = self._proactive_scheduler.get_last_observation()
+            self._last_proactive_was_observation = bool(observe_mode)
 
-        self._proactive_worker = ProactiveWorker(
-            self._agent.get_history_manager(),
-            observation_mode=observe_mode,
-            last_observation=last_obs,
-            camera_index=self._proactive_scheduler.camera_index,
-            camera_wait=self._proactive_scheduler.camera_wait,
-            parent=self,
-        )
+            self._proactive_worker = ProactiveWorker(
+                self._agent.get_history_manager(),
+                observation_mode=observe_mode,
+                last_observation=last_obs,
+                camera_index=self._proactive_scheduler.camera_index,
+                camera_wait=self._proactive_scheduler.camera_wait,
+                parent=self,
+            )
         self._proactive_worker.observation_text.connect(
             self._on_observation_result)
         self._proactive_worker.observation_image.connect(
@@ -2007,6 +2036,13 @@ class MainWindow(QMainWindow):
                 and self._qq_bridge
                 and self._qq_bridge.isRunning()):
             self._qq_bridge.send_to_owner(text)
+                # 刷新B站冲浪数据（如果设置对话框开着）
+        if self._proactive_dialog and self._proactive_dialog.isVisible():
+            try:
+                self._proactive_dialog._refresh_bl_tags()
+                self._proactive_dialog._refresh_bl_history()
+            except Exception:
+                pass
 
     def _on_proactive_error(self, err: str):
         if hasattr(self, '_observation_tip') and self._observation_tip:

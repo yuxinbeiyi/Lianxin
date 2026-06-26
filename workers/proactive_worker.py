@@ -82,6 +82,7 @@ class ProactiveWorker(QThread):
                  last_observation: str = "",
                  camera_index: int = 0,
                  camera_wait: int = 15,
+                 bilibili_mode: bool = False,
                  parent=None):
         super().__init__(parent)
         self._history_mgr = history_manager
@@ -90,9 +91,13 @@ class ProactiveWorker(QThread):
         self._last_observation = last_observation      # 上次观察结果（短期记忆）
         self._camera_index = camera_index
         self._camera_wait = camera_wait
+        self._bilibili_mode = bilibili_mode
 
     def run(self):
         print("[观察-调试] 工作线程启动")
+        if self._bilibili_mode:
+            self._run_bilibili()
+            return
         # ── 情感系统：检查是否允许主动聊天 ────────────────────
         try:
             from brain.emotional import get_manager as _get_emotion_mgr
@@ -289,3 +294,128 @@ class ProactiveWorker(QThread):
         )
         text = response.choices[0].message.content or "（莲心沉默了）"
         return text.strip()
+
+    # ── B站冲浪 ──────────────────────────────────────────────
+
+    def _run_bilibili(self):
+        print("[B站冲浪] ===== _run_bilibili 开始 =====")
+        try:
+            from utils.bilibili_history import get_bilibili_history
+            bmgr = get_bilibili_history()
+            print(f"[B站冲浪] 历史管理器已加载，can_search={bmgr.can_search()}")
+
+            if not bmgr.can_search():
+                print("[B站冲浪] 搜索冷却中，跳过")
+                self.response_ready.emit("")
+                return
+
+            keywords = bmgr.get_weighted_tags(limit=3)
+            print(f"[B站冲浪] 加权标签: {keywords}")
+
+            if not keywords:
+                print("[B站冲浪] 无标签，尝试从记忆提取...")
+                keywords = self._extract_keywords_from_memory()
+                print(f"[B站冲浪] 记忆提取结果: {keywords}")
+                if not keywords:
+                    print("[B站冲浪] 无关键词，退出")
+                    self.response_ready.emit("")
+                    return
+                for kw in keywords:
+                    bmgr.add_tag(kw, base_score=50)
+
+            from brain.tools import bilibili_search
+            best_videos = []
+            used_keyword = ""
+            for kw in keywords:
+                print(f"[B站冲浪] 搜索关键词: {kw}")
+                results = bilibili_search(kw, max_results=5)
+                print(f"[B站冲浪] 搜索结果: {len(results)} 条")
+                results = bmgr.filter_seen(results)
+                print(f"[B站冲浪] 去重后: {len(results)} 条")
+                if results:
+                    best_videos = results[:3]
+                    used_keyword = kw
+                    bmgr.mark_tag_searched(kw)
+                    break
+
+            if not best_videos:
+                print("[B站冲浪] 无有效视频结果")
+                self.response_ready.emit("")
+                return
+
+            print(f"[B站冲浪] 选中 {len(best_videos)} 个视频，关键词={used_keyword}")
+            bmgr.mark_searched()
+            record_id = bmgr.add_record(used_keyword, best_videos)
+            bmgr.save()
+
+            message = self._generate_bilibili_message(used_keyword, best_videos, record_id)
+            print(f"[B站冲浪] 消息已生成，发送 response_ready")
+            self.response_ready.emit(message)
+        except Exception as e:
+            import traceback
+            print(f"[B站冲浪] 异常: {e}")
+            traceback.print_exc()
+            self.error_occurred.emit(str(e))
+
+    def _extract_keywords_from_memory(self) -> list[str]:
+        try:
+            all_mem = list_all_facts()
+            facts = []
+            for cat in ALL_CATEGORIES:
+                for item in all_mem.get(cat, []):
+                    facts.append(item["content"])
+            if not facts:
+                return []
+
+            client, model = self._get_client()
+            user_name = _get_user_name()
+            prompt = (
+                f"从以下用户{user_name}的记忆中，提取他感兴趣的事物关键词，"
+                f"用于去B站搜索视频推荐给他。\n"
+                f"只提取具体的事物：爱好、游戏、电影、音乐、想学的技能、喜欢的动漫等。\n"
+                f"每个关键词 2~8 个字，返回 1~3 个，空格分隔。如果没有则返回 NONE。\n\n"
+                f"记忆：\n" + "\n".join(facts[:20])
+            )
+            response = client.chat.completions.create(
+                model=model,
+                max_tokens=50,
+                messages=[
+                    {"role": "system", "content": "你提取关键词，只返回关键词本身，用空格分隔。"},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            text = response.choices[0].message.content or ""
+            text = text.strip()
+            if text.upper() == "NONE" or not text:
+                return []
+            return [kw.strip() for kw in text.split() if kw.strip()][:3]
+        except Exception as e:
+            print(f"[B站冲浪] 提取关键词失败: {e}")
+            return []
+
+    def _generate_bilibili_message(self, keyword: str, videos: list[dict], record_id: str) -> str:
+        video_list = "\n".join(
+            f"{i+1}. {v['title']} — up主：{v['author']}，{v['play_count']}播放\n   {v['link']}"
+            for i, v in enumerate(videos)
+        )
+        client, model = self._get_client()
+        user_name = _get_user_name()
+        system = _format_prompt(
+            "你是莲心，一个聪明、温柔但偶尔有点毒舌的AI助手。"
+            "你刚才偷偷去B站逛了一圈，搜了搜{user_name}可能感兴趣的东西，现在要推荐给他。"
+        )
+        prompt = (
+            f"你搜索了关键词「{keyword}」，找到以下视频：\n{video_list}\n\n"
+            f"现在请你作为莲心，用 1~3 句话推荐给{user_name}。"
+            f"语气要轻松自然，带点「我偷偷帮你找了好东西」的感觉。"
+            f"必须包含视频链接。直接输出消息内容，不要任何前缀。"
+        )
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=256,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return (response.choices[0].message.content or "（莲心沉默了）").strip()

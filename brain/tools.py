@@ -1763,6 +1763,67 @@ TOOL_DEFINITIONS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "bilibili_search",
+            "description": (
+                "在B站（bilibili.com）搜索视频。根据关键词搜索相关视频，"
+                "返回视频标题、作者、播放量、BV号和链接。"
+                "当用户要求搜索B站视频、找B站内容、推荐视频时使用。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "搜索关键词，如「口琴教程」「赛博朋克」「猫猫」"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "最多返回的结果数，默认10"
+                    }
+                },
+                "required": ["keyword"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "bilibili_add_tag",
+            "description": (
+                "添加一个B站搜索兴趣标签。当用户说「以后帮我搜XXX」「我想看XXX的视频」"
+                "「帮我关注XXX」时，调用此工具将关键词添加到莲心的兴趣标签库。"
+                "莲心会在空闲时自动用这些标签去B站搜索视频推荐给用户。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "兴趣标签关键词，如「口琴」「赛博朋克」「猫猫」"
+                    }
+                },
+                "required": ["keyword"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "bilibili_list_tags",
+            "description": (
+                "查看当前所有B站搜索兴趣标签。当用户问「你关注哪些兴趣」「"
+                "你有哪些B站标签」「帮我看看标签」时使用。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
 
 
 ]
@@ -4435,11 +4496,114 @@ TOOL_EXECUTORS = {
     "code_goto_def":    lambda inp: goto_definition(inp["file_path"], inp["line"], inp.get("symbol", ""), inp.get("column", 0)),
     "code_find_refs":   lambda inp: find_references(inp["file_path"], inp["line"], inp.get("symbol", ""), inp.get("column", 0)),
     "code_diagnostics": lambda inp: get_diagnostics(inp["file_path"]),
+    # B站冲浪工具
+    "bilibili_search":  lambda inp: _bilibili_search_tool(inp.get("keyword", ""), inp.get("max_results", 10)),
+    "bilibili_add_tag": lambda inp: _bilibili_add_tag_tool(inp.get("keyword", "")),
+    "bilibili_list_tags": lambda inp: _bilibili_list_tags_tool(),
 
 }
 
 
     
+
+def bilibili_search(keyword: str, max_results: int = 10) -> list[dict]:
+    """B站视频搜索，使用公开API，无需API Key。
+    返回：[{title, author, bvid, play_count, cover_url, link}, ...]"""
+    import requests
+    import urllib.parse
+
+    url = "https://api.bilibili.com/x/web-interface/search/all/v2"
+    params = {
+        "keyword": keyword,
+        "search_type": "video",
+        "order": "totalrank",
+        "page": 1,
+    }
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Referer": "https://www.bilibili.com/",
+    }
+
+    try:
+        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != 0:
+            return []
+
+        results = []
+        for item in data.get("data", {}).get("result", []):
+            if item.get("result_type") != "video":
+                continue
+            for v in item.get("data", [])[:max_results]:
+                title = v.get("title", "")
+                title = title.replace('<em class="keyword">', "").replace("</em>", "")
+                results.append({
+                    "title": title,
+                    "author": v.get("author", ""),
+                    "bvid": v.get("bvid", ""),
+                    "play_count": v.get("play", 0),
+                    "cover_url": v.get("pic", ""),
+                    "link": f"https://www.bilibili.com/video/{v.get('bvid', '')}",
+                })
+        return results
+    except Exception as e:
+        print(f"[B站搜索] 失败: {e}")
+        return []
+
+
+def _bilibili_search_tool(keyword: str, max_results: int = 10) -> str:
+    """B站视频搜索工具包装，返回格式化的文本结果。"""
+    if not keyword:
+        return "请提供搜索关键词。"
+    results = bilibili_search(keyword, max_results)
+    if not results:
+        return f"在B站搜索「{keyword}」没有找到相关视频。"
+    lines = [f"🔍 B站搜索「{keyword}」结果：\n"]
+    for i, v in enumerate(results):
+        lines.append(
+            f"{i+1}. {v['title']}\n"
+            f"   up主：{v['author']}  |  {v['play_count']}播放\n"
+            f"   {v['link']}\n"
+        )
+    return "\n".join(lines)
+
+
+def _bilibili_add_tag_tool(keyword: str) -> str:
+    """添加B站兴趣标签工具包装。"""
+    if not keyword or not keyword.strip():
+        return "请提供要添加的兴趣标签关键词。"
+    from utils.bilibili_history import get_bilibili_history
+    mgr = get_bilibili_history()
+    mgr.add_tag(keyword.strip(), source="ai")
+    mgr.save()
+    return f"已添加兴趣标签「{keyword.strip()}」，莲心空闲时会去B站搜索相关视频推荐给你~"
+
+
+def _bilibili_list_tags_tool() -> str:
+    """列出所有B站兴趣标签。"""
+    from utils.bilibili_history import get_bilibili_history
+    mgr = get_bilibili_history()
+    active_tags = mgr.get_tags("active")
+    paused_tags = mgr.get_tags("paused")
+    if not active_tags and not paused_tags:
+        return "目前还没有任何B站兴趣标签。你可以说「帮我关注XXX」来添加。"
+    lines = ["📋 当前B站兴趣标签：\n"]
+    if active_tags:
+        lines.append("▸ 活跃标签：")
+        for t in active_tags:
+            score = t["base_score"] + t.get("boost_score", 0)
+            lines.append(f"  · {t['keyword']}（权重 {score}，来源 {t.get('source', 'auto')}）")
+    if paused_tags:
+        lines.append("▸ 已暂停标签：")
+        for t in paused_tags:
+            lines.append(f"  · {t['keyword']}（已暂停）")
+    return "\n".join(lines)
+
 
 def execute_tool(name: str, tool_input: dict) -> str:
     """根据工具名称调用对应的执行函数。调用前检查防御模式。"""

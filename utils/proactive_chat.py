@@ -78,6 +78,12 @@ class ProactiveChatScheduler:
             "camera_index": 0,
             "camera_wait": 15,
             "observe_send_to_qq": False,
+            # B站冲浪配置
+            "bilibili_enabled": False,
+            "bilibili_probability": 40,
+            "bilibili_max_results": 5,
+            "bilibili_sort": "totalrank",
+            "bilibili_tag_cooldown_hours": 48,
         }
 
     def reload_settings(self):
@@ -198,6 +204,55 @@ class ProactiveChatScheduler:
     @observe_send_to_qq.setter
     def observe_send_to_qq(self, val: bool):
         self._settings["observe_send_to_qq"] = val
+
+    # ── B站冲浪设置 ────────────────────────────────────────────
+
+    @property
+    def bilibili_enabled(self) -> bool:
+        return self._settings.get("bilibili_enabled", False)
+
+    @bilibili_enabled.setter
+    def bilibili_enabled(self, val: bool):
+        self._settings["bilibili_enabled"] = val
+
+    @property
+    def bilibili_probability(self) -> int:
+        return self._settings.get("bilibili_probability", 40)
+
+    @bilibili_probability.setter
+    def bilibili_probability(self, val: int):
+        self._settings["bilibili_probability"] = max(0, min(100, val))
+
+    @property
+    def bilibili_max_results(self) -> int:
+        return self._settings.get("bilibili_max_results", 5)
+
+    @bilibili_max_results.setter
+    def bilibili_max_results(self, val: int):
+        self._settings["bilibili_max_results"] = max(1, min(20, val))
+
+    @property
+    def bilibili_sort(self) -> str:
+        return self._settings.get("bilibili_sort", "totalrank")
+
+    @bilibili_sort.setter
+    def bilibili_sort(self, val: str):
+        self._settings["bilibili_sort"] = val
+
+    @property
+    def bilibili_tag_cooldown_hours(self) -> int:
+        return self._settings.get("bilibili_tag_cooldown_hours", 48)
+
+    @bilibili_tag_cooldown_hours.setter
+    def bilibili_tag_cooldown_hours(self, val: int):
+        self._settings["bilibili_tag_cooldown_hours"] = max(1, min(168, val))
+
+    def should_surf_bilibili(self) -> bool:
+        if not self.bilibili_enabled:
+            return False
+        if self.bilibili_probability <= 0:
+            return False
+        return random.randint(1, 100) <= self.bilibili_probability
 
     # ── 观察运行时状态 ────────────────────────────────────────────
 
