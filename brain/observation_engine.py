@@ -227,12 +227,37 @@ class ObservationEngine:
                     timeout=30,
                 )
             except Exception as e:
-                return {
-                    "chain_id": chain_id,
-                    "summary": f"探索失败: {e}",
-                    "observations": [],
-                    "total_tool_calls": iteration,
-                }
+                error_msg = str(e).lower()
+                is_retryable = any(kw in error_msg for kw in [
+                    "timeout", "connection", "getaddrinfo", "name or service not known",
+                    "rate limit", "server error", "500", "502", "503", "504",
+                ])
+                if is_retryable and iteration < 2:
+                    import time as _time
+                    _time.sleep(2.0)
+                    try:
+                        response = self._client.chat.completions.create(
+                            model=self._model,
+                            max_tokens=min(self._max_tokens, 1024),
+                            tools=_EXPLORER_TOOLS,
+                            tool_choice="auto",
+                            messages=messages,
+                            timeout=30,
+                        )
+                    except Exception as e2:
+                        return {
+                            "chain_id": chain_id,
+                            "summary": f"探索失败: {e2}",
+                            "observations": [],
+                            "total_tool_calls": iteration,
+                        }
+                else:
+                    return {
+                        "chain_id": chain_id,
+                        "summary": f"探索失败: {e}",
+                        "observations": [],
+                        "total_tool_calls": iteration,
+                    }
 
             choice = response.choices[0]
 

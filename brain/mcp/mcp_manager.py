@@ -14,12 +14,30 @@ class MCPManager:
         self._initialized = False
 
     def initialize(self, mcp_dir: str = None):
-        """启动时初始化：扫描并注册所有 MCP 服务"""
+        """启动时初始化：扫描并注册所有 MCP 服务（带超时保护）。"""
         if self._initialized:
             return
+        import threading
         from brain.mcp.mcp_registry import scan_mcp_services
 
-        registered = scan_mcp_services(mcp_dir)
+        registered = []
+
+        def _do_scan():
+            nonlocal registered
+            try:
+                registered = scan_mcp_services(mcp_dir)
+            except Exception as e:
+                print(f"[MCP] 初始化异常: {e}")
+
+        scan_thread = threading.Thread(target=_do_scan, daemon=True)
+        scan_thread.start()
+        scan_thread.join(timeout=15)
+
+        if scan_thread.is_alive():
+            print("[MCP] 初始化超时（15秒），跳过 MCP 注册")
+            self._initialized = True
+            return
+
         if registered:
             print(
                 f"[MCP] 初始化完成，已注册 {len(registered)} 个服务: {registered}"

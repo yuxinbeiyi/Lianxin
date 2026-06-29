@@ -156,8 +156,35 @@ def perform_heartbeat(recent_messages: list[dict]) -> Optional[str]:
         )
         raw = response.choices[0].message.content or ""
     except Exception as e:
-        logger.warning(f"心跳自检 LLM 调用失败: {e}")
-        return None
+        error_msg = str(e).lower()
+        is_retryable = any(kw in error_msg for kw in [
+            "timeout", "connection", "getaddrinfo", "name or service not known",
+            "rate limit", "server", "500", "502", "503", "504",
+        ])
+        if is_retryable:
+            import time as _time
+            print(f"[心跳] 首次调用失败，3秒后重试: {e}", flush=True)
+            _time.sleep(3.0)
+            try:
+                response = litellm.completion(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_text},
+                        {"role": "user", "content": user_text},
+                    ],
+                    api_key=api_cfg["api_key"],
+                    api_base=api_cfg["base_url"],
+                    temperature=0.3,
+                    max_tokens=400,
+                    timeout=30,
+                )
+                raw = response.choices[0].message.content or ""
+            except Exception as e2:
+                logger.warning(f"心跳自检 LLM 调用失败（重试后仍失败）: {e2}")
+                return None
+        else:
+            logger.warning(f"心跳自检 LLM 调用失败: {e}")
+            return None
 
     # 解析指令
     result_text = _parse_checklist_commands(raw, checklist)

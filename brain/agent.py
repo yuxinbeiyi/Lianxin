@@ -903,80 +903,91 @@ class AgentCore:
                     "tool_call_id": item["tc"].id,
                     "content": result,
                 })
-    def _collect_stream(self, response, on_chunk=None):
+    def _collect_stream(self, response, on_chunk=None, max_retries=2):
         """收集 litellm 流式响应，拼接成完整 message 对象。
 
         参数:
             response:  litellm 流式迭代器
             on_chunk:  可选回调 on_chunk(text_so_far)，用于实时进度报告
+            max_retries: 流中断时的最大重试次数
 
         返回:
             (content, reasoning, tool_calls_dict, finish_reason)
             - content:      完整文本内容 (str | None)
             - reasoning:    深度思考链 (str | None)
             - tool_calls:   list[dict] | None，格式 [{"id":..., "function":{"name":..., "arguments":...}}]
-            - finish_reason: "stop" | "tool_calls" | "length"
+            - finish_reason: "stop" | "tool_calls" | "length" | "error"
 
         异常:
-            如果流在中途断开且未收集到任何内容，向上抛出原始异常。
-            如果已有部分内容，返回部分内容 + finish_reason="stop"。
+            不再向上抛出异常，所有错误都通过 finish_reason="error" 返回。
         """
         full_content = ""
         full_reasoning = ""
         tool_parts: dict[int, dict] = {}  # index → {id, name, arguments}
         has_tool_calls = False
         final_finish = "stop"
+        retry_count = 0
 
-        try:
-            for chunk in response:
-                delta = chunk.choices[0].delta
+        while retry_count <= max_retries:
+            try:
+                for chunk in response:
+                    delta = chunk.choices[0].delta
 
-                # 1) 深度思考（DeepSeek-R1）
-                rc = getattr(delta, "reasoning_content", None)
-                if rc is not None:
-                    full_reasoning += rc
+                    # 1) 深度思考（DeepSeek-R1）
+                    rc = getattr(delta, "reasoning_content", None)
+                    if rc is not None:
+                        full_reasoning += rc
 
-                # 2) 文本增量
-                if delta.content is not None:
-                    full_content += delta.content
-                    if on_chunk:
-                        on_chunk(full_content)
+                    # 2) 文本增量
+                    if delta.content is not None:
+                        full_content += delta.content
+                        if on_chunk:
+                            on_chunk(full_content)
 
-                # 3) 工具调用增量
-                tc_list = getattr(delta, "tool_calls", None)
-                if tc_list:
-                    has_tool_calls = True
+                    # 3) 工具调用增量
+                    tc_list = getattr(delta, "tool_calls", None)
+                    if tc_list:
+                        has_tool_calls = True
 
-                    for tc_delta in tc_list:
-                        idx = tc_delta.index
-                        if idx not in tool_parts:
-                            tool_parts[idx] = {
-                                "id": tc_delta.id or "",
-                                "type": "function",
-                                "function": {"name": "", "arguments": ""}
-                            }
-                        if tc_delta.id:
-                            tool_parts[idx]["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                tool_parts[idx]["function"]["name"] += tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                tool_parts[idx]["function"]["arguments"] += tc_delta.function.arguments
+                        for tc_delta in tc_list:
+                            idx = tc_delta.index
+                            if idx not in tool_parts:
+                                tool_parts[idx] = {
+                                    "id": tc_delta.id or "",
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""}
+                                }
+                            if tc_delta.id:
+                                tool_parts[idx]["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    tool_parts[idx]["function"]["name"] += tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    tool_parts[idx]["function"]["arguments"] += tc_delta.function.arguments
 
-                # 4) 结束原因（最后一个 chunk 才有）
-                fr = getattr(chunk.choices[0], "finish_reason", None)
-                if fr is not None:
-                    final_finish = fr
+                    # 4) 结束原因（最后一个 chunk 才有）
+                    fr = getattr(chunk.choices[0], "finish_reason", None)
+                    if fr is not None:
+                        final_finish = fr
 
-        except Exception:
-            # 流中断：如果有部分内容，返回已收集的；否则向上抛
-            if full_content or has_tool_calls:
-                final_finish = "stop"
-            else:
-                raise
+                break  # 正常完成，跳出重试循环
+
+            except Exception as e:
+                retry_count += 1
+                if retry_count <= max_retries and (full_content or has_tool_calls):
+                    import time
+                    print(f"[流中断] 重试 {retry_count}/{max_retries}: {e}", flush=True)
+                    time.sleep(1.0 * retry_count)
+                    continue
+                elif full_content or has_tool_calls:
+                    print(f"[流中断] 已达最大重试次数，返回已收集内容", flush=True)
+                    final_finish = "stop"
+                    break
+                else:
+                    print(f"[流中断] 无内容可返回: {e}", flush=True)
+                    return "", None, None, "error"
 
         if has_tool_calls and not tool_parts:
-            # 标记了有工具调用但实际没收集到 → 当成纯文本停止
             has_tool_calls = False
         finish = "tool_calls" if has_tool_calls else final_finish
         tool_calls = [tc for _, tc in sorted(tool_parts.items())] if has_tool_calls else None
@@ -1182,22 +1193,31 @@ class AgentCore:
 
         # ── 禁用工具模式：直接纯文本对话，不走工具循环 ──────
         if disable_tools:
-            try:
-                stream = litellm.completion(
-                    model=self._model,
-                    max_tokens=self._max_tokens,
-                    messages=messages,
-                    api_key=self._api_key,
-                    api_base=self._api_base,
-                    stream=True,
-                    stream_options={"include_usage": True},
-                    timeout=120,
-                )
-                content, reasoning, _, _ = self._collect_stream(stream)
-            except Exception as e:
-                return f"（API 调用失败：{e}）"
-            self._last_reasoning = reasoning if reasoning else None
-            return content or "（莲心没有说话）"
+            for retry in range(2):
+                try:
+                    stream = litellm.completion(
+                        model=self._model,
+                        max_tokens=self._max_tokens,
+                        messages=messages,
+                        api_key=self._api_key,
+                        api_base=self._api_base,
+                        stream=True,
+                        stream_options={"include_usage": True},
+                        timeout=120,
+                    )
+                    content, reasoning, _, finish = self._collect_stream(stream)
+                    if finish == "error" and retry < 1:
+                        import time as _time
+                        _time.sleep(1.5)
+                        continue
+                    self._last_reasoning = reasoning if reasoning else None
+                    return content or "（莲心没有说话）"
+                except Exception as e:
+                    if retry < 1:
+                        import time as _time
+                        _time.sleep(1.5)
+                        continue
+                    return f"（API 调用失败：{e}）"
 
 
         # ── 长期记忆说明（仅在走工具路径时注入） ────────────
@@ -1307,7 +1327,22 @@ class AgentCore:
                 )
                 content, reasoning, stream_tool_calls, finish = self._collect_stream(stream, on_chunk=on_progress)
             except Exception as e:
+                error_msg = str(e).lower()
+                is_retryable = any(kw in error_msg for kw in [
+                    "timeout", "connection", "getaddrinfo", "name or service not known",
+                    "rate limit", "server", "500", "502", "503", "504",
+                    "connection reset", "broken pipe", "eof",
+                ])
+                if is_retryable and iteration < 3:
+                    import time as _time
+                    delay = 1.5 * (iteration + 1)
+                    print(f"[API重试] 第{iteration}轮失败，{delay:.1f}秒后重试: {e}", flush=True)
+                    _time.sleep(delay)
+                    continue
                 return f"（API 调用失败：{e}）"
+
+            if finish == "error":
+                return "（莲心的网络好像不太稳定，稍等一下再试试吧~）"
 
             if reasoning:
                 self._last_reasoning = reasoning

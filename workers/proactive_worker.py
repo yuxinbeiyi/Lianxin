@@ -115,23 +115,41 @@ class ProactiveWorker(QThread):
             print(f"[观察-调试] 模式={self._observation_mode}, 已有描述={bool(obs_text)}")
             if self._observation_mode and not obs_text:
                 print(f"[观察-调试] 开始观察: {self._observation_mode}")
-                obs_path, obs_text = self._do_observation()
-                print(f"[观察-调试] 观察完成: path={obs_path}, text_len={len(obs_text or '')}")
+                try:
+                    obs_path, obs_text = self._do_observation()
+                    print(f"[观察-调试] 观察完成: path={obs_path}, text_len={len(obs_text or '')}")
+                except Exception as obs_err:
+                    print(f"[观察-调试] 观察失败: {obs_err}")
+                    obs_path, obs_text = None, None
             self.observation_text.emit(obs_text or "")
             if obs_path and obs_text:
                 print("[观察-调试] 发射 observation_image 信号")
-                self.observation_image.emit(obs_path, obs_text)
+                try:
+                    self.observation_image.emit(obs_path, obs_text)
+                except Exception as emit_err:
+                    print(f"[观察-调试] 发射信号失败: {emit_err}")
             print("[观察-调试] 构建上下文...")
-            context = self._build_context(obs_text)
+            try:
+                context = self._build_context(obs_text)
+            except Exception as ctx_err:
+                print(f"[观察-调试] 构建上下文失败: {ctx_err}")
+                context = ""
             print("[观察-调试] 生成回复...")
-            message = self._generate(context, obs_text is not None, is_shoulder_explore)
+            try:
+                message = self._generate(context, obs_text is not None, is_shoulder_explore)
+            except Exception as gen_err:
+                print(f"[观察-调试] 生成回复失败: {gen_err}")
+                message = ""
             print(f"[观察-调试] 回复完成: len={len(message)}")
             self.response_ready.emit(message)
         except Exception as e:
             import traceback
             traceback.print_exc()
             print(f"[观察-调试] 异常: {e}")
-            self.error_occurred.emit(str(e))
+            try:
+                self.error_occurred.emit(str(e))
+            except Exception:
+                pass
 
 
     # ── 内部方法 ──────────────────────────────────────────────
@@ -291,6 +309,7 @@ class ProactiveWorker(QThread):
                 {"role": "system", "content": system},
                 {"role": "user",   "content": user_prompt},
             ],
+            timeout=30,
         )
         text = response.choices[0].message.content or "（莲心沉默了）"
         return text.strip()

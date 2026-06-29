@@ -69,7 +69,10 @@ def capture_camera(camera_index: int = 0, wait_seconds: int = 5) -> Optional[str
         return None
     finally:
         if cap is not None:
-            cap.release()
+            try:
+                cap.release()
+            except Exception:
+                pass
 
 
 def analyze_observation(image_path: str, source_name: str = "截图") -> str:
@@ -88,4 +91,3 @@ def analyze_observation(image_path: str, source_name: str = "截图") -> str:
     except Exception as e:
         print(f"[观察-调试] analyze_observation: 失败 {e}")
         return f"[{source_name}分析失败: {e}]"
-

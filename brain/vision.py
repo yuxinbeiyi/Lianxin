@@ -39,6 +39,33 @@ def describe_image(image_path: str, prompt: str = "请详细描述这张图片�
         )
         return response.choices[0].message.content or "（模型未返回描述）"
     except Exception as e:
+        error_msg = str(e).lower()
+        is_retryable = any(kw in error_msg for kw in [
+            "timeout", "connection", "getaddrinfo", "name or service not known",
+            "rate limit", "server error", "500", "502", "503", "504",
+        ])
+        if is_retryable:
+            import time as _time
+            print(f"[视觉] 首次调用失败，3秒后重试: {e}", flush=True)
+            _time.sleep(3.0)
+            try:
+                response = client.chat.completions.create(
+                    model=cfg["vision_model"],
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": data_url}},
+                            ],
+                        }
+                    ],
+                    max_tokens=2048,
+                    timeout=120,
+                )
+                return response.choices[0].message.content or "（模型未返回描述）"
+            except Exception as e2:
+                return f"图片理解失败：{e2}"
         return f"图片理解失败：{e}"
 
 

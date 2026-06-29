@@ -7,6 +7,7 @@ import sys
 import os
 import ctypes
 import warnings
+import traceback
 
 # 屏蔽 pydub/TTS 临时文件未关闭的 ResourceWarning 刷屏
 warnings.simplefilter("ignore", ResourceWarning)
@@ -43,11 +44,19 @@ if sys.platform == "win32":
     class _TeeWriter:
         """同时写入日志文件和终端；终端写入走独立线程，避免 Quick Edit 阻塞。"""
         def __init__(self, log_path, real_stream):
-            self._log = open(log_path, "a", encoding="utf-8", buffering=1)
+            self._log_path = log_path
+            self._log = self._open_log()
             self._real = real_stream
             self._queue = _queue_mod.Queue()
             self._worker = threading.Thread(target=self._drain, daemon=True)
+            self._worker._tee_writer_alive = True
             self._worker.start()
+
+        def _open_log(self):
+            try:
+                return open(self._log_path, "a", encoding="utf-8", buffering=1)
+            except Exception:
+                return None
 
         def _drain(self):
             while True:
@@ -61,12 +70,27 @@ if sys.platform == "win32":
                     pass
 
         def write(self, text):
-            self._log.write(text)
-            self._log.flush()
-            self._queue.put(text)
+            if self._log is not None:
+                try:
+                    self._log.write(text)
+                    self._log.flush()
+                except Exception:
+                    try:
+                        self._log.close()
+                    except Exception:
+                        pass
+                    self._log = self._open_log()
+            try:
+                self._queue.put_nowait(text)
+            except _queue_mod.Full:
+                pass
 
         def flush(self):
-            self._log.flush()
+            if self._log is not None:
+                try:
+                    self._log.flush()
+                except Exception:
+                    pass
 
     sys.stdout = _TeeWriter(_LOG_PATH, _REAL_STDOUT)
     sys.stderr = _TeeWriter(_LOG_PATH, _REAL_STDERR)
@@ -111,19 +135,52 @@ def _acquire_single_instance_mutex() -> bool:
     return ctypes.windll.kernel32.GetLastError() != 183
 
 
+def _global_exception_handler(exc_type, exc_value, exc_tb):
+    """全局未处理异常捕获：记录到日志文件后优雅退出。"""
+    tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    try:
+        log_dir = os.path.join(_PROJECT_ROOT, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        crash_path = os.path.join(log_dir, "crash.log")
+        with open(crash_path, "a", encoding="utf-8") as f:
+            from datetime import datetime
+            f.write(f"\n{'='*60}\n")
+            f.write(f"崩溃时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"异常类型: {exc_type.__name__}\n")
+            f.write(f"异常信息: {exc_value}\n")
+            f.write(f"堆栈跟踪:\n{tb_text}\n")
+        print(f"\n[致命错误] {exc_type.__name__}: {exc_value}", file=sys.stderr)
+        print(f"详细堆栈已写入: {crash_path}", file=sys.stderr)
+    except Exception:
+        print(f"\n[致命错误] {exc_type.__name__}: {exc_value}", file=sys.stderr)
+        print(tb_text, file=sys.stderr)
+
+sys.excepthook = _global_exception_handler
+
+# 捕获后台线程中未处理的异常（Python 3.8+）
+_threading_excepthook = threading.excepthook if hasattr(threading, "excepthook") else None
+
+
+def _thread_exception_handler(args):
+    exc_type, exc_value, exc_tb, thread = args.thread if hasattr(args, "thread") else (args.exc_type, args.exc_value, args.exc_traceback, args.thread)
+    _global_exception_handler(exc_type, exc_value, exc_tb)
+
+
+if _threading_excepthook is not None:
+    threading.excepthook = _thread_exception_handler
+
+
 def main():
     autostart_mode = "--autostart" in sys.argv
 
     # ── 第5条：单实例检测（在创建 QApplication 之前执行）────────
     if not _acquire_single_instance_mutex():
         if not autostart_mode:
-            # 手动启动时提示用户（需要先建 QApplication 才能弹窗）
             _app = QApplication(sys.argv)
             QMessageBox.information(
                 None, "莲心AI",
                 "莲心已经在运行了哦，请在任务栏找到她~"
             )
-        # 无论手动还是自启，直接退出，不创建第二个窗口
         sys.exit(0)
 
     # 高 DPI 支持（Windows 缩放适配）
@@ -132,7 +189,14 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("莲心AI")
-    app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())   # ← 加这行
+    app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
+
+    # ── 全局异常处理：确保 Qt 事件循环中的异常也被捕获 ──
+    def _qt_exception_handler(exc_type, exc_value, tb_obj):
+        _global_exception_handler(exc_type, exc_value, tb_obj)
+        app.quit()
+    sys.excepthook = _qt_exception_handler
+
     # 全局字体
     font = QFont("Microsoft YaHei UI", 10)
     app.setFont(font)
