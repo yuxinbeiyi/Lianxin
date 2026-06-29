@@ -30,6 +30,7 @@ class AgentWorker(QThread):
     progress_update = pyqtSignal(str)   # 插话进度回复（仅追加文字，不改动画状态）
     tool_called    = pyqtSignal(str)
     tool_result    = pyqtSignal(str, str)  # 工具执行结果 (name, preview)
+    observation_image = pyqtSignal(str, str)  # 观察图片 (path, desc) 用于气泡显示
     error_occurred = pyqtSignal(str)
 
     def __init__(self, agent: AgentCore, message: str, parent=None,
@@ -76,6 +77,18 @@ class AgentWorker(QThread):
                 preview = result[:80].replace("\n", " ")
                 preview += ("…" if len(result) > 80 else "")
                 self.tool_result.emit(name, preview)
+                # 截屏/摄像头 → 发射图片气泡信号
+                if name in ("capture_desktop", "capture_from_camera"):
+                    from brain.tools import get_observation_image
+                    obs = get_observation_image()
+                    if obs["path"]:
+                        self.observation_image.emit(obs["path"], obs["desc"])
+                # 截屏/摄像头 → 发射图片气泡信号
+                if name in ("capture_desktop", "capture_from_camera"):
+                    from brain.tools import get_observation_image
+                    obs = get_observation_image()
+                    if obs["path"]:
+                        self.observation_image.emit(obs["path"], obs["desc"])
 
             response = self.agent.chat(
                 self.message,

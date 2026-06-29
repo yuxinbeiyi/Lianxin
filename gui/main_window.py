@@ -327,7 +327,7 @@ class MainWindow(QMainWindow):
         self._agent_worker.progress_update.connect(self._on_progress_update)
         self._agent_worker.tool_called.connect(self._on_tool_called)
         self._agent_worker.tool_result.connect(self._on_tool_result)
-
+        self._agent_worker.observation_image.connect(self._on_observation_image)
         self._agent_worker.error_occurred.connect(self._on_error)
         self._agent_worker.start()
         self._input_panel.show_interrupt_bar(self._agent_worker)
@@ -910,6 +910,7 @@ class MainWindow(QMainWindow):
         if images is None:
             images = []
         selected_tool = self._input_panel.get_selected_tool()
+        display_text = text  # 气泡显示用原始文本，注入提示不显示
         if selected_tool is None:
             action_keywords = ["打开", "启动", "运行", "执行", "开启"]
             if any(kw in text for kw in action_keywords):
@@ -951,7 +952,7 @@ class MainWindow(QMainWindow):
             image_bubbles.append((img_path, bubble))
 
         if text.strip():
-            self._chat_widget.add_user_message(text)
+            self._chat_widget.add_user_message(display_text)
             play_sound("ButtonAll.mp3") 
 
         self._set_thinking_state()
@@ -974,6 +975,8 @@ class MainWindow(QMainWindow):
             self._agent_worker.response_ready.connect(self._on_ai_response)
             self._agent_worker.progress_update.connect(self._on_progress_update)
             self._agent_worker.tool_called.connect(self._on_tool_called)
+            self._agent_worker.tool_result.connect(self._on_tool_result)
+            self._agent_worker.observation_image.connect(self._on_observation_image)
             self._agent_worker.error_occurred.connect(self._on_error)
             self._agent_worker.start()
             self._input_panel.show_interrupt_bar(self._agent_worker)
@@ -1018,6 +1021,8 @@ class MainWindow(QMainWindow):
         self._agent_worker.response_ready.connect(self._on_ai_response)
         self._agent_worker.progress_update.connect(self._on_progress_update)
         self._agent_worker.tool_called.connect(self._on_tool_called)
+        self._agent_worker.tool_result.connect(self._on_tool_result)
+        self._agent_worker.observation_image.connect(self._on_observation_image)
         self._agent_worker.error_occurred.connect(self._on_error)
         self._agent_worker.start()
         self._input_panel.show_interrupt_bar(self._agent_worker)

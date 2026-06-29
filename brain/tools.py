@@ -928,6 +928,15 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "capture_desktop",
+            "description": "截取当前电脑屏幕，返回保存的图片路径。当用户要求看看他在干什么、看看屏幕、看看桌面时调用。",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
             "name": "send_file_to_qq",
             "description": (
                 "将本地文件发送到主人的QQ上。当主人明确要求'把文件发到QQ'、'发给我'、"
@@ -3622,9 +3631,39 @@ def send_file_to_qq(path: str, name: str = "") -> str:
     return _qq_bridge_worker.send_file_to_qq(path, name)
 
 def capture_from_camera():
-    from utils.camera import Camera
-    path = Camera.capture_image()
-    return path if path else "拍照失败"
+    from brain.observation import capture_camera, analyze_observation
+    path = capture_camera()
+    if not path:
+        return "拍照失败：无法打开摄像头"
+    desc = analyze_observation(path, "摄像头")
+    _save_observation(path, desc)
+    return desc
+
+
+def capture_desktop():
+    from brain.observation import capture_screen, analyze_observation
+    path = capture_screen()
+    if not path:
+        return "截屏失败"
+    desc = analyze_observation(path, "截图")
+    _save_observation(path, desc)
+    return desc
+
+
+# ── 观察结果全局存储（供 AgentWorker 读取并发送图片气泡） ──
+_last_observation = {"path": None, "desc": None}
+
+
+def _save_observation(path: str, desc: str):
+    global _last_observation
+    _last_observation = {"path": path, "desc": desc}
+
+
+def get_observation_image():
+    global _last_observation
+    obs = dict(_last_observation)
+    _last_observation = {"path": None, "desc": None}
+    return obs
 
 
 
@@ -4431,6 +4470,7 @@ TOOL_EXECUTORS = {
     "generate_video": lambda inp: generate_video(inp["prompt"], inp.get("image_url"), inp.get("duration")),
     "send_file_to_qq": lambda inp: send_file_to_qq(inp["path"], inp.get("name", "")),
     "capture_from_camera": lambda inp: capture_from_camera(),
+    "capture_desktop": lambda inp: capture_desktop(),
     "search_cross_session": lambda inp: search_cross_session(inp["keyword"], inp.get("limit", 5)),
     "toggle_proactive_chat": lambda inp: toggle_proactive_chat(inp["action"]),
     "list_skills":   lambda inp: _list_skills(),
