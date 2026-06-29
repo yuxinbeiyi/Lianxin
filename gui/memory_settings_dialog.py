@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QScrollArea, QFrame, QLineEdit, QFileDialog, QComboBox,
     QTabWidget, QMessageBox, QMenu, QTextEdit
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSizePolicy, QSizePolicy, QSizePolicy
 from PyQt5.QtGui import QFont
 from config import get_memory_config, save_memory_config
 from brain.graph_memory import list_all_facts, delete_facts, add_fact, update_facts, ALL_MEMORY_CATEGORIES
@@ -40,7 +40,33 @@ class MemorySettingsDialog(QDialog):
         return frame
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        # 滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
+        scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical {
+                background-color: rgba(222, 184, 135, 0.3);
+                width: 10px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #8B4513;
+                border-radius: 5px;
+                min-height: 20px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setSpacing(14)
         layout.setContentsMargins(20, 16, 20, 16)
 
@@ -448,8 +474,12 @@ class MemorySettingsDialog(QDialog):
         tab4_layout.addStretch()
         tabs.addTab(tab4, "📋 记忆浏览")
 
+        scroll.setWidget(content)
+        outer_layout.addWidget(scroll)
+
         # 底部按钮
         btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(20, 8, 20, 16)
         btn_row.addStretch()
         btn_cancel = QPushButton("取消")
         btn_cancel.setFixedSize(80, 32)
@@ -462,7 +492,7 @@ class MemorySettingsDialog(QDialog):
         btn_save.clicked.connect(self._on_save)
         btn_row.addWidget(btn_save)
 
-        layout.addLayout(btn_row)
+        outer_layout.addLayout(btn_row)
 
     def _load_from_config(self):
         from config import get_memory_config, get_graph_config

@@ -80,7 +80,9 @@ class ApiConfigDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("API 配置")
-        self.setFixedWidth(560)
+        self.setMinimumWidth(560)
+        self.setMinimumHeight(500)
+        self.resize(600, 600)
         self.setWindowFlags(Qt.Window)
         
         self._test_worker: _TestWorker | None = None

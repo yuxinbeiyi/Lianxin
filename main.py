@@ -29,14 +29,6 @@ if sys.platform == "win32":
     _LOG_DIR = os.path.join(_PROJECT_ROOT, "logs")
     os.makedirs(_LOG_DIR, exist_ok=True)
     _LOG_PATH = os.path.join(_LOG_DIR, "debug.log")
-    try:
-        if os.path.getsize(_LOG_PATH) > 5 * 1024 * 1024:
-            _backup = _LOG_PATH + ".old"
-            if os.path.exists(_backup):
-                os.remove(_backup)
-            os.rename(_LOG_PATH, _backup)
-    except OSError:
-        pass
 
     _REAL_STDOUT = sys.stdout
     _REAL_STDERR = sys.stderr
@@ -54,6 +46,16 @@ if sys.platform == "win32":
 
         def _open_log(self):
             try:
+                # 启动时轮转日志：超过 5MB 就备份
+                if os.path.exists(self._log_path):
+                    try:
+                        if os.path.getsize(self._log_path) > 5 * 1024 * 1024:
+                            _backup = self._log_path + ".old"
+                            if os.path.exists(_backup):
+                                os.remove(_backup)
+                            os.rename(self._log_path, _backup)
+                    except OSError:
+                        pass
                 return open(self._log_path, "a", encoding="utf-8", buffering=1)
             except Exception:
                 return None

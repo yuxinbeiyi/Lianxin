@@ -35,20 +35,36 @@ class MusicListDialog(QDialog):
                     border: none;
                 }}
                 QListWidget::item {{
-                    padding: 8px;
-                    border-bottom: 1px solid rgba(0,0,0,0.05);
+                    padding: 10px 10px;
+                    border-radius: 4px;
+                    color: #1a1a1a;
                 }}
                 QListWidget::item:selected {{
-                    background-color: rgba(108, 123, 255, 0.5);
-                    color: white;
+                    background-color: rgba(255, 235, 140, 0.9);
+                    color: #8B4513;
                 }}
-                QListWidget::item:hover {{
-                    background-color: rgba(108, 123, 255, 0.2);
+                QListWidget::item:hover:!selected {{
+                    background-color: rgba(255, 248, 220, 0.8);
                 }}
+                QScrollBar:vertical {{
+                    background-color: rgba(222, 184, 135, 0.3);
+                    width: 10px;
+                    border-radius: 5px;
+                }}
+                QScrollBar::handle:vertical {{
+                    background-color: #8B4513;
+                    border-radius: 5px;
+                    min-height: 20px;
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                    height: 0px;
+                }}
+
                 QPushButton {{
                     background-color: rgba(240,240,240,200);
                     border-radius: 5px;
                     padding: 5px;
+                    color: #1a1a1a;
                 }}
             """)
         else:
@@ -67,6 +83,7 @@ class MusicListDialog(QDialog):
 
         # 歌曲列表（启用拖拽排序）
         self.list_widget = QListWidget()
+        self.list_widget.setSpacing(6)  # 项目间距，用代码方式确保始终生效
         self.list_widget.setDragEnabled(True)
         self.list_widget.setAcceptDrops(True)
         self.list_widget.setDragDropMode(QListWidget.InternalMove)
@@ -75,6 +92,7 @@ class MusicListDialog(QDialog):
 
         # 填充列表
         self._playlist = playlist  # 保存原始路径列表
+        self._current_index = current_index
         self._update_list_items()
         self.list_widget.setCurrentRow(current_index)  # 高亮当前播放的歌曲
 
@@ -92,8 +110,11 @@ class MusicListDialog(QDialog):
     def _update_list_items(self):
         """根据 self._playlist 刷新列表显示"""
         self.list_widget.clear()
-        for path in self._playlist:
-            item = QListWidgetItem(path.stem)
+        for i, path in enumerate(self._playlist):
+            label = f"♫ {path.stem}" if i == self._current_index else f"   {path.stem}"
+            item = QListWidgetItem(label)
+            if i == self._current_index:
+                item.setForeground(Qt.green)
             self.list_widget.addItem(item)
 
     def _on_rows_moved(self, parent, start, end, dest, row):
@@ -101,16 +122,27 @@ class MusicListDialog(QDialog):
         new_order = []
         for i in range(self.list_widget.count()):
             item_text = self.list_widget.item(i).text()
+            # 去除 ♫ 和空格后再匹配
+            clean_text = item_text.strip().removeprefix('♫ ').removeprefix('   ')
             # 在原始 _playlist 中查找匹配的路径（通过 stem 匹配）
             found = None
             for p in self._playlist:
-                if p.stem == item_text:
+                if p.stem == clean_text:
                     found = p
                     break
             if found:
                 new_order.append(found)
         if new_order and new_order != self._playlist:
             self._playlist = new_order
+            # 更新当前播放歌曲的索引（因为位置可能变了）
+            old_path = self._playlist[self._current_index] if self._current_index < len(self._playlist) else None
+            if old_path:
+                for new_idx, p in enumerate(self._playlist):
+                    if p == old_path:
+                        self._current_index = new_idx
+                        break
+            # 重新构建所有 item 确保显示正确
+            self._update_list_items()
             self.order_changed.emit(new_order)
 
     def on_item_double_clicked(self, item):
