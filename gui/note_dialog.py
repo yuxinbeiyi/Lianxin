@@ -15,7 +15,8 @@ class NoteDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         # 独立窗口，不跟随主窗口最小化
-        self.setWindowFlags(Qt.Window)
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
         self.setWindowTitle("📝 备忘本")
         self.setMinimumSize(500, 400)
         self.resize(600, 500)
@@ -36,16 +37,14 @@ class NoteDialog(QDialog):
         self.highlight_format.setBackground(QColor(255, 200, 100))
         self.setAttribute(Qt.WA_ShowWithoutActivating)
 
+        self._install_event_filters(self)
+
     def _build_title_bar(self):
-        # 设置无边框
-        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
-        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self._title_bar = QWidget()
+        self._title_bar.setStyleSheet("background-color: #3C3C46; border-top-left-radius: 8px; border-top-right-radius: 8px;")
+        self._title_bar.setFixedHeight(40)
 
-        title_bar = QWidget()
-        title_bar.setStyleSheet("background-color: #3C3C46; border-top-left-radius: 8px; border-top-right-radius: 8px;")
-        title_bar.setFixedHeight(40)
-
-        layout = QHBoxLayout(title_bar)
+        layout = QHBoxLayout(self._title_bar)
         layout.setContentsMargins(10, 0, 10, 0)
 
         icon_label = QLabel("📝")
@@ -94,14 +93,14 @@ class NoteDialog(QDialog):
         layout.addWidget(close_btn)
 
         # 窗口拖动
-        title_bar.mousePressEvent = self._start_move
-        title_bar.mouseMoveEvent = self._perform_move
+        self._title_bar.mousePressEvent = self._start_move
+        self._title_bar.mouseMoveEvent = self._perform_move
         self._drag_pos = None
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-        main_layout.addWidget(title_bar)
+        main_layout.addWidget(self._title_bar)
 
         self._central_widget = QWidget()
         self._central_widget.setStyleSheet("background-color: #D8C8A0;")
@@ -111,12 +110,29 @@ class NoteDialog(QDialog):
 
         # 大小调整角
         size_grip = QSizeGrip(self)
-        size_grip.setStyleSheet("QSizeGrip { width: 10px; height: 10px; }")
+        size_grip.setFixedSize(16, 16)
+        size_grip.setStyleSheet("QSizeGrip { background-color: rgba(0,0,0,0.1); border-radius: 2px; }")
         self._central_layout.addWidget(size_grip, 0, Qt.AlignBottom | Qt.AlignRight)
     
-    _EDGE_MARGIN = 8
+    _EDGE_MARGIN = 15
 
-    def event(self, e):
+    def _install_event_filters(self, widget):
+        widget.installEventFilter(self)
+        for child in widget.children():
+            if isinstance(child, QWidget):
+                self._install_event_filters(child)
+
+    def eventFilter(self, obj, e):
+        if e.type() in (QEvent.MouseButtonPress, QEvent.MouseMove, QEvent.MouseButtonRelease):
+            # 标题栏区域：只允许拖动窗口，不触发边缘拉伸
+            title_rect = self._title_bar.rect()
+            title_tl = self._title_bar.mapToGlobal(title_rect.topLeft())
+            title_br = self._title_bar.mapToGlobal(title_rect.bottomRight())
+            mp = e.globalPos()
+            if title_tl.y() <= mp.y() <= title_br.y() and title_tl.x() <= mp.x() <= title_br.x():
+                if e.type() == QEvent.MouseMove:
+                    self.setCursor(Qt.ArrowCursor)
+                return super().eventFilter(obj, e)
         if e.type() == QEvent.MouseButtonPress:
             if e.button() == Qt.LeftButton:
                 edge = self._get_edge(e.globalPos())
@@ -169,6 +185,9 @@ class NoteDialog(QDialog):
             self._drag_edge = None
             self._drag_start_pos = None
             self._drag_start_geo = None
+        return super().eventFilter(obj, e)
+
+    def event(self, e):
         return super().event(e)
 
     def _get_edge(self, pos):
@@ -253,9 +272,7 @@ class NoteDialog(QDialog):
         else:
             self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
             self.is_pinned = True
-        # 不要使用 show()，直接重新设置窗口标志后调用 show() 似乎必须，但可能会激活窗口，使用 setVisible 代替
-        self.setVisible(True)
-        # 同时可能需要重新设置窗口标志生效，调用 show 是必要的，但会导致激活。暂时保留 show，观察效果
+        self.show()
 
     def _save_geometry(self):
         settings = QSettings("LianxinAI", "NoteDialog")
