@@ -308,7 +308,7 @@ class GalgameDialog(QWidget):
         path = QPainterPath()
         r = self.rect().adjusted(6, 6, -6, -6)
         path.addRoundedRect(float(r.x()), float(r.y()), float(r.width()), float(r.height()), 12, 12)
-        painter.fillPath(path, QColor(255, 255, 255, 230))
+        painter.fillPath(path, QColor(230, 230, 235, 225))
 
         painter.setPen(QColor(0, 0, 0, 30))
         for i in range(3):
