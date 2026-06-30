@@ -236,24 +236,26 @@ class BrowserController:
             _instance = None
 
     # ── 内部方法 ──────────────────────────────────────────────
-
     def _ensure_page(self):
-        """确保浏览器和页面已启动（自动检测线程切换并重建）。"""
+        """确保页面可用，必要时重建浏览器。"""
         cfg = get_browser_config()
         self._headless = cfg.get("headless", True)
         self._timeout = cfg.get("timeout", 30_000)
 
         current_thread = threading.get_ident()
         if self._owner_thread is not None and self._owner_thread != current_thread:
-            # 线程已切换（上一轮 AgentWorker 的 QThread 已退出）
-            # 必须重建浏览器，Playwright 不允许跨线程访问
             logger.info("检测到线程切换，重建浏览器实例")
             self.close()
             self._owner_thread = None
 
-        if self._page is None or self._page.is_closed():
-            self._launch()
-            self._owner_thread = current_thread
+        # 检查页面是否可用，如果浏览器被用户手动关闭了也重建
+        try:
+            if self._page is not None and not self._page.is_closed():
+                return self._page
+        except Exception:
+            pass
+        self._launch()
+        self._owner_thread = current_thread
         return self._page
 
     def _launch(self):
@@ -270,6 +272,8 @@ class BrowserController:
             "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--disable-features=UseDnsHttpsSvcb",
+                "--disable-features=msEdgeNoSandbox",
+                "--no-first-run",
             ],
             "viewport": {"width": 1280, "height": 720},
             "locale": "zh-CN",
@@ -278,17 +282,6 @@ class BrowserController:
         channel = get_browser_config().get("channel", "")
         if channel:
             launch_kwargs["channel"] = channel
-
-        # 从代理配置读取 Playwright 代理设置
-        try:
-            from brain.tools import _get_proxies
-            proxies = _get_proxies()
-            if proxies:
-                proxy_url = proxies.get("https") or proxies.get("http")
-                if proxy_url:
-                    launch_kwargs["proxy"] = {"server": proxy_url}
-        except Exception:
-            pass
 
         self._context = self._playwright.chromium.launch_persistent_context(**launch_kwargs)
         if self._context.pages:
