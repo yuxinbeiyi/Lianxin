@@ -1909,7 +1909,9 @@ class MainWindow(QMainWindow):
                     self._launch_slack_message(action)
             return
 
-        if self._proactive_worker and self._proactive_worker.isRunning():
+        if self._proactive_worker is None:
+            return
+        if self._proactive_worker.isRunning():
             return
 
         self._proactive_worker.generate()
