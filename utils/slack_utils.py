@@ -116,21 +116,21 @@ def _read_file_snippet(path: str, ext: str, max_chars: int = 500) -> str:
 
 
 # ── 浏览器历史记录 ──────────────────────────────────────────
-
 def get_browser_history_snippet(max_entries: int = 10) -> Optional[str]:
     """从浏览器历史记录中获取最近访问的网址"""
     history_paths = _find_browser_history_paths()
     if not history_paths:
         return None
 
+    print(f"[浏览器] 检测到 {len(history_paths)} 个浏览器路径: {list(history_paths.keys())}")
     entries = []
     for browser, path in history_paths.items():
         if not os.path.exists(path):
+            print(f"[浏览器] {browser}: 历史文件不存在 ({path})")
             continue
         try:
             import sqlite3
             import tempfile
-            # 复制数据库以避免锁定问题
             tmp = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
             tmp.close()
             shutil.copy2(path, tmp.name)
@@ -144,14 +144,21 @@ def get_browser_history_snippet(max_entries: int = 10) -> Optional[str]:
             rows = cursor.fetchall()
             conn.close()
             os.unlink(tmp.name)
-            for url, title, ts in rows:
-                entries.append(f"[{browser}] {title or '无标题'} - {url}")
-        except Exception:
+            if rows:
+                print(f"[浏览器] {browser}: 读取到 {len(rows)} 条记录")
+                for url, title, ts in rows:
+                    entries.append(f"[{browser}] {title or '无标题'} - {url}")
+            else:
+                print(f"[浏览器] {browser}: 历史文件存在但无数据")
+        except Exception as e:
+            print(f"[浏览器] {browser}: 读取失败 - {e}")
             continue
 
     if not entries:
+        print("[浏览器] 未能获取任何浏览器历史记录")
         return None
-    return "\n".join(entries[:max_entries])
+    print(f"[浏览器] 共获取 {len(entries)} 条历史记录")
+    return "\n".join(entries)
 
 
 def _find_browser_history_paths() -> dict:
@@ -159,12 +166,17 @@ def _find_browser_history_paths() -> dict:
     paths = {}
     home = os.path.expanduser("~")
     if platform.system() == "Windows":
-        paths["Chrome"] = os.path.join(
-            home, "AppData", "Local", "Google", "Chrome", "User Data", "Default", "History"
-        )
-        paths["Edge"] = os.path.join(
-            home, "AppData", "Local", "Microsoft", "Edge", "User Data", "Default", "History"
-        )
+        chrome_base = os.path.join(home, "AppData", "Local", "Google", "Chrome", "User Data")
+        edge_base = os.path.join(home, "AppData", "Local", "Microsoft", "Edge", "User Data")
+        paths["Chrome"] = os.path.join(chrome_base, "Default", "History")
+        # Edge 支持多个配置文件
+        paths["Edge"] = os.path.join(edge_base, "Default", "History")
+        # 额外检查 Edge 的其他配置文件
+        if os.path.isdir(edge_base):
+            for i in range(1, 5):
+                prof_path = os.path.join(edge_base, f"Profile {i}", "History")
+                if os.path.exists(prof_path):
+                    paths[f"Edge-Profile{i}"] = prof_path
     return paths
 
 
