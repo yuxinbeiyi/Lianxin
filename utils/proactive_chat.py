@@ -84,6 +84,22 @@ class ProactiveChatScheduler:
             "bilibili_max_results": 5,
             "bilibili_sort": "totalrank",
             "bilibili_tag_cooldown_hours": 48,
+            # 摸鱼设置
+            "slack_enabled": False,
+            "slack_idle_minutes": 30,
+            "slack_supplement_diary": True,
+            "slack_review_old_diary": True,
+            "slack_search_old_topic": True,
+            "slack_remind_todo": True,
+            "slack_random_question": True,
+            "slack_weather_chitchat": True,
+            "slack_browse_photos": True,
+            "slack_read_local_files": True,
+            "slack_browser_history": True,
+            "slack_check_cpu_disk": True,
+            "slack_check_recycle_bin": True,
+            "_slack_last_diary_supplement_count": 0,
+            "_slack_last_diary_supplement_date": "",
         }
 
     def reload_settings(self):
@@ -254,6 +270,154 @@ class ProactiveChatScheduler:
             return False
         return random.randint(1, 100) <= self.bilibili_probability
 
+    # ── 摸鱼设置 ────────────────────────────────────────────
+
+    @property
+    def slack_enabled(self) -> bool:
+        return self._settings.get("slack_enabled", False)
+
+    @slack_enabled.setter
+    def slack_enabled(self, val: bool):
+        self._settings["slack_enabled"] = val
+
+    @property
+    def slack_idle_minutes(self) -> int:
+        return self._settings.get("slack_idle_minutes", 30)
+
+    @slack_idle_minutes.setter
+    def slack_idle_minutes(self, val: int):
+        self._settings["slack_idle_minutes"] = max(5, min(120, val))
+
+    @property
+    def slack_supplement_diary(self) -> bool:
+        return self._settings.get("slack_supplement_diary", True)
+
+    @slack_supplement_diary.setter
+    def slack_supplement_diary(self, val: bool):
+        self._settings["slack_supplement_diary"] = val
+
+    @property
+    def slack_review_old_diary(self) -> bool:
+        return self._settings.get("slack_review_old_diary", True)
+
+    @slack_review_old_diary.setter
+    def slack_review_old_diary(self, val: bool):
+        self._settings["slack_review_old_diary"] = val
+
+    @property
+    def slack_search_old_topic(self) -> bool:
+        return self._settings.get("slack_search_old_topic", True)
+
+    @slack_search_old_topic.setter
+    def slack_search_old_topic(self, val: bool):
+        self._settings["slack_search_old_topic"] = val
+
+    @property
+    def slack_remind_todo(self) -> bool:
+        return self._settings.get("slack_remind_todo", True)
+
+    @slack_remind_todo.setter
+    def slack_remind_todo(self, val: bool):
+        self._settings["slack_remind_todo"] = val
+
+    @property
+    def slack_random_question(self) -> bool:
+        return self._settings.get("slack_random_question", True)
+
+    @slack_random_question.setter
+    def slack_random_question(self, val: bool):
+        self._settings["slack_random_question"] = val
+
+    @property
+    def slack_weather_chitchat(self) -> bool:
+        return self._settings.get("slack_weather_chitchat", True)
+
+    @slack_weather_chitchat.setter
+    def slack_weather_chitchat(self, val: bool):
+        self._settings["slack_weather_chitchat"] = val
+
+    @property
+    def slack_browse_photos(self) -> bool:
+        return self._settings.get("slack_browse_photos", True)
+
+    @slack_browse_photos.setter
+    def slack_browse_photos(self, val: bool):
+        self._settings["slack_browse_photos"] = val
+
+    @property
+    def slack_read_local_files(self) -> bool:
+        return self._settings.get("slack_read_local_files", True)
+
+    @slack_read_local_files.setter
+    def slack_read_local_files(self, val: bool):
+        self._settings["slack_read_local_files"] = val
+
+    @property
+    def slack_browser_history(self) -> bool:
+        return self._settings.get("slack_browser_history", True)
+
+    @slack_browser_history.setter
+    def slack_browser_history(self, val: bool):
+        self._settings["slack_browser_history"] = val
+
+    @property
+    def slack_check_cpu_disk(self) -> bool:
+        return self._settings.get("slack_check_cpu_disk", True)
+
+    @slack_check_cpu_disk.setter
+    def slack_check_cpu_disk(self, val: bool):
+        self._settings["slack_check_cpu_disk"] = val
+
+    @property
+    def slack_check_recycle_bin(self) -> bool:
+        return self._settings.get("slack_check_recycle_bin", True)
+
+    @slack_check_recycle_bin.setter
+    def slack_check_recycle_bin(self, val: bool):
+        self._settings["slack_check_recycle_bin"] = val
+
+    def get_enabled_slack_actions(self) -> list[str]:
+        """返回当前启用的摸鱼动作列表"""
+        actions = []
+        if self.slack_supplement_diary:
+            actions.append("supplement_diary")
+        if self.slack_review_old_diary:
+            actions.append("review_old_diary")
+        if self.slack_search_old_topic:
+            actions.append("search_old_topic")
+        if self.slack_remind_todo:
+            actions.append("remind_todo")
+        if self.slack_random_question:
+            actions.append("random_question")
+        if self.slack_weather_chitchat:
+            actions.append("weather_chitchat")
+        if self.slack_browse_photos:
+            actions.append("browse_photos")
+        if self.slack_read_local_files:
+            actions.append("read_local_files")
+        if self.slack_browser_history:
+            actions.append("browser_history")
+        if self.slack_check_cpu_disk:
+            actions.append("check_cpu_disk")
+        if self.slack_check_recycle_bin:
+            actions.append("check_recycle_bin")
+        return actions
+
+    def can_supplement_diary_today(self) -> bool:
+        """今天是否还能补充日记（最多2次）"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        last_date = self._settings.get("_slack_last_diary_supplement_date", "")
+        if last_date != today:
+            self._settings["_slack_last_diary_supplement_count"] = 0
+            self._settings["_slack_last_diary_supplement_date"] = today
+        return self._settings.get("_slack_last_diary_supplement_count", 0) < 2
+
+    def record_diary_supplement(self):
+        """记录一次日记补充"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        self._settings["_slack_last_diary_supplement_date"] = today
+        self._settings["_slack_last_diary_supplement_count"] = self._settings.get("_slack_last_diary_supplement_count", 0) + 1
+
     # ── 观察运行时状态 ────────────────────────────────────────────
 
     def get_last_observation(self) -> str:
@@ -325,6 +489,23 @@ class ProactiveChatScheduler:
         prob = (weight / 10.0) * (self.frequency / 30.0) * _BASE_RATE * 1.5
         prob = min(prob, 0.3)
         return random.random() < prob
+
+    def should_slack(self) -> str:
+        """
+        判断是否应该触发摸鱼。
+        返回摸鱼动作名称，空字符串表示不触发。
+        """
+        if not self.slack_enabled:
+            return ""
+        actions = self.get_enabled_slack_actions()
+        if not actions:
+            return ""
+        # 补充日记有每日上限
+        if "supplement_diary" in actions and not self.can_supplement_diary_today():
+            actions.remove("supplement_diary")
+        if not actions:
+            return ""
+        return random.choice(actions)
 
     def debug_fire(self) -> bool:
         """

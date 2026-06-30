@@ -167,7 +167,6 @@ def generate_diary_content(messages: List[Dict]) -> Optional[Dict]:
         print(f"[日记] 生成失败: {e}")
         return None
 
-
 def _build_diary_prompt(messages: List[Dict]) -> str:
     """构建日记生成 prompt。"""
     lines = []
@@ -202,7 +201,6 @@ def _build_diary_prompt(messages: List[Dict]) -> str:
 今天的对话记录：
 {conversation}
 """
-
 
 def _parse_diary_json(response_text: str) -> Optional[Dict]:
     """解析 AI 返回的 JSON，失败返回 None。"""

@@ -37,6 +37,7 @@ from workers.speaker_worker    import SpeakerWorker
 from workers.proactive_worker  import ProactiveWorker
 from workers.heartbeat_worker import HeartbeatWorker
 from workers.standby_worker    import StandbyWorker   # 不再需要 contains_end_phrase, strip_end_phrase
+from workers.slack_worker      import SlackWorker
 from utils.accompany_stats  import AccompanyStats
 
 from utils.proactive_chat import ProactiveChatScheduler
@@ -57,6 +58,13 @@ from PyQt5.QtCore import QThread, pyqtSignal
 from utils.diary import init_diary_db, DiaryWorker, get_all_diaries
 from gui.diary_dialog import DiaryDialog
 from config import get_diary_config
+
+
+def _get_user_name_from_settings() -> str:
+    try:
+        return get_settings().user_name
+    except Exception:
+        return "主人"
 from datetime import datetime
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime
 import pygame
@@ -143,6 +151,10 @@ class MainWindow(QMainWindow):
         # ── 主动聊天调度器 ────────────────────────────────────
         self._proactive_scheduler = ProactiveChatScheduler()
         self._last_proactive_was_observation = False
+
+        # ── 摸鱼模块 ────────────────────────────────────────
+        self._slack_worker: SlackWorker | None = None
+        self._last_user_activity_time = datetime.now()
 
         # ── 番茄钟模块 ────────────────────────────────────────
         self._pomodoro_dialog: PomodoroDialog | None = None
@@ -246,6 +258,11 @@ class MainWindow(QMainWindow):
         self._proactive_timer = QTimer(self)
         self._proactive_timer.timeout.connect(self._on_proactive_tick)
         self._proactive_timer.start(5 * 60 * 1000)   # 5 分钟
+
+        # ── 摸鱼空闲检测定时器（每 1 分钟检查一次）────────────
+        self._slack_timer = QTimer(self)
+        self._slack_timer.timeout.connect(self._on_slack_tick)
+        self._slack_timer.start(60 * 1000)   # 1 分钟
 
         # ── 心跳自检定时器（对话结束后 N 分钟触发，回顾遗漏事项）──
         self._heartbeat_check_timer = QTimer(self)
@@ -945,6 +962,7 @@ class MainWindow(QMainWindow):
                 self._segment_sender = None
 
         self._proactive_scheduler.notify_user_active()
+        self._last_user_activity_time = datetime.now()
 
         image_bubbles = []
         for img_path in images:
@@ -1622,6 +1640,7 @@ class MainWindow(QMainWindow):
             self._pomodoro_dialog.finished.connect(self._on_pomodoro_finished)
         self._pomodoro_active = True
         self._proactive_timer.stop()
+        self._slack_timer.stop()
         self._pomodoro_dialog.show()
         self._pomodoro_dialog.raise_()
         self._pomodoro_dialog.activateWindow()
@@ -1630,6 +1649,7 @@ class MainWindow(QMainWindow):
         self._pomodoro_active = False
         if self._proactive_scheduler.desktop_enabled or self._proactive_scheduler.qq_enabled:
             self._proactive_timer.start(5 * 60 * 1000)
+        self._slack_timer.start(60 * 1000)
 
     def _on_pomodoro_message(self, text: str):
         self._agent.get_history_manager().save_message(
@@ -2056,6 +2076,183 @@ class MainWindow(QMainWindow):
             self._observation_tip = None
         self._chat_widget.add_system_tip(f"主动消息生成失败：{err}")
 
+    # ── 摸鱼模块 ─────────────────────────────────────────────
+
+    def _on_slack_tick(self):
+        """摸鱼空闲检测：每分钟检查一次，用户空闲超时后随机触发一个摸鱼动作"""
+        if self._pomodoro_active:
+            return
+        if self._slack_worker and self._slack_worker.isRunning():
+            return
+        if self._proactive_worker and self._proactive_worker.isRunning():
+            return
+
+        action = self._proactive_scheduler.should_slack()
+        if not action:
+            return
+
+        idle_minutes = (datetime.now() - self._last_user_activity_time).total_seconds() / 60
+        if idle_minutes < self._proactive_scheduler.slack_idle_minutes:
+            return
+
+        self._launch_slack_message(action)
+
+    def _launch_slack_message(self, action: str):
+        """启动摸鱼消息生成"""
+        context = self._build_slack_context(action)
+        self._slack_worker = SlackWorker(action, context, parent=self)
+        self._slack_worker.response_ready.connect(self._on_slack_response)
+        self._slack_worker.error_occurred.connect(self._on_slack_error)
+        self._slack_worker.start()
+
+    def _build_slack_context(self, action: str) -> str:
+        """为摸鱼动作构建上下文"""
+        from utils.diary import get_all_diaries, get_diary_by_date
+        
+        parts = []
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        if action == "supplement_diary":
+            diary = get_diary_by_date(today)
+            if diary:
+                parts.append(f"【今天的日记】\n{diary['content'][:500]}")
+
+        elif action == "review_old_diary":
+            diaries = get_all_diaries()
+            if diaries:
+                import random
+                old = random.choice(diaries)
+                parts.append(f"【旧日记 - {old['date']}】\n{old['content'][:500]}")
+
+        elif action in ("search_old_topic", "random_question"):
+            sessions = self._agent.get_history_manager().get_sessions()
+            if sessions:
+                msgs = self._agent.get_history_manager().get_messages(sessions[0]["id"])
+                recent = msgs[-30:] if len(msgs) > 30 else msgs
+                user_name = _get_user_name_from_settings()
+                lines = [f"{user_name if m['role'] == 'user' else '莲心'}：{m['content'][:200]}" for m in recent]
+                parts.append("【最近的对话】\n" + "\n".join(lines))
+
+        elif action == "remind_todo":
+            todos = self._todo_manager.get_todos(completed=False)
+            if todos:
+                todo_lines = [f"- {t.title}" for t in todos[:5]]
+                parts.append("【未完成的待办】\n" + "\n".join(todo_lines))
+
+        elif action == "weather_chitchat":
+            try:
+                from config import get_qweather_config
+                from brain.weather import get_user_city_from_memory, get_full_weather
+                qw_cfg = get_qweather_config()
+                api_key = qw_cfg.get("api_key", "").strip()
+                if api_key:
+                    city = get_user_city_from_memory()
+                    if city:
+                        weather_text = get_full_weather(city, api_key=api_key)
+                        if weather_text and "错误" not in weather_text:
+                            parts.append(f"【当前天气】\n{weather_text}")
+            except Exception:
+                pass
+
+        elif action == "browse_photos":
+            try:
+                from utils.slack_utils import get_random_photo_path, get_photo_info
+                path = get_random_photo_path()
+                if path:
+                    info = get_photo_info(path)
+                    parts.append(
+                        f"【相册里翻到的照片】\n"
+                        f"文件名：{info['name']}\n"
+                        f"所在文件夹：{info['folder']}\n"
+                        f"大小：{info['size_kb']} KB\n"
+                        f"最后修改：{info['modified']}"
+                    )
+            except Exception:
+                pass
+
+        elif action == "read_local_files":
+            try:
+                from utils.slack_utils import get_random_document
+                doc = get_random_document()
+                if doc:
+                    parts.append(
+                        f"【翻到的文件】\n"
+                        f"文件名：{doc['name']}\n"
+                        f"所在文件夹：{doc['folder']}\n"
+                        f"大小：{doc['size_kb']} KB\n"
+                        f"\n内容摘要：\n{doc['snippet']}"
+                    )
+            except Exception:
+                pass
+
+        elif action == "browser_history":
+            try:
+                from utils.slack_utils import get_browser_history_snippet
+                history = get_browser_history_snippet()
+                if history:
+                    parts.append(f"【浏览器最近访问记录】\n{history}")
+            except Exception:
+                pass
+
+        elif action == "check_cpu_disk":
+            try:
+                from utils.slack_utils import get_system_status
+                status = get_system_status()
+                lines = []
+                if status.get("cpu_percent") is not None:
+                    lines.append(f"CPU：{status['cpu_percent']}%")
+                if status.get("memory_percent") is not None:
+                    lines.append(f"内存：{status['memory_percent']}%")
+                if status.get("top_processes"):
+                    lines.append("高占用进程：" + ", ".join(status["top_processes"]))
+                if status.get("disk_info"):
+                    lines.append(f"磁盘：{status['disk_info']}")
+                if lines:
+                    parts.append("【电脑系统状态】\n" + "\n".join(lines))
+            except Exception:
+                pass
+
+        elif action == "check_recycle_bin":
+            try:
+                from utils.slack_utils import get_recycle_bin_info
+                info = get_recycle_bin_info()
+                if info:
+                    parts.append(f"【回收站信息】\n{info}")
+            except Exception:
+                pass
+
+        if not parts:
+            parts.append("（暂无特定上下文，请根据莲心的性格自由发挥）")
+
+        return "\n\n".join(parts)
+
+    def _on_slack_response(self, text: str):
+        """摸鱼消息回复"""
+        if not text:
+            return
+        import re
+        text = re.sub(r"[【［\[]表情[：:]\s*[^】\]］\]]*[】\]］\]]?", "", text).strip()
+        text = re.sub(r'\n\s*\n', '\n', text).strip()
+
+        self._agent.get_history_manager().save_message(
+            self._agent._session_id, "assistant", f"[摸鱼] {text}"
+        )
+        self._chat_widget.add_ai_message(text)
+
+        if self.isMinimized():
+            self.flash_taskbar(flash_count=0)
+
+        self._speak(text)
+
+        # 记录日记补充次数
+        if hasattr(self, '_slack_worker') and self._slack_worker:
+            action = self._slack_worker._action
+            if action == "supplement_diary":
+                self._proactive_scheduler.record_diary_supplement()
+
+    def _on_slack_error(self, err: str):
+        print(f"[摸鱼] 生成失败: {err}")
+
     # ── 心跳自检 ─────────────────────────────────────────────
 
     def _reset_heartbeat_timer(self):
@@ -2387,6 +2584,7 @@ class MainWindow(QMainWindow):
             play_sound("ButtonAll.mp3")
         
         self._proactive_scheduler.notify_user_active()
+        self._last_user_activity_time = datetime.now()
         self._reset_heartbeat_timer()
         self._set_thinking_state()
         
