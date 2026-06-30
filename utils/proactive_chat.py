@@ -86,18 +86,22 @@ class ProactiveChatScheduler:
             "bilibili_tag_cooldown_hours": 48,
             # 摸鱼设置
             "slack_enabled": False,
-            "slack_idle_minutes": 30,
+
             "slack_supplement_diary": True,
             "slack_review_old_diary": True,
             "slack_search_old_topic": True,
             "slack_remind_todo": True,
             "slack_random_question": True,
             "slack_weather_chitchat": True,
-            "slack_browse_photos": True,
+        
             "slack_read_local_files": True,
             "slack_browser_history": True,
             "slack_check_cpu_disk": True,
             "slack_check_recycle_bin": True,
+            "slack_remind_rest": True,
+            "slack_remind_water": True,
+            "slack_anniversary_remind": True,
+            "slack_next_song": True,
             "_slack_last_diary_supplement_count": 0,
             "_slack_last_diary_supplement_date": "",
         }
@@ -281,14 +285,6 @@ class ProactiveChatScheduler:
         self._settings["slack_enabled"] = val
 
     @property
-    def slack_idle_minutes(self) -> int:
-        return self._settings.get("slack_idle_minutes", 30)
-
-    @slack_idle_minutes.setter
-    def slack_idle_minutes(self, val: int):
-        self._settings["slack_idle_minutes"] = max(5, min(120, val))
-
-    @property
     def slack_supplement_diary(self) -> bool:
         return self._settings.get("slack_supplement_diary", True)
 
@@ -337,14 +333,6 @@ class ProactiveChatScheduler:
         self._settings["slack_weather_chitchat"] = val
 
     @property
-    def slack_browse_photos(self) -> bool:
-        return self._settings.get("slack_browse_photos", True)
-
-    @slack_browse_photos.setter
-    def slack_browse_photos(self, val: bool):
-        self._settings["slack_browse_photos"] = val
-
-    @property
     def slack_read_local_files(self) -> bool:
         return self._settings.get("slack_read_local_files", True)
 
@@ -376,6 +364,38 @@ class ProactiveChatScheduler:
     def slack_check_recycle_bin(self, val: bool):
         self._settings["slack_check_recycle_bin"] = val
 
+    @property
+    def slack_remind_rest(self) -> bool:
+        return self._settings.get("slack_remind_rest", True)
+
+    @slack_remind_rest.setter
+    def slack_remind_rest(self, val: bool):
+        self._settings["slack_remind_rest"] = val
+
+    @property
+    def slack_remind_water(self) -> bool:
+        return self._settings.get("slack_remind_water", True)
+
+    @slack_remind_water.setter
+    def slack_remind_water(self, val: bool):
+        self._settings["slack_remind_water"] = val
+
+    @property
+    def slack_anniversary_remind(self) -> bool:
+        return self._settings.get("slack_anniversary_remind", True)
+
+    @slack_anniversary_remind.setter
+    def slack_anniversary_remind(self, val: bool):
+        self._settings["slack_anniversary_remind"] = val
+
+    @property
+    def slack_next_song(self) -> bool:
+        return self._settings.get("slack_next_song", True)
+
+    @slack_next_song.setter
+    def slack_next_song(self, val: bool):
+        self._settings["slack_next_song"] = val
+
     def get_enabled_slack_actions(self) -> list[str]:
         """返回当前启用的摸鱼动作列表"""
         actions = []
@@ -391,8 +411,6 @@ class ProactiveChatScheduler:
             actions.append("random_question")
         if self.slack_weather_chitchat:
             actions.append("weather_chitchat")
-        if self.slack_browse_photos:
-            actions.append("browse_photos")
         if self.slack_read_local_files:
             actions.append("read_local_files")
         if self.slack_browser_history:
@@ -401,6 +419,14 @@ class ProactiveChatScheduler:
             actions.append("check_cpu_disk")
         if self.slack_check_recycle_bin:
             actions.append("check_recycle_bin")
+        if self.slack_remind_rest:
+            actions.append("remind_rest")
+        if self.slack_remind_water:
+            actions.append("remind_water")
+        if self.slack_anniversary_remind:
+            actions.append("anniversary_remind")
+        if self.slack_next_song:
+            actions.append("next_song")
         return actions
 
     def can_supplement_diary_today(self) -> bool:
@@ -489,7 +515,38 @@ class ProactiveChatScheduler:
         prob = (weight / 10.0) * (self.frequency / 30.0) * _BASE_RATE * 1.5
         prob = min(prob, 0.3)
         return random.random() < prob
+    def should_slack_fire(self) -> bool:
+        """
+        使用与主动聊天相同的 24h 权重 + 概率公式判断是否触发摸鱼。
+        5 分钟轮询时调用。
+        """
+        if not self.slack_enabled:
+            return False
+        actions = self.get_enabled_slack_actions()
+        if not actions:
+            return False
 
+        now = datetime.now()
+        # 因用户活跃而推迟
+        if self._defer_until and now < self._defer_until:
+            return False
+
+        # 最小间隔
+        if self._last_fire_time:
+            elapsed = (now - self._last_fire_time).total_seconds() / 60
+            if elapsed < self.min_interval_minutes:
+                return False
+
+        # 当前小时权重
+        hour = now.hour
+        weight = self.weights[hour] if hour < len(self.weights) else 0
+        if weight <= 0:
+            return False
+
+        # 摸鱼概率 = 主动聊天概率 × 0.9（保持一致）
+        prob = (weight / 10.0) * (self.frequency / 30.0) * _BASE_RATE * 0.9
+        prob = min(prob, 0.2)
+        return random.random() < prob
     def should_slack(self) -> str:
         """
         判断是否应该触发摸鱼。

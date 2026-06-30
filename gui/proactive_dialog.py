@@ -4,7 +4,7 @@ ProactiveDialog：主动聊天 + 调皮观察 设置界面
 """
 
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QSlider, QCheckBox, QGroupBox, QScrollArea,
     QWidget, QSizePolicy, QFrame, QSpinBox,
     QTabWidget, QComboBox, QMessageBox,
@@ -155,7 +155,11 @@ class ProactiveDialog(QDialog):
         chat_layout.setContentsMargins(8, 8, 8, 8)
 
         self._build_chat_tab(chat_layout)
-        tab.addTab(chat_tab, "主动聊天")
+        chat_scroll = QScrollArea()
+        chat_scroll.setWidgetResizable(True)
+        chat_scroll.setWidget(chat_tab)
+        chat_scroll.setStyleSheet("QScrollArea { border: none; }")
+        tab.addTab(chat_scroll, "主动聊天")
 
         # ────── Tab 2: 调皮观察 ──────
         obs_tab = QWidget()
@@ -164,7 +168,11 @@ class ProactiveDialog(QDialog):
         obs_layout.setContentsMargins(8, 8, 8, 8)
 
         self._build_observe_tab(obs_layout)
-        tab.addTab(obs_tab, "调皮观察")
+        obs_scroll = QScrollArea()
+        obs_scroll.setWidgetResizable(True)
+        obs_scroll.setWidget(obs_tab)
+        obs_scroll.setStyleSheet("QScrollArea { border: none; }")
+        tab.addTab(obs_scroll, "调皮观察")
 
         # ────── Tab 3: B站冲浪 ──────
         bl_tab = QWidget()
@@ -173,7 +181,11 @@ class ProactiveDialog(QDialog):
         bl_layout.setContentsMargins(8, 8, 8, 8)
 
         self._build_bilibili_tab(bl_layout)
-        tab.addTab(bl_tab, "B站冲浪")
+        bl_scroll = QScrollArea()
+        bl_scroll.setWidgetResizable(True)
+        bl_scroll.setWidget(bl_tab)
+        bl_scroll.setStyleSheet("QScrollArea { border: none; }")
+        tab.addTab(bl_scroll, "B站冲浪")
 
         # ────── Tab 4: 莲心摸鱼设置 ──────
         slack_tab = QWidget()
@@ -182,7 +194,11 @@ class ProactiveDialog(QDialog):
         slack_layout.setContentsMargins(8, 8, 8, 8)
 
         self._build_slack_tab(slack_layout)
-        tab.addTab(slack_tab, "莲心摸鱼设置")
+        slack_scroll = QScrollArea()
+        slack_scroll.setWidgetResizable(True)
+        slack_scroll.setWidget(slack_tab)
+        slack_scroll.setStyleSheet("QScrollArea { border: none; }")
+        tab.addTab(slack_scroll, "莲心摸鱼设置")
 
         # ── 底部按钮 ──
         btn_row = QHBoxLayout()
@@ -624,48 +640,28 @@ class ProactiveDialog(QDialog):
     # ────────── 莲心摸鱼设置选项卡 ────────────────────────
 
     def _build_slack_tab(self, layout: QVBoxLayout):
-        hint = QLabel(
-            "当用户长时间没有和莲心聊天时，莲心会自己找点事做。\n"
-            "以下功能独立于主动聊天，仅在空闲时触发。"
+        desc = QLabel(
+            "以下功能通过 24h 权重系统与主动聊天统一触发，<br>"
+            "请在左侧「主动聊天」中调节权重和频率。"
         )
-        hint.setFont(QFont("Microsoft YaHei UI", 9))
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        desc.setFont(QFont("Microsoft YaHei UI", 9))
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #5A5A8A; margin-bottom: 4px;")
+        layout.addWidget(desc)
 
-        # 启用开关
-        toggle_row = QHBoxLayout()
-        toggle_lbl = QLabel("启用莲心摸鱼")
-        toggle_lbl.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
-        toggle_lbl.setStyleSheet("color: #3A3A5C;")
-        toggle_row.addWidget(toggle_lbl)
-        toggle_row.addStretch()
-        self._slack_enable_cb = QCheckBox()
-        self._slack_enable_cb.setFixedSize(20, 20)
-        toggle_row.addWidget(self._slack_enable_cb)
-        layout.addLayout(toggle_row)
+        # 总开关
+        enable_row = QHBoxLayout()
+        self._slack_enable_cb = QCheckBox("启用莲心摸鱼")
+        self._slack_enable_cb.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        self._slack_enable_cb.setToolTip("开关：是否允许莲心在空闲时主动摸鱼")
+        enable_row.addWidget(self._slack_enable_cb)
+        enable_row.addStretch()
+        layout.addLayout(enable_row)
 
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setStyleSheet("color: #E0E0E8;")
         layout.addWidget(line)
-
-        # 空闲时间设置
-        idle_row = QHBoxLayout()
-        idle_lbl = QLabel("空闲多久后触发（分钟）")
-        idle_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-        idle_row.addWidget(idle_lbl)
-        idle_row.addStretch()
-        self._slack_idle_spin = QSpinBox()
-        self._slack_idle_spin.setRange(5, 120)
-        self._slack_idle_spin.setSuffix(" 分钟")
-        self._slack_idle_spin.setFixedWidth(100)
-        idle_row.addWidget(self._slack_idle_spin)
-        layout.addLayout(idle_row)
-
-        line2 = QFrame()
-        line2.setFrameShape(QFrame.HLine)
-        line2.setStyleSheet("color: #E0E0E8;")
-        layout.addWidget(line2)
 
         # 功能勾选区域
         func_group = QGroupBox("基于现有功能延伸")
@@ -728,7 +724,6 @@ class ProactiveDialog(QDialog):
         explore_inner = QVBoxLayout(explore_group)
 
         explore_items = [
-            ("slack_browse_photos", "🖼️ 翻相册", "随机翻一张你电脑里的图片，和你聊聊"),
             ("slack_read_local_files", "📄 读本地文件", "随机打开一个 txt/docx/pdf 文件，看看内容"),
             ("slack_browser_history", "🌐 浏览器历史记录", "看看你最近浏览了什么网站"),
             ("slack_check_cpu_disk", "💻 查看CPU/磁盘", '看看系统状态，"咦这个进程在干嘛？"'),
@@ -746,6 +741,101 @@ class ProactiveDialog(QDialog):
             self._slack_cbs[key] = cb
 
         layout.addWidget(explore_group)
+
+        # 第三组：情绪/陪伴类
+        emotion_group = QGroupBox("情绪/陪伴类")
+        emotion_group.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
+        emotion_group.setStyleSheet("""
+            QGroupBox {
+                border: 1px solid #D8D8EE;
+                border-radius: 8px;
+                margin-top: 8px;
+                padding: 8px;
+                color: #E09040;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 4px;
+            }
+        """)
+        emotion_inner = QVBoxLayout(emotion_group)
+        emotion_items = [
+            ("slack_remind_rest", "🧘 提醒休息", "检测到电脑开机很久，温柔提醒起来活动一下"),
+            ("slack_remind_water", "☕ 提醒喝水", "间隔一段时间，温柔提醒你喝水"),
+            ("slack_anniversary_remind", "🎉 纪念日提醒", "联动陪伴系统，记住相识日期等重要日子"),
+        ]
+        for key, title, desc in emotion_items:
+            item_row = QHBoxLayout()
+            cb = QCheckBox(title)
+            cb.setFont(QFont("Microsoft YaHei UI", 9))
+            cb.setToolTip(desc)
+            item_row.addWidget(cb)
+            item_row.addStretch()
+            emotion_inner.addLayout(item_row)
+            self._slack_cbs[key] = cb
+        layout.addWidget(emotion_group)
+
+        # 第四组：音乐互动
+        music_group = QGroupBox("音乐互动")
+        music_group.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
+        music_group.setStyleSheet("""
+            QGroupBox {
+                border: 1px solid #D8D8EE;
+                border-radius: 8px;
+                margin-top: 8px;
+                padding: 8px;
+                color: #40A0C0;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 4px;
+            }
+        """)
+        music_inner = QVBoxLayout(music_group)
+        music_items = [
+            ("slack_next_song", "🎵 切歌放音乐", "莲心自己点下一首，放给你听"),
+        ]
+        for key, title, desc in music_items:
+            item_row = QHBoxLayout()
+            cb = QCheckBox(title)
+            cb.setFont(QFont("Microsoft YaHei UI", 9))
+            cb.setToolTip(desc)
+            item_row.addWidget(cb)
+            item_row.addStretch()
+            music_inner.addLayout(item_row)
+            self._slack_cbs[key] = cb
+        layout.addWidget(music_group)
+
+        # 调试按钮区
+        debug_lbl = QLabel("🧪 调试：手动触发摸鱼动作")
+        debug_lbl.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
+        debug_lbl.setStyleSheet("color: #5A5A8A; margin-top: 4px;")
+        layout.addWidget(debug_lbl)
+        debug_actions = [
+            ("supplement_diary", "📝 补充日记"), ("review_old_diary", "📓 翻旧日记"),
+            ("search_old_topic", "🔍 搜索旧话题"), ("remind_todo", "✅ 提醒Todo"),
+            ("random_question", "💭 随机提问"), ("weather_chitchat", "🌤️ 天气碎碎念"),
+            ("read_local_files", "📄 读本地文件"),
+            ("browser_history", "🌐 浏览器历史"), ("check_cpu_disk", "💻 CPU/磁盘"),
+            ("check_recycle_bin", "🗑️ 回收站"), ("remind_rest", "🧘 提醒休息"),
+            ("remind_water", "☕ 提醒喝水"), ("anniversary_remind", "🎉 纪念日提醒"),
+            ("next_song", "🎵 切歌"),
+        ]
+        debug_row = QHBoxLayout()
+        self._slack_debug_combo = QComboBox()
+        self._slack_debug_combo.setFont(QFont("Microsoft YaHei UI", 9))
+        for action, label in debug_actions:
+            self._slack_debug_combo.addItem(label, action)
+        debug_btn = QPushButton("▶ 触发调试")
+        debug_btn.setFixedHeight(30)
+        debug_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        debug_btn.setCursor(Qt.PointingHandCursor)
+        debug_btn.clicked.connect(self._on_slack_debug_trigger)
+        debug_row.addWidget(self._slack_debug_combo, 1)
+        debug_row.addWidget(debug_btn)
+        layout.addLayout(debug_row)
         layout.addStretch(1)
 
     def _build_bilibili_tab(self, layout: QVBoxLayout):
@@ -1238,18 +1328,21 @@ class ProactiveDialog(QDialog):
 
         # 加载 摸鱼设置
         self._slack_enable_cb.setChecked(self._scheduler.slack_enabled)
-        self._slack_idle_spin.setValue(self._scheduler.slack_idle_minutes)
+    
         self._slack_cbs["slack_supplement_diary"].setChecked(self._scheduler.slack_supplement_diary)
         self._slack_cbs["slack_review_old_diary"].setChecked(self._scheduler.slack_review_old_diary)
         self._slack_cbs["slack_search_old_topic"].setChecked(self._scheduler.slack_search_old_topic)
         self._slack_cbs["slack_remind_todo"].setChecked(self._scheduler.slack_remind_todo)
         self._slack_cbs["slack_random_question"].setChecked(self._scheduler.slack_random_question)
         self._slack_cbs["slack_weather_chitchat"].setChecked(self._scheduler.slack_weather_chitchat)
-        self._slack_cbs["slack_browse_photos"].setChecked(self._scheduler.slack_browse_photos)
         self._slack_cbs["slack_read_local_files"].setChecked(self._scheduler.slack_read_local_files)
         self._slack_cbs["slack_browser_history"].setChecked(self._scheduler.slack_browser_history)
         self._slack_cbs["slack_check_cpu_disk"].setChecked(self._scheduler.slack_check_cpu_disk)
         self._slack_cbs["slack_check_recycle_bin"].setChecked(self._scheduler.slack_check_recycle_bin)
+        self._slack_cbs["slack_remind_rest"].setChecked(self._scheduler.slack_remind_rest)
+        self._slack_cbs["slack_remind_water"].setChecked(self._scheduler.slack_remind_water)
+        self._slack_cbs["slack_anniversary_remind"].setChecked(self._scheduler.slack_anniversary_remind)
+        self._slack_cbs["slack_next_song"].setChecked(self._scheduler.slack_next_song)
 
     def _on_save(self):
         self._scheduler.desktop_enabled = self._enable_cb.isChecked()
@@ -1272,18 +1365,21 @@ class ProactiveDialog(QDialog):
         self._scheduler.bilibili_probability = self._bl_prob_slider.value()
 
         self._scheduler.slack_enabled = self._slack_enable_cb.isChecked()
-        self._scheduler.slack_idle_minutes = self._slack_idle_spin.value()
+
         self._scheduler.slack_supplement_diary = self._slack_cbs["slack_supplement_diary"].isChecked()
         self._scheduler.slack_review_old_diary = self._slack_cbs["slack_review_old_diary"].isChecked()
         self._scheduler.slack_search_old_topic = self._slack_cbs["slack_search_old_topic"].isChecked()
         self._scheduler.slack_remind_todo = self._slack_cbs["slack_remind_todo"].isChecked()
         self._scheduler.slack_random_question = self._slack_cbs["slack_random_question"].isChecked()
         self._scheduler.slack_weather_chitchat = self._slack_cbs["slack_weather_chitchat"].isChecked()
-        self._scheduler.slack_browse_photos = self._slack_cbs["slack_browse_photos"].isChecked()
         self._scheduler.slack_read_local_files = self._slack_cbs["slack_read_local_files"].isChecked()
         self._scheduler.slack_browser_history = self._slack_cbs["slack_browser_history"].isChecked()
         self._scheduler.slack_check_cpu_disk = self._slack_cbs["slack_check_cpu_disk"].isChecked()
         self._scheduler.slack_check_recycle_bin = self._slack_cbs["slack_check_recycle_bin"].isChecked()
+        self._scheduler.slack_remind_rest = self._slack_cbs["slack_remind_rest"].isChecked()
+        self._scheduler.slack_remind_water = self._slack_cbs["slack_remind_water"].isChecked()
+        self._scheduler.slack_anniversary_remind = self._slack_cbs["slack_anniversary_remind"].isChecked()
+        self._scheduler.slack_next_song = self._slack_cbs["slack_next_song"].isChecked()
 
         self._scheduler.save_settings()
         self.accept()
@@ -1303,6 +1399,11 @@ class ProactiveDialog(QDialog):
         from utils.proactive_chat import _DEFAULT_WEIGHTS
         for h, row in enumerate(self._hour_rows):
             row.set_value(_DEFAULT_WEIGHTS[h])
+
+    def _on_slack_debug_trigger(self):
+        action = self._slack_debug_combo.currentData()
+        if action:
+            self.debug_observe_signal.emit(f"slack:{action}")
 
     def _on_debug_trigger(self):
         self.debug_trigger.emit()

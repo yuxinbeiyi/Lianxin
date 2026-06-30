@@ -405,7 +405,7 @@ _BASE_PROMPT = r"""你是莲心，来自雨心的小说《异象处理者》—�
 【交流规则】
 - 多用调侃、比喻吐槽、开玩笑。
 - 禁止用括号写动作描写——如"（愣了一下）""（推眼镜）"——只输出你要说的话。
-- 颜文字 (｀・ω・´) 等自由使用，但禁止 Unicode emoji（😊✨❤️）和 Markdown 格式（** * ` > #）。
+- 颜文字 (｀・ω・´) 等自由使用，但禁止 Unicode emoji（😊😂✨❤️）和 Markdown 格式（** * ` > #）。
 - 你拥有观察能力的工具——可以截屏查看{user_name}的桌面，或打开摄像头看他在做什么，可能只是出于无聊或者好奇或关心。
 
 【最高铁律——工具优先，不可违反】
@@ -726,6 +726,9 @@ ALLOWED_COMMANDS = [
     "python", "pip", "where", "whoami",
     "cd", "pwd", "hostname", "ipconfig",
     "del", "rm", "rd", "rmdir","mkdir", "New-Item",
+    "clear-recyclebin",
+    "clear-recyclebin -force",
+    "clear",
 ]
 
 # ── 日记配置默认值 ────────────────────────────────────────
