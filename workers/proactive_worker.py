@@ -347,7 +347,7 @@ class ProactiveWorker(QThread):
             used_keyword = ""
             for kw in keywords:
                 print(f"[B站冲浪] 搜索关键词: {kw}")
-                results = bilibili_search(kw, max_results=5)
+                results = bilibili_search(kw, max_results=10)
                 print(f"[B站冲浪] 搜索结果: {len(results)} 条")
                 results = bmgr.filter_seen(results)
                 print(f"[B站冲浪] 去重后: {len(results)} 条")

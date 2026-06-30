@@ -4556,7 +4556,7 @@ def bilibili_search(keyword: str, max_results: int = 10) -> list[dict]:
     params = {
         "keyword": keyword,
         "search_type": "video",
-        "order": "totalrank",
+        "order": "click",
         "page": 1,
     }
     headers = {
