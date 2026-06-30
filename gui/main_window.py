@@ -2498,6 +2498,7 @@ class MainWindow(QMainWindow):
         if self._diary_dialog is None:
             self._diary_dialog = DiaryDialog(None, main_window=self)
             self._diary_dialog.diary_changed.connect(self._refresh_diary_display)
+        self._diary_dialog._load_diaries()
         self._diary_dialog.show()
         self._diary_dialog.raise_()
         self._diary_dialog.activateWindow()

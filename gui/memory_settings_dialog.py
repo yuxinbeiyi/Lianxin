@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QSpinBox,QWidget,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QSpinBox, QWidget,
     QPushButton, QScrollArea, QFrame, QLineEdit, QFileDialog, QComboBox,
-    QTabWidget, QMessageBox, QMenu, QTextEdit
+    QTabWidget, QMessageBox, QMenu, QTextEdit, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QSizePolicy, QSizePolicy, QSizePolicy
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from config import get_memory_config, save_memory_config
 from brain.graph_memory import list_all_facts, delete_facts, add_fact, update_facts, ALL_MEMORY_CATEGORIES
-
-
 
 class MemorySettingsDialog(QDialog):
     """记忆系统独立设置对话框"""
@@ -19,8 +17,8 @@ class MemorySettingsDialog(QDialog):
         self._mem_cfg = get_memory_config()
 
         self.setWindowTitle("🧠 记忆系统设置")
-        self.setMinimumSize(620, 480)
-        self.resize(660, 540)
+        self.setMinimumSize(620, 900)
+        self.resize(660, 1200)
         self.setWindowFlags(Qt.Window)
         
         self._build_ui()
@@ -140,7 +138,7 @@ class MemorySettingsDialog(QDialog):
             "关闭后记忆系统仍然可用，但不会自动新增记忆。"
         )
         auto_desc.setWordWrap(True)
-        auto_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
+        auto_desc.setStyleSheet("color: #888; font-size: 15px; padding: 4px 0;")
         auto_vbox.addWidget(auto_desc)
         tab1_layout.addWidget(auto_frame)
 
@@ -157,7 +155,7 @@ class MemorySettingsDialog(QDialog):
         interval_vbox.addWidget(self._memory_extract_interval_spin)
         interval_desc = QLabel("每完成 N 轮对话后触发一次自动提取，间隔越小记忆越及时但也越占用Token。")
         interval_desc.setWordWrap(True)
-        interval_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
+        interval_desc.setStyleSheet("color: #888; font-size: 15px; padding: 4px 0;")
         interval_vbox.addWidget(interval_desc)
         tab1_layout.addWidget(interval_frame)
 
@@ -174,7 +172,7 @@ class MemorySettingsDialog(QDialog):
         count_vbox.addWidget(self._memory_extract_msgs_spin)
         count_desc = QLabel("单次自动提取最多包含多少条最近消息，数值越大包含上下文越多但也越慢。")
         count_desc.setWordWrap(True)
-        count_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
+        count_desc.setStyleSheet("color: #888; font-size: 15px; padding: 4px 0;")
         count_vbox.addWidget(count_desc)
         tab1_layout.addWidget(count_frame)
 
@@ -191,7 +189,7 @@ class MemorySettingsDialog(QDialog):
         max_vbox.addWidget(self._memory_max_items_spin)
         max_desc = QLabel("每个分类最多保留多少条记忆，超出自动淘汰最旧+强度最低的记忆。")
         max_desc.setWordWrap(True)
-        max_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
+        max_desc.setStyleSheet("color: #888; font-size: 15px; padding: 4px 0;")
         max_vbox.addWidget(max_desc)
         tab1_layout.addWidget(max_frame)
 
@@ -216,7 +214,7 @@ class MemorySettingsDialog(QDialog):
         cat_vbox.addWidget(self._memory_default_cat_combo)
         cat_desc = QLabel("当用户要求记住某件事但没有指定分类时，默认存到哪个分类。")
         cat_desc.setWordWrap(True)
-        cat_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
+        cat_desc.setStyleSheet("color: #888; font-size: 15px; padding: 4px 0;")
         cat_vbox.addWidget(cat_desc)
         tab1_layout.addWidget(cat_frame)
 
@@ -241,7 +239,7 @@ class MemorySettingsDialog(QDialog):
             "关闭后只使用分类事实记忆，不影响基本功能。"
         )
         graph_desc.setWordWrap(True)
-        graph_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
+        graph_desc.setStyleSheet("color: #888; font-size: 15px; padding: 4px 0;")
         graph_vbox.addWidget(graph_desc)
         tab2_layout.addWidget(graph_frame)
 
@@ -258,7 +256,7 @@ class MemorySettingsDialog(QDialog):
             "不需要手动调用工具添加关系。"
         )
         auto_quin_desc.setWordWrap(True)
-        auto_quin_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
+        auto_quin_desc.setStyleSheet("color: #888; font-size: 15px; padding: 4px 0;")
         auto_quin_vbox.addWidget(auto_quin_desc)
         tab2_layout.addWidget(auto_quin_frame)
 
@@ -288,7 +286,7 @@ class MemorySettingsDialog(QDialog):
             "推荐：15-25"
         )
         window_desc.setWordWrap(True)
-        window_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
+        window_desc.setStyleSheet("color: #888; font-size: 15px; padding: 4px 0;")
         window_vbox.addWidget(window_desc)
         tab3_layout.addWidget(window_frame)
 
@@ -305,7 +303,7 @@ class MemorySettingsDialog(QDialog):
             "关闭后只保留窗口内对话，早期内容直接截断。"
         )
         summary_desc.setWordWrap(True)
-        summary_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
+        summary_desc.setStyleSheet("color: #888; font-size: 15px; padding: 4px 0;")
         summary_vbox.addWidget(summary_desc)
         tab3_layout.addWidget(summary_frame)
 
@@ -325,7 +323,7 @@ class MemorySettingsDialog(QDialog):
             "0 = 无论多少条都压缩（适合非常短对话），推荐 20-40。"
         )
         trigger_desc.setWordWrap(True)
-        trigger_desc.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
+        trigger_desc.setStyleSheet("color: #888; font-size: 15px; padding: 4px 0;")
         trigger_vbox.addWidget(trigger_desc)
         tab3_layout.addWidget(trigger_frame)
 
@@ -337,7 +335,7 @@ class MemorySettingsDialog(QDialog):
             "· 原全量历史 → 30轮后 Token > 6000，持续增长"
         )
         estimate_label.setWordWrap(True)
-        estimate_label.setStyleSheet("color: #CCC; font-size: 13px; background: #1E1E30; padding: 8px; border-radius: 4px;")
+        estimate_label.setStyleSheet("color: #CCC; font-size: 15px; background: #1E1E30; padding: 8px; border-radius: 4px;")
         tab3_layout.addWidget(estimate_label)
 
         tab3_layout.addStretch()
@@ -449,15 +447,20 @@ class MemorySettingsDialog(QDialog):
 
         # 统计标签
         self._memory_count_label = QLabel("")
-        self._memory_count_label.setStyleSheet("color: #888; font-size: 13px;")
+        self._memory_count_label.setStyleSheet("color: #888; font-size: 15px;")
         tab4_layout.addWidget(self._memory_count_label)
+
+        # 提示标签
+        hint_label = QLabel("💡 右键条目修改记忆")
+        hint_label.setStyleSheet("color: #888; font-size: 13px; padding: 4px 0;")
+        tab4_layout.addWidget(hint_label)
 
         # 可滚动记忆列表
         self._memory_scroll = QScrollArea()
         self._memory_scroll.setWidgetResizable(True)
         self._memory_scroll.setStyleSheet("""
-            QScrollArea { border: 1px solid #E0E0E8; border-radius: 8px; background: #FFFFFF;
-                color: #2C2C2C;
+            QScrollArea { border: 1px solid #3D3D5A; border-radius: 8px; background: #1E1E30;
+                color: #E0E0E0;
                 font-size: 12px;
             }
             QScrollArea::vertical { background: transparent; }
@@ -469,9 +472,8 @@ class MemorySettingsDialog(QDialog):
         self._memory_list_layout.setContentsMargins(10, 10, 10, 10)
         self._memory_list_layout.addStretch()
         self._memory_scroll.setWidget(self._memory_list_widget)
-        tab4_layout.addWidget(self._memory_scroll)
+        tab4_layout.addWidget(self._memory_scroll, 1)
 
-        tab4_layout.addStretch()
         tabs.addTab(tab4, "📋 记忆浏览")
 
         scroll.setWidget(content)
@@ -575,7 +577,7 @@ class MemorySettingsDialog(QDialog):
             }
             cat_header = QLabel(cat_names.get(cat, cat))
             cat_header.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
-            cat_header.setStyleSheet("color: #5A5A8A; padding: 6px 0 2px 0;")
+            cat_header.setStyleSheet("color: #B0B0D0; padding: 6px 0 2px 0;")
             self._memory_list_layout.addWidget(cat_header)
 
             for item in items:
@@ -599,10 +601,10 @@ class MemorySettingsDialog(QDialog):
                 )
                 row.setStyleSheet("""
                     QFrame {
-                        background: #F8F8FC; border-radius: 6px;
-                        border: 1px solid #E8E8F0;
+                        background: #1E1E30; border-radius: 6px;
+                        border: 1px solid #3D3D5A;
                     }
-                    QFrame:hover { background: #EEEEF8; }
+                    QFrame:hover { background: #2D2D3F; }
                 """)
                 row_layout = QHBoxLayout(row)
                 row_layout.setContentsMargins(10, 6, 6, 6)
@@ -611,15 +613,15 @@ class MemorySettingsDialog(QDialog):
                 # 左侧：内容
                 content_label = QLabel(content)
                 content_label.setWordWrap(True)
-                content_label.setStyleSheet("border: 0; background: transparent; font-size: 15px; color: #2C2C2C; font-weight: bold;")
+                content_label.setStyleSheet("border: 0; background: transparent; font-size: 15px; color: #FFFFFF; font-weight: bold;")
                 row_layout.addWidget(content_label, 1)
 
                 # 右侧：元信息
-                meta = f"<span style='color:#555;'>强度:{strength} · {source}</span>"
+                meta = f"<span style='color:#CCCCCC;'>强度:{strength} · {source}</span>"
                 if created:
-                    meta += f"<span style='color:#16A085;'> · {created}</span>"
+                    meta += f"<span style='color:#1ABC9C;'> · {created}</span>"
                 meta_label = QLabel(meta)
-                meta_label.setStyleSheet("border: 0; background: transparent; font-size: 13px; white-space: nowrap;")
+                meta_label.setStyleSheet("border: 0; background: transparent; font-size: 13px; color: #CCCCCC; white-space: nowrap;")
                 row_layout.addWidget(meta_label)
 
                 # 删除按钮
@@ -644,7 +646,7 @@ class MemorySettingsDialog(QDialog):
         if total == 0:
             empty = QLabel("📭 没有匹配的记忆" if keyword or cat_filter else "📭 还没有任何记忆")
             empty.setAlignment(Qt.AlignCenter)
-            empty.setStyleSheet("color: #AAA; font-size: 13px; padding: 30px; border: 0;")
+            empty.setStyleSheet("color: #888; font-size: 13px; padding: 30px; border: 0;")
             self._memory_list_layout.addWidget(empty)
 
         self._memory_list_layout.addStretch()
@@ -666,48 +668,7 @@ class MemorySettingsDialog(QDialog):
         self._all_facts = list_all_facts()
         self._refresh_memory_list()
 
-    def _toggle_add_form(self):
-        """切换新增记忆表单的显示/隐藏。"""
-        self._add_form.setVisible(not self._add_form.isVisible())
-        if self._add_form.isVisible():
-            self._new_content_input.setFocus()
 
-    def _on_add_memory(self):
-        """保存用户手动新增的记忆。"""
-        content = self._new_content_input.toPlainText().strip()
-        if not content:
-            QMessageBox.warning(self, "提示", "记忆内容不能为空。")
-            return
-        category = self._new_cat_combo.currentData()
-        add_fact(content, category, source="user_saved")
-        # 清空表单
-        self._new_content_input.clear()
-        self._add_form.hide()
-        # 重新加载并刷新
-        self._all_facts = list_all_facts()
-        self._refresh_memory_list()
-
-    def _show_context_menu(self, pos, content: str, category: str, row: QFrame):
-        """右键菜单：修改记忆。"""
-        menu = QMenu(self)
-        edit_action = menu.addAction("✏️ 修改这条记忆")
-        action = menu.exec_(row.mapToGlobal(pos))
-        if action == edit_action:
-            self._on_edit_memory(content, category)
-
-    def _on_edit_memory(self, old_content: str, category: str):
-        """弹出编辑对话框，修改记忆内容。"""
-        from PyQt5.QtWidgets import QInputDialog
-        new_content, ok = QInputDialog.getMultiLineText(
-            self, "修改记忆", f"分类：{category}\n请输入新内容：", old_content
-        )
-        if not ok or not new_content or new_content.strip() == old_content:
-            return
-        new_content = new_content.strip()
-        update_facts(old_content, new_content, category)
-        # 重新加载并刷新
-        self._all_facts = list_all_facts()
-        self._refresh_memory_list()
 
     def _toggle_add_form(self):
         """切换新增记忆表单的显示/隐藏。"""
