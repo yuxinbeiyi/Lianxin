@@ -171,7 +171,7 @@ class ChatWidget(QScrollArea):
             return
 
         # 从历史记录中删除
-        msg_text = bubble.text().strip()
+        msg_text = bubble._text.strip()
         if msg_text:
             try:
                 from brain.agent import conversation_manager

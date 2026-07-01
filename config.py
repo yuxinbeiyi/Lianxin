@@ -364,6 +364,59 @@ def save_qq_timing_config(timing: dict):
     _save_full_config(full)
 
 
+# ── 微信防封计时配置 ─────────────────────────────────────
+_WECHAT_TIMING_DEFAULTS = {
+    "think_delay_min": 2.0, "think_delay_max": 5.0,
+    "type_speed_min": 100, "type_speed_max": 200,
+    "min_reply_interval": 10.0,
+    "segment_threshold_min": 50, "segment_threshold_max": 150,
+    "segment_interval_min": 3.0, "segment_interval_max": 8.0,
+    "global_send_interval_min": 5.0, "global_send_interval_max": 15.0,
+    "daily_limit_owner": 50, "daily_limit_other": 10,
+    "per_group_daily_limit": 30, "block_links": True,
+    "cross_session_context_limit": 6,
+}
+
+
+def get_wechat_timing_config() -> dict:
+    full = _load_full_config()
+    timing = full.get("wechat", {}).get("timing", {})
+    result = _WECHAT_TIMING_DEFAULTS.copy()
+    result.update(timing)
+    return result
+
+
+def save_wechat_timing_config(timing: dict):
+    full = _load_full_config()
+    if "wechat" not in full:
+        full["wechat"] = {}
+    full["wechat"]["timing"] = timing
+    _save_full_config(full)
+
+
+# ── 微信桥接配置 ─────────────────────────────────────────
+_WECHAT_BRIDGE_DEFAULTS = {
+    "auto_start": False, "listen_port": 8088,
+    "owner_id": "", "allowed_senders": [], "allowed_rooms": [],
+    "voice_reply_enabled": True,
+}
+
+def get_wechat_bridge_config() -> dict:
+    """读取微信桥接配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    bridge = full.get("wechat", {}).get("bridge", {})
+    result = _WECHAT_BRIDGE_DEFAULTS.copy()
+    result.update(bridge)
+    return result
+
+def save_wechat_bridge_config(cfg: dict):
+    full = _load_full_config()
+    if "wechat" not in full:
+        full["wechat"] = {}
+    full["wechat"]["bridge"] = cfg
+    _save_full_config(full)
+
+
 # ── 和风天气（QWeather）配置 ────────────────────────────
 _QWEATHER_DEFAULTS = {
     "api_key":       "",

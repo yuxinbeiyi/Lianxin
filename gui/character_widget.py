@@ -361,8 +361,10 @@ class CharacterWidget(QWidget):
         grid.addWidget(self._btn_proactive, 5, 1)
         self._btn_qq_bridge = self._create_button("🐧 QQ聊天", color="#2980B9")
         grid.addWidget(self._btn_qq_bridge, 6, 0)
+        self._btn_wechat_bridge = self._create_button("💬 微信聊天", color="#07C160")
+        grid.addWidget(self._btn_wechat_bridge, 6, 1)
         self._btn_diary = self._create_button("📔 日记本", color="#E67E22")
-        grid.addWidget(self._btn_diary, 6, 1)
+        grid.addWidget(self._btn_diary, 7, 0)
         popup_layout.addLayout(grid)
         popup_layout.addStretch()
 
@@ -668,6 +670,8 @@ class CharacterWidget(QWidget):
         return self._btn_proactive
     def get_qq_bridge_button(self):
         return self._btn_qq_bridge
+    def get_wechat_bridge_button(self):
+        return self._btn_wechat_bridge
     def get_diary_button(self):
         return self._btn_diary
 

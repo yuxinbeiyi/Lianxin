@@ -26,10 +26,11 @@ from gui.pomodoro_dialog   import PomodoroDialog
 from gui.api_config_dialog import ApiConfigDialog
 from gui.alarm_dialog      import AlarmDialog
 from gui.qq_settings_dialog import QqSettingsDialog
+from gui.wechat_settings_dialog import WeChatSettingsDialog
 from gui.network_settings_dialog import NetworkSettingsDialog
 from gui.capability_center import CapabilityCenter
 
-from config import has_api_key, get_qq_bridge_config, get_heartbeat_config
+from config import has_api_key, get_qq_bridge_config, get_heartbeat_config, get_wechat_bridge_config
 from brain.decision import decide
 from workers.agent_worker      import AgentWorker
 from workers.voice_worker      import VoiceWorker, ModelLoader
@@ -148,6 +149,9 @@ class MainWindow(QMainWindow):
         self._qq_bridge = None
         self._qq_bridge_auto_start = get_qq_bridge_config().get("auto_start", False)
 
+        # ── 微信桥接 ──────────────────────────────────────────
+        self._wechat_bridge = None
+
         # ── 主动聊天调度器 ────────────────────────────────────
         self._proactive_scheduler = ProactiveChatScheduler()
         self._last_proactive_was_observation = False
@@ -177,6 +181,7 @@ class MainWindow(QMainWindow):
         self._emotion_debug_dialog = None
         self._diary_dialog = None
         self._qq_settings_dialog = None
+        self._wechat_settings_dialog = None
         self._music_list_dialog = None
 
         # ── 非模态对话框（改为 show() 打开，不阻塞主窗口）────
@@ -236,6 +241,7 @@ class MainWindow(QMainWindow):
         self._todo_reminder_timer = QTimer(self)
         self._todo_reminder_timer.timeout.connect(self._check_overdue_todos)
         self._todo_reminder_timer.start(30 * 60 * 1000)  # 30分钟
+        self._reminded_todo_ids = set()  # 今日已提醒过的待办ID，防止重复提醒
         self._check_overdue_todos()  # 启动时立即检查一次
 
         # ── 初始化情感系统（涟漪） ─────────────────────────────
@@ -704,6 +710,7 @@ class MainWindow(QMainWindow):
         self._char_widget.get_capability_button().clicked.connect(self._show_capability_center)
         self._char_widget.get_proactive_button().clicked.connect(self._on_proactive_clicked)
         self._char_widget.get_qq_bridge_button().clicked.connect(self._on_qq_bridge_clicked)
+        self._char_widget.get_wechat_bridge_button().clicked.connect(self._on_wechat_settings_clicked)
         self._char_widget.get_diary_button().clicked.connect(self._open_diary_dialog)
 
         top_layout.addWidget(self._char_widget)
@@ -1823,12 +1830,20 @@ class MainWindow(QMainWindow):
 
 
     def _check_overdue_todos(self):
-        """检查过期待办并主动提醒"""
+        """检查过期待办并主动提醒（同一待办每天只提醒一次）"""
+        # 跨天自动清零
+        today = datetime.now().strftime("%Y-%m-%d")
+        if getattr(self, "_reminded_todo_date", "") != today:
+            self._reminded_todo_ids.clear()
+            self._reminded_todo_date = today
+
         overdue = self._todo_manager.get_overdue_todos()
         if not overdue:
             return
-        # 最多提醒3条
         for todo in overdue[:3]:
+            if todo.id in self._reminded_todo_ids:
+                continue
+            self._reminded_todo_ids.add(todo.id)
             due_str = ""
             if todo.due_time:
                 try:
@@ -3248,6 +3263,43 @@ class MainWindow(QMainWindow):
                 self._qq_bridge.reload_timing_config()
                 self._chat_widget.add_system_tip("✅ QQ 聊天参数已更新（即时生效）")
 
+       # ── 微信桥接 ─────────────────────────────────────────────
+
+    def _on_wechat_settings_clicked(self):
+        """打开微信聊天设置对话框。"""
+        if self._wechat_settings_dialog is None:
+            self._wechat_settings_dialog = WeChatSettingsDialog(self)
+        self._wechat_settings_dialog.show()
+        self._wechat_settings_dialog.raise_()
+        self._wechat_settings_dialog.activateWindow()
+    def _start_wechat_bridge(self):
+        """创建并启动 WeChatBridgeWorker"""
+        from workers.wechat_bridge_worker import WeChatBridgeWorker
+
+        if self._wechat_bridge and self._wechat_bridge.is_running():
+            return
+
+        cfg = get_wechat_bridge_config()
+        self._wechat_bridge = WeChatBridgeWorker(cfg)
+        self._wechat_bridge.log_message.connect(self._chat_widget.add_system_tip)
+        self._wechat_bridge.connection_changed.connect(self._on_wechat_bridge_status)
+        self._wechat_bridge.start_bridge()
+        self._chat_widget.add_system_tip("🔄 微信桥接启动中...")
+
+    def _stop_wechat_bridge(self):
+        """停止微信桥接"""
+        if self._wechat_bridge and self._wechat_bridge.is_running():
+            self._wechat_bridge.stop_bridge()
+        self._wechat_bridge = None
+        self._chat_widget.add_system_tip("微信桥接已断开")
+
+    def _on_wechat_bridge_status(self, connected: bool):
+        if connected:
+            self._chat_widget.add_system_tip("✅ 微信桥接已连接")
+        else:
+            self._chat_widget.add_system_tip("⚠️ 微信桥接已断开")
+    # ── QQ 桥接方法 ──────────────────────────────────────────
+
     def _start_qq_bridge(self):
         """创建并启动 QQBridgeWorker"""
         if self._qq_bridge and self._qq_bridge.isRunning():
@@ -3258,8 +3310,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "QQ聊天", "未配置 QQ 账号，请先在 user_config.json 中设置 qq_account。")
             return
 
-        self._btn_qq_bridge.setText("QQ聊天 ◷")
-        self._btn_qq_bridge.setStyleSheet("""
+        self._char_widget.get_qq_bridge_button().setText("QQ聊天 ◷")
+        self._char_widget.get_qq_bridge_button().setStyleSheet("""
             QPushButton {
                 background-color: #2D2D3F;
                 color: #A0A0B0;
@@ -3311,8 +3363,8 @@ class MainWindow(QMainWindow):
 
     def _on_qq_bridge_connected(self):
         self._chat_widget.add_system_tip("✅ QQ 桥接已连接，可通过 QQ 与莲心聊天")
-        self._btn_qq_bridge.setText("QQ聊天 ●")
-        self._btn_qq_bridge.setStyleSheet("""
+        self._char_widget.get_qq_bridge_button().setText("QQ聊天 ●")
+        self._char_widget.get_qq_bridge_button().setStyleSheet("""
             QPushButton {
                 background-color: #EDFFF2;
                 color: #34C759;
