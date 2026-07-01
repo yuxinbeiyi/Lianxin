@@ -140,7 +140,10 @@ def _get_runtime_python(gs_path: str) -> Optional[str]:
     if os.path.isfile(py):
         return os.path.abspath(py)
     return None
-
+def reset_gpt_sovits_cache():
+    """重置 GPT-SoVITS 可用性缓存（配置路径变更后调用）。"""
+    global _gpt_sovits_state
+    _gpt_sovits_state = None
 
 def _is_gpt_sovits_available() -> bool:
     """检查 GPT-SoVITS 子进程模式是否可用（懒加载，结果缓存）。
@@ -649,6 +652,11 @@ class TtsEngine:
             "mood": detected_mood,
             "sample_steps": cfg.get("sample_steps", 32),
             "speed": speed or cfg.get("speed", 1.0),
+            "temperature": cfg.get("temperature", 0.3),
+            "top_k": cfg.get("top_k", 5),
+            "top_p": cfg.get("top_p", 0.9),
+            "how_to_cut": cfg.get("how_to_cut", "不切"),
+            "pause_second": cfg.get("pause_second", 0.3),
         })
 
 

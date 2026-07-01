@@ -3,14 +3,24 @@ import os
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton,
     QScrollArea, QFrame, QComboBox, QLineEdit, QCheckBox, QDialogButtonBox,
-    QWidget, QFileDialog
+    QWidget, QFileDialog, QTabWidget, QMessageBox
 )
-
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from utils.settings import get_settings
 from config import get_tts_config, save_tts_config
 from .settings_dialog import SettingsDialog
+
+
+# 高级参数默认值
+_ADVANCED_DEFAULTS = {
+    "temperature": 0.3,
+    "top_k": 5,
+    "top_p": 0.9,
+    "sample_steps": 32,
+    "how_to_cut": "不切",
+    "pause_second": 0.3,
+}
 
 
 class SoundSettingsDialog(QDialog):
@@ -22,10 +32,11 @@ class SoundSettingsDialog(QDialog):
         self._tts_cfg = get_tts_config()
 
         self.setWindowTitle("🔊 声音设置")
-        self.setMinimumSize(500, 620)
-        self.resize(520, 660)
+        self.setMinimumSize(520, 640)
+        self.resize(540, 680)
         self.setWindowFlags(Qt.Window)
-    
+
+        self._adv_sliders = {}
         self._build_ui()
         self._load_from_settings()
 
@@ -48,7 +59,6 @@ class SoundSettingsDialog(QDialog):
         # 标题
         title = QLabel("🔊 声音设置")
         title.setFont(QFont("Microsoft YaHei UI", 14, QFont.Bold))
-    
         layout.addWidget(title)
 
         # 分割线
@@ -66,7 +76,37 @@ class SoundSettingsDialog(QDialog):
         silent_vbox.addWidget(self._silent_cb)
         layout.addWidget(silent_frame)
 
-        # 滚动区域
+        # ── 选项卡：基本设置 / 高级参数 ──
+        self._tab_widget = QTabWidget()
+        self._tab_widget.setStyleSheet("""
+            QTabWidget::pane { border: none; background: transparent; }
+            QTabBar::tab { padding: 8px 20px; font-size: 13px; }
+        """)
+        layout.addWidget(self._tab_widget)
+
+        # 选项卡 1：基本设置
+        self._build_basic_tab()
+        # 选项卡 2：高级参数
+        self._build_advanced_tab()
+
+        # 底部按钮
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_cancel = QPushButton("取消")
+        btn_cancel.setFixedSize(80, 32)
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_cancel)
+
+        btn_save = QPushButton("保存")
+        btn_save.setFixedSize(80, 32)
+        btn_save.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
+        btn_save.clicked.connect(self._on_save)
+        btn_row.addWidget(btn_save)
+
+        layout.addLayout(btn_row)
+
+    def _build_basic_tab(self):
+        """构建「基本设置」选项卡。"""
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.NoFrame)
@@ -76,7 +116,7 @@ class SoundSettingsDialog(QDialog):
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setSpacing(14)
-        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setContentsMargins(0, 4, 0, 0)
 
         # TTS 音量
         tts_frame = self._create_frame()
@@ -125,7 +165,7 @@ class SoundSettingsDialog(QDialog):
             "Edge-TTS 无需安装，配置后即可使用。"
         )
         engine_desc.setWordWrap(True)
-        engine_desc.setStyleSheet("font-size: 11px; padding: 4px 0;")
+        engine_desc.setStyleSheet("font-size: 12px; padding: 4px 0;")
         engine_vbox.addWidget(engine_desc)
         scroll_layout.addWidget(engine_frame)
 
@@ -148,7 +188,7 @@ class SoundSettingsDialog(QDialog):
         gs_vbox.addLayout(gs_row)
 
         self._tts_gs_status = QLabel()
-        self._tts_gs_status.setStyleSheet("font-size: 11px; padding: 2px 0;")
+        self._tts_gs_status.setStyleSheet("font-size: 12px; padding: 2px 0;")
         gs_vbox.addWidget(self._tts_gs_status)
         scroll_layout.addWidget(gs_frame)
 
@@ -183,7 +223,7 @@ class SoundSettingsDialog(QDialog):
             "将 WAV 文件放入 skills/语音合成/ref_wavs/ 目录后点击刷新。"
         )
         ref_desc.setWordWrap(True)
-        ref_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        ref_desc.setStyleSheet("color: #888; font-size: 12px; padding: 4px 0;")
         ref_vbox.addWidget(ref_desc)
         scroll_layout.addWidget(ref_frame)
 
@@ -240,7 +280,7 @@ class SoundSettingsDialog(QDialog):
             "仅在 GPT-SoVITS 可用时生效，关闭可节省 GPU 显存。"
         )
         warmup_desc.setWordWrap(True)
-        warmup_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+        warmup_desc.setStyleSheet("color: #888; font-size: 12px; padding: 4px 0;")
         warmup_vbox.addWidget(warmup_desc)
         scroll_layout.addWidget(warmup_frame)
 
@@ -268,53 +308,251 @@ class SoundSettingsDialog(QDialog):
 
         scroll_layout.addStretch()
         scroll_area.setWidget(scroll_content)
-        layout.addWidget(scroll_area)
+        self._tab_widget.addTab(scroll_area, "  基本设置  ")
 
-        # 底部按钮
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_cancel = QPushButton("取消")
-        btn_cancel.setFixedSize(80, 32)
-        btn_cancel.clicked.connect(self.reject)
-        btn_row.addWidget(btn_cancel)
+    # ── 高级参数选项卡 ─────────────────────────────────────
 
-        btn_save = QPushButton("保存")
-        btn_save.setFixedSize(80, 32)
-        btn_save.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
-        btn_save.clicked.connect(self._on_save)
-        btn_row.addWidget(btn_save)
+    def _build_advanced_tab(self):
+        """构建「高级参数」选项卡。"""
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        layout.addLayout(btn_row)
+        scroll_content = QWidget()
+        adv_layout = QVBoxLayout(scroll_content)
+        adv_layout.setSpacing(14)
+        adv_layout.setContentsMargins(0, 4, 0, 0)
+
+        # 说明
+        tip = QLabel(
+            "以下参数影响 GPT-SoVITS 的合成行为。\n"
+            "修改后点「试听」可立即感受效果，满意后点「保存」。"
+        )
+        tip.setWordWrap(True)
+        tip.setStyleSheet("color: #888; font-size: 12px; padding: 8px;")
+        adv_layout.addWidget(tip)
+
+        # ── temperature ──
+        adv_layout.addWidget(self._make_slider_frame(
+            "稳定性 (temperature)",
+            self._make_adv_slider(10, 100, 30, "%.2f"),  # 0.1 - 1.0, default 0.3
+            "低 → 更稳定，每次合成结果一致",
+            "高 → 更多随机变化"
+        ))
+
+        # ── top_k ──
+        adv_layout.addWidget(self._make_slider_frame(
+            "采样范围 (top_k)",
+            self._make_adv_slider(1, 20, 5, "%d"),
+            "小 → 只选最可能的候选，声音保守",
+            "大 → 候选范围更广，声音丰富"
+        ))
+
+        # ── top_p ──
+        adv_layout.addWidget(self._make_slider_frame(
+            "核采样 (top_p)",
+            self._make_adv_slider(10, 100, 90, "%.2f"),  # 0.1 - 1.0
+            "小 → 更保守稳定",
+            "大 → 更丰富多变"
+        ))
+
+        # ── sample_steps ──
+        adv_layout.addWidget(self._make_slider_frame(
+            "合成步数 (sample_steps)",
+            self._make_adv_slider(4, 64, 32, "%d"),
+            "小 → 合成快，音质稍低",
+            "大 → 合成慢，音质更好"
+        ))
+
+        # ── pause_second ──
+        adv_layout.addWidget(self._make_slider_frame(
+            "句间停顿 (pause_second)",
+            self._make_adv_slider(0, 100, 30, "%.1fs"),  # 0.0 - 1.0s
+            "短 → 句子紧凑",
+            "长 → 句子间有明显停顿"
+        ))
+
+        # ── how_to_cut ──
+        cut_frame = self._create_frame()
+        cut_vbox = QVBoxLayout(cut_frame)
+        cut_vbox.setSpacing(6)
+        cut_title = QLabel("切句方式 (how_to_cut)")
+        cut_title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        cut_vbox.addWidget(cut_title)
+
+        self._adv_cut_combo = QComboBox()
+        cut_items = [
+            ("不切", "不切（整段合成，长文本可能截断）"),
+            ("凑四句一切", "凑四句一切"),
+            ("凑50字一切", "凑50字一切"),
+            ("按中文句号。切", "按中文句号。切"),
+            ("按英文句号.切", "按英文句号.切"),
+            ("按标点符号切", "按标点符号切"),
+        ]
+        for val, label in cut_items:
+            self._adv_cut_combo.addItem(label, val)
+        cut_vbox.addWidget(self._adv_cut_combo)
+        adv_layout.addWidget(cut_frame)
+
+        adv_layout.addStretch()
+
+        # ── 恢复默认按钮 ──
+        reset_frame = self._create_frame()
+        reset_vbox = QVBoxLayout(reset_frame)
+        reset_vbox.setSpacing(6)
+        reset_title = QLabel("恢复默认")
+        reset_title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        reset_vbox.addWidget(reset_title)
+
+        reset_btn = QPushButton("🔄 恢复高级参数默认值")
+        reset_btn.setFixedHeight(36)
+        reset_btn.clicked.connect(self._on_reset_advanced)
+        reset_vbox.addWidget(reset_btn)
+
+        reset_desc = QLabel("将所有高级参数重置为推荐的默认值。")
+        reset_desc.setWordWrap(True)
+        reset_desc.setStyleSheet("color: #888; font-size: 12px; padding: 4px 0;")
+        reset_vbox.addWidget(reset_desc)
+        adv_layout.addWidget(reset_frame)
+
+        scroll_area.setWidget(scroll_content)
+        self._tab_widget.addTab(scroll_area, "  高级参数  ")
+
+    def _make_adv_slider(self, min_val, max_val, default, fmt):
+        """创建高级参数滑块，返回 (slider, value_label)。"""
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(min_val, max_val)
+        slider.setValue(default)
+        value_label = QLabel()
+        value_label.setFixedWidth(50)
+        slider.valueChanged.connect(
+            lambda v, lbl=value_label, f=fmt: lbl.setText(f % (v / 100.0 if "%." in f else v))
+        )
+        return slider, value_label
+
+    def _make_slider_frame(self, title, slider_pair, left_desc, right_desc):
+        """创建带标题、滑块和描述的 Frame。"""
+        frame = self._create_frame()
+        vbox = QVBoxLayout(frame)
+        vbox.setSpacing(6)
+        title_label = QLabel(title)
+        title_label.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        vbox.addWidget(title_label)
+
+        slider, value_label = slider_pair
+        self._adv_sliders[title] = (slider, value_label)
+
+        row = QHBoxLayout()
+        row.addWidget(slider)
+        row.addWidget(value_label)
+        vbox.addLayout(row)
+
+        desc_row = QHBoxLayout()
+        desc_row.addWidget(QLabel(left_desc))
+        desc_row.addStretch()
+        desc_row.addWidget(QLabel(right_desc))
+        for lbl in (desc_row.itemAt(0).widget(), desc_row.itemAt(2).widget()):
+            lbl.setStyleSheet("color: #888; font-size: 12px;")
+        vbox.addLayout(desc_row)
+
+        return frame
+
+    def _on_reset_advanced(self):
+        """重置高级参数为默认值。"""
+        confirm = QMessageBox.question(
+            self, "恢复默认",
+            "确定要将所有高级参数恢复为默认值吗？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        self._adv_sliders["稳定性 (temperature)"][0].setValue(int(_ADVANCED_DEFAULTS["temperature"] * 100))
+        self._adv_sliders["稳定性 (temperature)"][1].setText("%.2f" % _ADVANCED_DEFAULTS["temperature"])
+
+        self._adv_sliders["采样范围 (top_k)"][0].setValue(_ADVANCED_DEFAULTS["top_k"])
+        self._adv_sliders["采样范围 (top_k)"][1].setText("%d" % _ADVANCED_DEFAULTS["top_k"])
+
+        self._adv_sliders["核采样 (top_p)"][0].setValue(int(_ADVANCED_DEFAULTS["top_p"] * 100))
+        self._adv_sliders["核采样 (top_p)"][1].setText("%.2f" % _ADVANCED_DEFAULTS["top_p"])
+
+        self._adv_sliders["合成步数 (sample_steps)"][0].setValue(_ADVANCED_DEFAULTS["sample_steps"])
+        self._adv_sliders["合成步数 (sample_steps)"][1].setText("%d" % _ADVANCED_DEFAULTS["sample_steps"])
+
+        self._adv_sliders["句间停顿 (pause_second)"][0].setValue(int(_ADVANCED_DEFAULTS["pause_second"] * 100))
+        self._adv_sliders["句间停顿 (pause_second)"][1].setText("%.1fs" % _ADVANCED_DEFAULTS["pause_second"])
+
+        for i in range(self._adv_cut_combo.count()):
+            if self._adv_cut_combo.itemData(i) == _ADVANCED_DEFAULTS["how_to_cut"]:
+                self._adv_cut_combo.setCurrentIndex(i)
+                break
+
+    def _get_advanced_params(self):
+        """从 UI 收集当前高级参数值。"""
+        return {
+            "temperature": self._adv_sliders["稳定性 (temperature)"][0].value() / 100.0,
+            "top_k": self._adv_sliders["采样范围 (top_k)"][0].value(),
+            "top_p": self._adv_sliders["核采样 (top_p)"][0].value() / 100.0,
+            "sample_steps": self._adv_sliders["合成步数 (sample_steps)"][0].value(),
+            "how_to_cut": self._adv_cut_combo.currentData(),            
+            "pause_second": self._adv_sliders["句间停顿 (pause_second)"][0].value() / 100.0,
+        }
+
+    # ── 原有方法（从旧代码迁移，无改动）────────────────────
 
     def _load_from_settings(self):
-        # 加载 TTS 配置
         idx = 0 if self._tts_cfg.get("engine", "auto") != "edge_tts" else 1
         self._tts_engine_combo.setCurrentIndex(idx)
         self._tts_gs_path_edit.setText(self._tts_cfg.get("gpt_sovits_path", ""))
-        # 选择默认情绪
+
         def_mood = self._tts_cfg.get("default_mood", "auto")
         for i in range(self._tts_mood_combo.count()):
             if self._tts_mood_combo.itemData(i) == def_mood:
                 self._tts_mood_combo.setCurrentIndex(i)
                 break
+
         speed = int(self._tts_cfg.get("speed", 1.0) * 100)
         self._tts_speed_slider.setValue(speed)
         self._tts_speed_value.setText(f"{speed / 100:.1f}x")
         self._tts_warmup_cb.setChecked(self._tts_cfg.get("tts_warmup", True))
         self._update_gs_status()
 
-        # 恢复参考音频选择
         override = self._tts_cfg.get("ref_wav_override", "")
         self._refresh_ref_wav_list(select_path=override)
 
-        # 静默模式
         self._silent_cb.setChecked(self._settings.silent_mode)
 
+        # 加载高级参数
+        temp = self._tts_cfg.get("temperature", _ADVANCED_DEFAULTS["temperature"])
+        self._adv_sliders["稳定性 (temperature)"][0].setValue(int(temp * 100))
+        self._adv_sliders["稳定性 (temperature)"][1].setText("%.2f" % temp)
+
+        topk = self._tts_cfg.get("top_k", _ADVANCED_DEFAULTS["top_k"])
+        self._adv_sliders["采样范围 (top_k)"][0].setValue(topk)
+        self._adv_sliders["采样范围 (top_k)"][1].setText("%d" % topk)
+
+        topp = self._tts_cfg.get("top_p", _ADVANCED_DEFAULTS["top_p"])
+        self._adv_sliders["核采样 (top_p)"][0].setValue(int(topp * 100))
+        self._adv_sliders["核采样 (top_p)"][1].setText("%.2f" % topp)
+
+        steps = self._tts_cfg.get("sample_steps", _ADVANCED_DEFAULTS["sample_steps"])
+        self._adv_sliders["合成步数 (sample_steps)"][0].setValue(steps)
+        self._adv_sliders["合成步数 (sample_steps)"][1].setText("%d" % steps)
+
+        pause = self._tts_cfg.get("pause_second", _ADVANCED_DEFAULTS["pause_second"])
+        self._adv_sliders["句间停顿 (pause_second)"][0].setValue(int(pause * 100))
+        self._adv_sliders["句间停顿 (pause_second)"][1].setText("%.1fs" % pause)
+
+        cut = self._tts_cfg.get("how_to_cut", _ADVANCED_DEFAULTS["how_to_cut"])
+        for i in range(self._adv_cut_combo.count()):
+            if self._adv_cut_combo.itemData(i) == cut:
+                self._adv_cut_combo.setCurrentIndex(i)
+                break
+
     def _browse_gs_path(self):
-        from PyQt5.QtWidgets import QFileDialog
-        dir_path = QFileDialog.getExistingDirectory(
-            self, "选择 GPT-SoVITS 安装目录", ""
-        )
+        dir_path = QFileDialog.getExistingDirectory(self, "选择 GPT-SoVITS 安装目录", "")
         if dir_path:
             self._tts_gs_path_edit.setText(dir_path)
             self._update_gs_status()
@@ -323,23 +561,21 @@ class SoundSettingsDialog(QDialog):
         path = self._tts_gs_path_edit.text().strip()
         if not path:
             self._tts_gs_status.setText("未配置 GPT-SoVITS 路径，将使用 Edge-TTS 标准发音")
-            self._tts_gs_status.setStyleSheet("color: #888; font-size: 11px;")
+            self._tts_gs_status.setStyleSheet("color: #888; font-size: 12px;")
             return
-        import os
         if not os.path.isdir(path):
             self._tts_gs_status.setText("路径不存在")
-            self._tts_gs_status.setStyleSheet("color: #E74C3C; font-size: 11px;")
+            self._tts_gs_status.setStyleSheet("color: #E74C3C; font-size: 12px;")
             return
         inference_dir = os.path.join(path, "GPT_SoVITS")
         if os.path.isdir(inference_dir):
             self._tts_gs_status.setText("GPT-SoVITS 目录已识别 ✓（具体可用性取决于 GPU 和模型配置）")
-            self._tts_gs_status.setStyleSheet("color: #27AE60; font-size: 11px;")
+            self._tts_gs_status.setStyleSheet("color: #27AE60; font-size: 12px;")
         else:
             self._tts_gs_status.setText("已选择目录但未检测到 GPT_SoVITS 模块，请确认路径正确")
-            self._tts_gs_status.setStyleSheet("color: #F39C12; font-size: 11px;")
+            self._tts_gs_status.setStyleSheet("color: #F39C12; font-size: 12px;")
 
     def _refresh_ref_wav_list(self, select_path: str = ""):
-        """扫描 ref_wavs 目录并刷新下拉列表。如果 select_path 非空，选中对应项。"""
         self._ref_wav_combo.clear()
         self._ref_wav_combo.addItem("自动匹配（根据情绪选择）", "")
 
@@ -347,7 +583,6 @@ class SoundSettingsDialog(QDialog):
             os.path.join(os.path.dirname(os.path.dirname(__file__)), "skills", "语音合成", "ref_wavs"),
             os.path.join(str(__import__("pathlib").Path.home()), ".lianxin", "tts", "ref_wavs"),
         ]
-
         found_wavs = []
         for ref_dir in ref_dirs:
             if not os.path.isdir(ref_dir):
@@ -367,14 +602,10 @@ class SoundSettingsDialog(QDialog):
             self._ref_wav_combo.addItem(label, path)
             if select_path and os.path.normpath(path) == os.path.normpath(select_path):
                 target_idx = i
-
         self._ref_wav_combo.setCurrentIndex(target_idx)
 
     def _browse_ref_wav(self):
-        """手动浏览选择 WAV 参考音频文件。"""
-        path, _ = QFileDialog.getOpenFileName(
-            self, "选择参考音频", "", "WAV 音频文件 (*.wav)"
-        )
+        path, _ = QFileDialog.getOpenFileName(self, "选择参考音频", "", "WAV 音频文件 (*.wav)")
         if not path:
             return
         fname = os.path.basename(path)
@@ -386,62 +617,58 @@ class SoundSettingsDialog(QDialog):
         self._tts_speed_value.setText(f"{speed:.1f}x")
 
     def _on_tts_volume_changed(self, value):
-        from utils.settings import get_settings
         vol = value / 100.0
         get_settings().tts_volume = vol
 
     def _on_sfx_volume_changed(self, value):
-        from utils.settings import get_settings
         vol = value / 100.0
         get_settings().sfx_volume = vol
 
     def _on_tts_test(self):
-        """试听语音合成效果。"""
         test_text = "你好，我是莲心。很高兴见到你。"
         self._tts_test_btn.setEnabled(False)
         self._tts_test_btn.setText("合成中…")
 
-        # 先临时保存当前 UI 选择，保证试听立刻反应最新引擎设置
         engine_idx = self._tts_engine_combo.currentIndex()
         engine = "auto" if engine_idx == 0 else "edge_tts"
         gs_path = self._tts_gs_path_edit.text().strip()
         mood = self._tts_mood_combo.currentData()
         speed_val = self._tts_speed_slider.value() / 100.0
-
-        # 收集参考音频选择
         ref_wav_override = ""
         if self._ref_wav_combo.currentData():
             ref_wav_override = self._ref_wav_combo.currentData()
+
+        adv = self._get_advanced_params()
 
         save_tts_config({
             "engine": engine,
             "gpt_sovits_path": gs_path,
             "default_mood": mood,
             "speed": speed_val,
-            "temperature": self._tts_cfg.get("temperature", 0.7),
-            "top_k": self._tts_cfg.get("top_k", 5),
-            "top_p": self._tts_cfg.get("top_p", 0.9),
-            "sample_steps": self._tts_cfg.get("sample_steps", 32),
+            "temperature": adv["temperature"],
+            "top_k": adv["top_k"],
+            "top_p": adv["top_p"],
+            "sample_steps": adv["sample_steps"],
+            "how_to_cut": adv["how_to_cut"],
+            "pause_second": adv["pause_second"],
             "edge_tts_voice": self._tts_cfg.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural"),
             "tts_warmup": self._tts_cfg.get("tts_warmup", True),
             "ref_wav_override": ref_wav_override,
         })
-
+        from brain.tts_engine import reset_gpt_sovits_cache
+        reset_gpt_sovits_cache()
 
         def _test():
             import tempfile, os, threading
             from brain.tts_engine import TtsEngine
             engine = TtsEngine()
-
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
             wav_path = tmp.name
             tmp.close()
-
             try:
                 success = engine.synthesize(test_text, wav_path)
                 if not success:
                     return
-
                 import pygame
                 if not pygame.mixer.get_init():
                     pygame.init()
@@ -465,42 +692,36 @@ class SoundSettingsDialog(QDialog):
         import threading
         threading.Thread(target=_test, daemon=True).start()
 
-    def _on_open_emotion_debug(self):
-        from gui.emotional_debug_dialog import EmotionalDebugDialog
-        dlg = EmotionalDebugDialog(self)
-        dlg.exec_()
-
     def _on_save(self):
-        """保存所有设置：声音+TTS+静默模式"""
-        # 静默模式
         self._settings.silent_mode = self._silent_cb.isChecked()
 
-        # 声音设置（音量）在滑块变化时已实时保存
-        # 保存 TTS 配置
         engine_idx = self._tts_engine_combo.currentIndex()
         engine = "auto" if engine_idx == 0 else "edge_tts"
         gs_path = self._tts_gs_path_edit.text().strip()
         mood = self._tts_mood_combo.currentData()
         speed = self._tts_speed_slider.value() / 100.0
         warmup = self._tts_warmup_cb.isChecked()
-
-        # 收集参考音频选择
         ref_wav_override = ""
         if self._ref_wav_combo.currentData():
             ref_wav_override = self._ref_wav_combo.currentData()
+
+        adv = self._get_advanced_params()
 
         save_tts_config({
             "engine": engine,
             "gpt_sovits_path": gs_path,
             "default_mood": mood,
             "speed": speed,
-            "temperature": self._tts_cfg.get("temperature", 0.7),
-            "top_k": self._tts_cfg.get("top_k", 5),
-            "top_p": self._tts_cfg.get("top_p", 0.9),
-            "sample_steps": self._tts_cfg.get("sample_steps", 32),
+            "temperature": adv["temperature"],
+            "top_k": adv["top_k"],
+            "top_p": adv["top_p"],
+            "sample_steps": adv["sample_steps"],
+            "how_to_cut": adv["how_to_cut"],
+            "pause_second": adv["pause_second"],
             "edge_tts_voice": self._tts_cfg.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural"),
             "tts_warmup": warmup,
             "ref_wav_override": ref_wav_override,
         })
-
+        from brain.tts_engine import reset_gpt_sovits_cache
+        reset_gpt_sovits_cache()
         self.accept()

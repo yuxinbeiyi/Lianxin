@@ -48,7 +48,10 @@ def _normalize_audio(audio, target_peak: int = 28000):
 
 
 def synthesize(gs_path: str, text: str, ref_wav: str, output_path: str,
-               mood_hint: str = None, sample_steps: int = 16) -> dict:
+               mood_hint: str = None, sample_steps: int = 16,
+               temperature: float = 0.3, top_k: int = 5, top_p: float = 0.9,
+               how_to_cut: str = "不切", pause_second: float = 0.3,
+               speed: float = 1.0) -> dict:
     """执行一次 GPT-SoVITS 合成，返回 {"success": bool, "output": str, "error": str}。"""
     # 重定向 stdout → stderr，避免 GPT-SoVITS 日志污染 JSON 输出
     _orig_stdout = sys.stdout
@@ -84,17 +87,17 @@ def synthesize(gs_path: str, text: str, ref_wav: str, output_path: str,
         "prompt_language": "中文",
         "text": text,
         "text_language": text_lang,
-        "how_to_cut": "不切",
-        "top_k": 5,
-        "top_p": 0.9,
-        "temperature": 0.3,
+        "how_to_cut": how_to_cut,
+        "top_k": top_k,
+        "top_p": top_p,
+        "temperature": temperature,
         "ref_free": True,
-        "speed": 1.0,
+        "speed": speed,
         "if_freeze": False,
         "inp_refs": None,
         "sample_steps": sample_steps,
         "if_sr": False,
-        "pause_second": 0.3,
+        "pause_second": pause_second,
     }
 
     gen = get_tts_wav(**params)
@@ -150,6 +153,12 @@ def main():
                         req.get("output_path", ""),
                         req.get("mood"),
                         sample_steps=req.get("sample_steps", 16),
+                        temperature=req.get("temperature", 0.3),
+                        top_k=req.get("top_k", 5),
+                        top_p=req.get("top_p", 0.9),
+                        how_to_cut=req.get("how_to_cut", "不切"),
+                        pause_second=req.get("pause_second", 0.3),
+                        speed=req.get("speed", 1.0),
                     )
             except Exception as e:
                 result = {"success": False, "error": str(e)}
