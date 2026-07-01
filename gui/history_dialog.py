@@ -751,8 +751,23 @@ class HistoryDialog(QDialog):
         row = self._session_list.currentRow()
         if not (0 <= row < len(self._sessions)):
             return
-        s     = self._sessions[row]
+        s = self._sessions[row]
         count = self._mgr.get_message_count(s["id"])
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定要删除会话「{s['title']}」吗？\n（共 {count} 条消息，删除后不可恢复）",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self._mgr.delete_session(s["id"])
+        # 如果删除的是当前活跃会话，通知主窗口
+        if s["id"] == self._current_session_id:
+            self.session_deleted.emit(s["id"])
+        self._load_sessions(
+            keyword=self._search_box.text(),
+            date_str=self._date_filter.date().toString("yyyy-MM-dd")
+        )
 
 
     # ── 导入记忆 ─────────────────────────────────────────────

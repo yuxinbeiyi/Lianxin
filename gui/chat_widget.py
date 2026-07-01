@@ -162,7 +162,6 @@ class ChatWidget(QScrollArea):
     def _delete_message_bubble(self, bubble):
         """删除消息气泡，并从历史记录中移除。"""
         from PyQt5.QtWidgets import QMessageBox
-        from PyQt5.QtCore import Qt
         reply = QMessageBox.question(
             self, "确认删除",
             "确定要删除这条消息吗？\n（删除后无法恢复）",
@@ -170,6 +169,15 @@ class ChatWidget(QScrollArea):
         )
         if reply != QMessageBox.Yes:
             return
+
+        # 从历史记录中删除
+        msg_text = bubble.text().strip()
+        if msg_text:
+            try:
+                from brain.agent import conversation_manager
+                conversation_manager.remove_message_by_content(msg_text)
+            except Exception as e:
+                print(f"[对话] 删除历史记录失败: {e}")
 
         # 从布局中移除
         self._layout.removeWidget(bubble)

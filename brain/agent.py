@@ -419,7 +419,14 @@ class AgentCore:
     def clear_history(self):
         """清除当次会话的内存历史（数据库记录保留）。"""
         self.history = []
-
+    def remove_message_by_content(self, content: str) -> bool:
+        """从内存历史中删除匹配内容的消息。"""
+        content = content.strip()
+        for i, msg in enumerate(self.history):
+            if msg.get("content", "").strip() == content:
+                self.history.pop(i)
+                return True
+        return False
     def new_session(self):
         """开启全新会话：重置内存历史，在数据库创建新 session。"""
         self.history = []
