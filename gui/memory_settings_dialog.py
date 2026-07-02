@@ -16,7 +16,7 @@ class MemorySettingsDialog(QDialog):
         super().__init__(parent)
         self._mem_cfg = get_memory_config()
 
-        self.setWindowTitle("🧠 记忆系统设置")
+        self.setWindowTitle("棱镜记忆系统")
         self.setMinimumSize(620, 900)
         self.resize(660, 1200)
         self.setWindowFlags(Qt.Window)
@@ -69,7 +69,7 @@ class MemorySettingsDialog(QDialog):
         layout.setContentsMargins(20, 16, 20, 16)
 
         # 标题
-        title = QLabel("🧠 记忆系统设置")
+        title = QLabel("棱镜记忆系统")
         title.setFont(QFont("Microsoft YaHei UI", 14, QFont.Bold))
         title.setStyleSheet("color: #1ABC9C;")
         layout.addWidget(title)
