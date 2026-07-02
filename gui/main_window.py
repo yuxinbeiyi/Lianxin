@@ -29,7 +29,9 @@ from gui.qq_settings_dialog import QqSettingsDialog
 from gui.wechat_settings_dialog import WeChatSettingsDialog
 from gui.network_settings_dialog import NetworkSettingsDialog
 from gui.capability_center import CapabilityCenter
-
+from brain.auto_task_scheduler import AutoTaskScheduler
+from brain.auto_task_manager import get_auto_task_manager
+from brain.auto_task_executor import execute_auto_task
 from config import has_api_key, get_qq_bridge_config, get_heartbeat_config, get_wechat_bridge_config
 from brain.decision import decide
 from workers.agent_worker      import AgentWorker
@@ -113,6 +115,8 @@ _AUTOSTART_NET_MAX_ATTEMPTS = 30         # 最多等 15 分钟（30 × 30s）
 
 class MainWindow(QMainWindow):
     _route_ready = pyqtSignal(str, bool, object)
+    _auto_task_parsed_signal = pyqtSignal(bool, str, object)  # (success, message, task)
+    _auto_task_done_signal = pyqtSignal(str, bool, str)       # (task_id, success, message)
     def __init__(self, autostart_mode: bool = False):
         super().__init__()
         self._autostart_mode = autostart_mode
@@ -203,7 +207,13 @@ class MainWindow(QMainWindow):
         self._countdown_timer = QTimer(self)
         self._countdown_timer.timeout.connect(self._check_countdowns)
         self._countdown_timer.start(1000)
-
+        # ── 自动化任务调度器 ────────────────────────────────
+        self._auto_task_scheduler = AutoTaskScheduler(self)
+        self._auto_task_scheduler.task_due.connect(self._on_auto_task_due)
+        self._auto_task_scheduler.task_missed.connect(self._on_auto_task_missed)
+        self._auto_task_scheduler.start()
+        self._auto_task_parsed_signal.connect(self._on_auto_task_parsed)
+        self._auto_task_done_signal.connect(self._on_auto_task_completed)
         # ── 待办清单模块（数据层，UI 无关部分）──────────────
         self._todo_manager = TodoManager()
         # 将同一实例注入工具层，确保 AI 工具和 UI 共享同一个 TodoManager，
@@ -973,6 +983,10 @@ class MainWindow(QMainWindow):
 
         if text.strip():
             self._chat_widget.add_user_message(display_text)
+        # ── 自动化任务检测 ──────────────────────────────
+            if text.strip() and self._detect_auto_task_intent(text):
+                self._try_parse_auto_task(text)
+                return
             play_sound("ButtonAll.mp3") 
 
         self._set_thinking_state()
@@ -1733,7 +1747,97 @@ class MainWindow(QMainWindow):
         )
         self._chat_widget.add_ai_message(msg)
         self._speak(msg)
+    # ── 自动化任务处理 ──────────────────────────────────────
 
+    def _on_auto_task_due(self, task):
+        execute_auto_task(
+            task,
+            on_complete=lambda tid, ok, msg: self._auto_task_done_signal.emit(tid, ok, msg)
+        )
+
+    def _on_auto_task_missed(self, task):
+        msg = f"主人，有个名为「{task.name}」的任务现在还没做，需要我补上吗？"
+        self._chat_widget.add_ai_message(msg)
+        self._speak(msg)
+
+    def _on_auto_task_completed(self, task_id, success, message):
+        manager = get_auto_task_manager()
+        task = manager.get_task(task_id)
+        if not task:
+            return
+        if success:
+            msg = f"🤖 自动化任务「{task.name}」执行完成"
+            self._chat_widget.add_system_tip(msg)
+            self._speak(f"已完成自动化任务：{task.name}")
+        else:
+            msg = f"⚠️ 自动化任务「{task.name}」执行失败: {message[:100]}"
+            self._chat_widget.add_system_tip(msg)
+            self._speak(f"自动化任务「{task.name}」执行失败")
+    # ── 自动化任务自然语言解析 ──────────────────────────────
+
+    def _detect_auto_task_intent(self, text: str) -> bool:
+        import re
+        keywords = [
+            "每天", "每隔", "定时", "定期", "自动", "以后",
+            "每天早", "每天晚", "每天下", "每天中",
+            "每隔", "每过", "每30", "每60", "每1", "每2", "每3", "每5", "每10",
+            "每15", "每20", "每45", "每半",
+            "提醒我", "提醒一下", "记得提醒",
+            "下个月", "下周", "明天这个", "以后都",
+            "帮我自动", "自动帮我",
+            # 相对时间 — 延迟执行（once 调度）
+            "分钟后", "秒后", "小时后",
+            "稍后", "等会", "等会儿", "过一会", "过会儿",
+            "马上", "一会", "待会", "待会儿",
+            "等X分钟", "等几分钟",
+        ]
+        if any(kw in text for kw in keywords):
+            return True
+        # 正则：匹配 "X分钟后" "X秒后" "X小时后" 等数字+时间单位的模式
+        if re.search(r'\d+\s*(分钟|秒|小时|天|周|月)后', text):
+            return True
+        return False
+
+    def _try_parse_auto_task(self, text: str):
+        from brain.auto_task_parser import parse_auto_task, generate_confirm_message
+        from brain.auto_task_manager import get_auto_task_manager
+
+        self._set_thinking_state()
+
+        def _parse():
+            try:
+                task = parse_auto_task(text)
+                confirm_msg = generate_confirm_message(task)
+                if task.schedule_type == "once" and "提醒" in task.name:
+                    confirm_msg += "\n\n💡 这是一个一次性提醒，将在指定时间通知你。"
+
+                manager = get_auto_task_manager()
+                manager.add_task(task)
+
+                # 通过信号回主线程更新 UI
+                self._auto_task_parsed_signal.emit(True, confirm_msg, task)
+            except Exception as e:
+                self._auto_task_parsed_signal.emit(
+                    False, f"任务解析失败，请手动配置: {str(e)[:100]}", None)
+
+        from threading import Thread
+        Thread(target=_parse, daemon=True).start()
+
+    def _set_normal_state(self):
+        self._char_widget.set_normal()
+        self._input_panel.set_mute_visible(False)
+        self._is_waiting_for_response = False
+
+    def _on_auto_task_parsed(self, success: bool, message: str, task):
+        """自动化任务解析结果回调（主线程）"""
+        if success:
+            self._chat_widget.add_ai_message(message)
+            self._speak("好的，我记下了这个自动化任务 ✨")
+            if hasattr(self, '_auto_task_scheduler'):
+                self._auto_task_scheduler.status_changed.emit()
+        else:
+            self._chat_widget.add_system_tip(message)
+        self._set_normal_state()
     def _on_diary_finished(self, success: bool, result: str):
         if success:
             self._chat_widget.add_system_tip(f"📔 莲心已写好 {result} 的日记")
@@ -2711,6 +2815,9 @@ class MainWindow(QMainWindow):
         self._proactive_timer.stop()
         self._heartbeat_check_timer.stop()
         self._alarm_timer.stop()
+        if hasattr(self, '_auto_task_scheduler'):
+            self._auto_task_scheduler.stop()
+            self._auto_task_scheduler.wait()
         self._countdown_timer.stop()
         self._todo_reminder_timer.stop()
         self._stop_autostart_net_poll()

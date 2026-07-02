@@ -113,6 +113,7 @@ class ChatWidget(QScrollArea):
         label.setStyleSheet("background: transparent; padding: 2px;")
         self._layout.insertWidget(self._layout.count() - 1, label)
         self._container.updateGeometry()
+        self._scroll_to_bottom()  
         return label  # 返回引用，供调用方后续 hide()
 
     def add_user_image(self, image_path: str, ocr_text: str = "", full_text: str = ""):
