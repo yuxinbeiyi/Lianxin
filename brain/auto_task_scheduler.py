@@ -32,10 +32,18 @@ class AutoTaskScheduler(QThread):
         logger.info("[AutoTaskScheduler] 调度线程已启动，检查间隔: 30s")
         print("⏰ [AutoTaskScheduler] 调度线程已启动，检查间隔: 30s")
 
+        self._cleanup_check_count = 0
+
         while self._running:
             try:
                 self._check_due_tasks()
                 self._check_missed_tasks()
+                # P4: 每 10 分钟自动清理已完成的 once 任务
+                self._cleanup_check_count += 1
+                if self._cleanup_check_count % 20 == 0:  # 20 * 30s = 10 分钟
+                    cleaned = self._manager.cleanup_old_completed_tasks(hours=24)
+                    if cleaned > 0:
+                        self.status_changed.emit()
             except Exception as e:
                 logger.error(f"[AutoTaskScheduler] 检查异常: {e}")
                 print(f"❌ [AutoTaskScheduler] 检查异常: {e}")
@@ -48,7 +56,10 @@ class AutoTaskScheduler(QThread):
         print("⏹ [AutoTaskScheduler] 调度线程已停止")
 
     def _check_due_tasks(self):
+        from brain.auto_task_executor import _running_tasks as _exec_running
         due = self._manager.get_due_tasks()
+        # 过滤掉正在执行中的任务，避免日志轰炸
+        due = [t for t in due if t.task_id not in _exec_running]
         if due:
             print(f"📋 [AutoTaskScheduler] 本轮检查发现 {len(due)} 个到期任务")
         for task in due:

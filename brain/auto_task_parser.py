@@ -11,17 +11,20 @@ import requests
 from datetime import datetime, timedelta
 
 from config import get_api_config
-from utils.auto_task_data import AutoTask, ActionStep
+from utils.auto_task_data import AutoTask
 
 logger = logging.getLogger("AutoTaskParser")
 
 _PARSE_SYSTEM = """你是莲心AI的任务解析器。用户会用自然语言描述一个自动化任务，
 你需要将其解析为结构化的 JSON 配置。
 
+注意：你只需要提取调度信息。任务的具体执行由运行时 AI 代理根据 description 自主决定，
+因此不需要生成 actions 字段。
+
 ## 输出格式（严格 JSON）
 {
   "name": "简短的任务名称（不超过15字）",
-  "description": "任务描述（保留用户原始意图）",
+  "description": "任务描述（保留用户原始意图，越详细越好）",
   "schedule_type": "once|interval|daily|weekly|monthly",
   "schedule_time": "HH:MM 格式的时间（daily/weekly/monthly 时必填）",
   "interval_minutes": 间隔分钟数（仅 schedule_type=interval 时填写，整数）,
@@ -29,14 +32,6 @@ _PARSE_SYSTEM = """你是莲心AI的任务解析器。用户会用自然语言�
   "day_of_month": 月内第几天（仅 monthly 时填写），
   "advance_minutes": 提前多少分钟提醒（支持负数=延后，如提前3天=4320），
   "missed_action": "ask|skip|auto_execute",
-  "actions": [
-    {
-      "order": 0,
-      "tool_name": "工具名称",
-      "tool_params": {"参数名": "参数值"},
-      "description": "这一步做什么"
-    }
-  ],
   "needs_calendar": true/false（是否需要先查日历确认日期）
 }
 
@@ -47,10 +42,8 @@ _PARSE_SYSTEM = """你是莲心AI的任务解析器。用户会用自然语言�
 - 如果用户说"每周X"，schedule_type=weekly
 - 如果用户说"下个月/每月X号"，schedule_type=monthly
 - 如果用户只说了一次性的事情，schedule_type=once
-- 工具名称从可用工具列表中选择，不确定时用 actions=[] 空列表
-- 如果用户说"提醒我"，actions 只包含一个 notify 步骤
-- 如果用户说"清理回收站"，actions 包含 run_shell 步骤
 - missed_action 默认 "ask"
+- description 保留用户的完整原始意图，不要省略或改写
 - 只输出 JSON，不要任何额外文字"""
 
 
@@ -149,20 +142,54 @@ def _call_llm_for_parse(user_text: str, model: str, api_cfg: dict, system_text: 
         print(f"   ❌ [AutoTaskParser] requests 异常: {e}")
 
     return ""
+# ── LLM 常用工具名 → 实际工具名映射 ──
+_TOOL_NAME_ALIASES = {
+    "search_web": "web_search",
+    "search_internet": "web_search",
+    "web_search_internet": "web_search",
+    "create_docx": "write_docx",
+    "make_docx": "write_docx",
+    "generate_docx": "write_docx",
+    "create_document": "write_docx",
+    "write_document": "write_docx",
+    "send_qq_file": "send_file_to_qq",
+    "send_file_qq": "send_file_to_qq",
+    "send_to_qq": "send_file_to_qq",
+    "delete_files": "run_command",
+    "delete_file": "run_command",
+    "clear_recycle_bin": "run_command",
+    "empty_trash": "run_command",
+    "run_shell": "run_command",
+    "execute_command": "run_command",
+    "notify": "run_command",
+    "send_notification": "run_command",
+}
+def _normalize_tool_name(name: str, available: list[str]) -> str:
+    """将 LLM 生成的工具名映射到实际存在的工具名。"""
+    if name in available:
+        return name
+    # 查别名表
+    if name in _TOOL_NAME_ALIASES:
+        return _TOOL_NAME_ALIASES[name]
+    # 模糊匹配
+    name_lower = name.lower().replace("_", "").replace("-", "")
+    for real_name in available:
+        real_lower = real_name.lower().replace("_", "").replace("-", "")
+        if name_lower == real_lower:
+            return real_name
+    return name  # 找不到就原样返回
 
+def _parse_to_task(user_text: str) -> dict:
+    """调用 LLM 解析自然语言为任务配置字典（含重试）。
 
-def _parse_to_task(user_text: str, available_tools: list[str] = None) -> dict:
-    """调用 LLM 解析自然语言为任务配置字典（含重试）。"""
+    注意：不再要求 LLM 生成 actions。执行时由 ReAct Agent 决定工具调用。
+    """
     api_cfg = get_api_config()
     model = api_cfg.get("model", "deepseek-v4-flash")
     if "/" not in model:
         model = f"deepseek/{model}"
 
-    tools_hint = ""
-    if available_tools:
-        tools_hint = f"\n\n## 当前可用工具列表\n{', '.join(available_tools[:30])}"
-
-    system_text = _PARSE_SYSTEM + tools_hint
+    system_text = _PARSE_SYSTEM
 
     for attempt in range(2):
         try:
@@ -243,8 +270,11 @@ def _extract_task_name(user_text: str) -> str:
 
 
 def _fallback_parse(user_text: str) -> dict:
-    """LLM 失败时的规则降级：从文本中提取关键信息生成简化任务。"""
-    print(f"   🔧 [AutoTaskParser] 规则降级中...")
+    """LLM 失败时的规则降级：只提取调度信息，不生成动作。
+
+    动作由执行时的 ReAct Agent 根据 description 自主决定。
+    """
+    print(f"   🔧 [AutoTaskParser] 规则降级中（仅提取调度信息）...")
 
     # 提取时间
     schedule_type = "once"
@@ -273,105 +303,35 @@ def _fallback_parse(user_text: str) -> dict:
     # 提取任务名
     name = _extract_task_name(user_text)
 
-    # 提取动作关键词 → 生成 actions
-    actions = []
-    text_lower = user_text.lower()
-
-    # 删除 — 用 run_command 执行 del 命令（Windows）
-    if re.search(r'删除|删掉|移除|清理', user_text):
-        # 提取路径
-        path_m = re.search(r'([A-Za-z]:\\[^\s，,。]+)', user_text)
-        path = path_m.group(1) if path_m else ""
-        # 提取文件类型
-        ext_m = re.search(r'(docx|txt|pdf|md|py|json|xlsx|pptx)文档?', user_text)
-        ext = ext_m.group(1) if ext_m else ""
-        if path and ext:
-            cmd = f'del /f /q \"{path}\\\\*.{ext}\"'
-            actions.append({
-                "order": 0, "tool_name": "run_command",
-                "tool_params": {"command": cmd},
-                "description": f"删除 {path} 下的 .{ext} 文件"
-            })
-        elif path:
-            cmd = f'del /f /q \"{path}\"'
-            actions.append({
-                "order": 0, "tool_name": "run_command",
-                "tool_params": {"command": cmd},
-                "description": f"删除 {path}"
-            })
-
-    # 阅读
-    if re.search(r'阅读|读取|查看|读一下', user_text):
-        path_m = re.search(r'([A-Za-z]:\\[^\s，,。]+)', user_text)
-        path = path_m.group(1) if path_m else ""
-        actions.append({
-            "order": len(actions), "tool_name": "read_file",
-            "tool_params": {"path": path} if path else {},
-            "description": f"阅读文件" if not path else f"阅读 {path}"
-        })
-
-    # 转换/整理
-    if re.search(r'整理|转换|变成|转成|生成|导出', user_text):
-        ext_m = re.search(r'(docx|txt|pdf|md|json|xlsx|pptx)文档?', user_text)
-        target_ext = ext_m.group(1) if ext_m else "txt"
-        actions.append({
-            "order": len(actions), "tool_name": "format_document",
-            "tool_params": {"output_format": target_ext},
-            "description": f"整理为 {target_ext} 文档"
-        })
-
-    # 通知
-    if re.search(r'提醒|通知|告诉', user_text):
-        actions.append({
-            "order": len(actions), "tool_name": "notify",
-            "tool_params": {"message": name},
-            "description": f"提醒: {name}"
-        })
-
-    # 如果没有任何动作，默认加 notify
-    if not actions:
-        actions.append({
-            "order": 0, "tool_name": "notify",
-            "tool_params": {"message": user_text[:80]},
-            "description": "执行用户指令"
-        })
-
     result = {
         "name": name,
-        "description": user_text,
+        "description": user_text,  # 保留完整原始意图，给 ReAct Agent
         "schedule_type": schedule_type,
         "schedule_time": schedule_time,
         "interval_minutes": interval_minutes,
         "missed_action": "ask",
-        "actions": actions,
+        "actions": [],  # ReAct Agent 在运行时动态决定
     }
     print(f"   ✅ [AutoTaskParser] 降级结果: {json.dumps(result, ensure_ascii=False)[:200]}")
     return result
 
 
-def parse_auto_task(user_text: str,
-                    available_tools: list[str] = None) -> AutoTask:
-    """将自然语言指令解析为 AutoTask 对象。"""
+def parse_auto_task(user_text: str) -> AutoTask:
+    """将自然语言指令解析为 AutoTask 对象。
+
+    只提取调度信息（时间、频率、名称、描述）。
+    工具执行由运行时的 ReAct Agent 根据 task.description 动态决定。
+    """
     print(f"\n🧠 [AutoTaskParser] 开始解析自然语言指令...")
     print(f"   用户输入: {user_text[:120]}")
-    parsed = _parse_to_task(user_text, available_tools)
+    parsed = _parse_to_task(user_text)
 
-    print(f"📋 [AutoTaskParser] LLM 解析结果:")
+    print(f"📋 [AutoTaskParser] 解析结果:")
     print(f"   任务名称: {parsed.get('name', '未命名')}")
     print(f"   调度类型: {parsed.get('schedule_type', 'once')}")
     print(f"   调度时间: {parsed.get('schedule_time', 'N/A')}")
     print(f"   间隔分钟: {parsed.get('interval_minutes', 0)}")
     print(f"   错过策略: {parsed.get('missed_action', 'ask')}")
-    print(f"   工具步骤: {len(parsed.get('actions', []))} 步")
-
-    actions = []
-    for a in parsed.get("actions", []):
-        actions.append(ActionStep(
-            order=a.get("order", 0),
-            tool_name=a.get("tool_name", ""),
-            tool_params=a.get("tool_params", {}),
-            description=a.get("description", ""),
-        ))
 
     # ── 修复 LLM 返回 null 导致字段为 None 的问题 ──
     schedule_type = parsed.get("schedule_type") or "once"
@@ -402,7 +362,7 @@ def parse_auto_task(user_text: str,
         day_of_month=parsed.get("day_of_month"),
         advance_minutes=parsed.get("advance_minutes") or 0,
         missed_action=parsed.get("missed_action") or "ask",
-        actions=actions,
+        actions=[],  # ReAct Agent 在运行时动态决定
         tags=["auto"],
     )
 
@@ -432,8 +392,7 @@ def generate_confirm_message(task: AutoTask) -> str:
     ]
     if task.advance_minutes > 0:
         lines.append(f"🔔 提前 {task.advance_minutes} 分钟提醒")
-    if task.actions:
-        lines.append(f"🔧 将执行 {len(task.actions)} 个步骤")
+    lines.append(f"🤖 将由 AI 智能执行")
     if task.schedule_type == "once":
         lines.append(f"📅 首次执行：{task.next_run}")
 

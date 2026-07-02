@@ -977,10 +977,20 @@ class AlarmDialog(QDialog):
         self._auto_edit_btn.clicked.connect(self._on_edit_auto_task)
         self._auto_view_log_btn = QPushButton("查看日志")
         self._auto_view_log_btn.clicked.connect(self._on_view_auto_log)
+        # P4: 清理已完成的 once 任务
+        self._auto_cleanup_btn = QPushButton("🧹 清理已完成")
+        self._auto_cleanup_btn.setToolTip("移除已完成超过24小时的一次性任务")
+        self._auto_cleanup_btn.clicked.connect(self._on_cleanup_completed)
+        # P5: 取消执行按钮
+        self._auto_cancel_btn = QPushButton("🛑 取消执行")
+        self._auto_cancel_btn.setToolTip("取消当前正在执行的任务")
+        self._auto_cancel_btn.clicked.connect(self._on_cancel_execution)
         btn_row.addWidget(self._auto_delete_btn)
         btn_row.addWidget(self._auto_toggle_btn)
         btn_row.addWidget(self._auto_edit_btn)
         btn_row.addWidget(self._auto_view_log_btn)
+        btn_row.addWidget(self._auto_cleanup_btn)
+        btn_row.addWidget(self._auto_cancel_btn)
         btn_row.addStretch()
         list_layout.addLayout(btn_row)
 
@@ -995,20 +1005,38 @@ class AlarmDialog(QDialog):
         self._auto_time_edit.setVisible(not is_interval)
 
     def _refresh_auto_task_list(self):
+        # P3: 引入 executor 的 _running_tasks 判断是否正在执行
+        try:
+            from brain.auto_task_executor import _running_tasks as _exec_running
+        except Exception:
+            _exec_running = set()
+
         self._auto_task_list.clear()
         if not hasattr(self, '_auto_task_mgr'):
             return
         for task in self._auto_task_mgr.get_all_tasks():
             type_label = SCHEDULE_LABELS.get(task.schedule_type, task.schedule_type)
             time_info = task.schedule_time if task.schedule_type != "interval" else f"每{task.interval_minutes}分"
-            status_icon = {"active": "▶", "paused": "⏸", "completed": "✓", "failed": "✗"}.get(task.status, "?")
-            text = f"🔵 {status_icon} {task.name} | {type_label} {time_info} | 执行{task.execution_count}次"
+
+            # P3: 判断是否正在执行
+            is_executing = task.task_id in _exec_running
+            if is_executing:
+                status_icon = "⏳"
+            else:
+                status_icon = {"active": "▶", "paused": "⏸", "completed": "✓", "failed": "✗"}.get(task.status, "?")
+
             if task.status == "completed":
                 text = f"🔵 ✓ {task.name} | {type_label} {time_info} | 已完成({task.execution_count}次)"
+            elif is_executing:
+                text = f"🟢 ⏳ {task.name} | {type_label} {time_info} | 🔄 执行中…"
+            else:
+                text = f"🔵 {status_icon} {task.name} | {type_label} {time_info} | 执行{task.execution_count}次"
 
             item = QListWidgetItem(text)
             item.setData(Qt.UserRole, task.task_id)
-            if not task.enabled or task.status != "active":
+            if is_executing:
+                item.setForeground(QColor(0, 200, 100))  # 绿色表示执行中
+            elif not task.enabled or task.status not in ("active",):
                 item.setForeground(QColor(150, 150, 180))
             else:
                 item.setForeground(QColor(108, 123, 255))
@@ -1201,6 +1229,46 @@ class AlarmDialog(QDialog):
             execute_auto_task(task, on_complete=lambda tid, ok, msg: self._refresh_auto_task_list())
             QMessageBox.information(self, "提示", f"任务「{task.name}」已开始执行，请稍后查看日志")
             self._refresh_auto_task_list()
+
+    # P4: 清理已完成的 once 任务
+    def _on_cleanup_completed(self):
+        reply = QMessageBox.question(
+            self, "清理确认",
+            "将移除所有已完成超过24小时的一次性任务，确定吗？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            count = self._auto_task_mgr.cleanup_old_completed_tasks(hours=24)
+            QMessageBox.information(self, "清理完成", f"已清理 {count} 个过期任务")
+            self._refresh_auto_task_list()
+
+    # P5: 取消正在执行的任务
+    def _on_cancel_execution(self):
+        from brain.auto_task_executor import cancel_task, _running_tasks as _exec_running
+        if not _exec_running:
+            QMessageBox.information(self, "提示", "当前没有正在执行的任务")
+            return
+
+        # 找第一个正在执行的任务
+        running_ids = list(_exec_running)
+        task_id = running_ids[0] if running_ids else None
+        if not task_id:
+            return
+
+        task = self._auto_task_mgr.get_task(task_id)
+        name = task.name if task else task_id
+        reply = QMessageBox.question(
+            self, "取消确认",
+            f"确定要取消正在执行的任务「{name}」吗？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            if cancel_task(task_id):
+                QMessageBox.information(self, "已取消", f"任务「{name}」已标记取消，将在当前步骤完成后停止")
+            else:
+                QMessageBox.warning(self, "取消失败", "无法取消该任务")
+        self._refresh_auto_task_list()
+
     def closeEvent(self, event):
         self._update_timer.stop()
         if self._todo_manager:

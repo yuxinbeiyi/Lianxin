@@ -26,10 +26,11 @@ MISSED_LABELS = {
     "auto_execute": "自动补做",
 }
 
-# 任务状态
-STATUS_VALUES = ["active", "paused", "completed", "failed"]
+# 任务状态 — P3: 新增 "executing" 区分等待与执行中
+STATUS_VALUES = ["active", "executing", "paused", "completed", "failed"]
 STATUS_LABELS = {
-    "active":    "运行中",
+    "active":    "等待中",
+    "executing": "执行中…",
     "paused":    "已暂停",
     "completed": "已完成",
     "failed":    "失败",

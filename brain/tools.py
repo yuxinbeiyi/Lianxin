@@ -2405,10 +2405,18 @@ def web_search(query: str, max_results: int = 5) -> str:
 
     def _try_ddg(proxies=None):
         """尝试 DuckDuckGo 搜索，返回结果字符串或 None。"""
-        from duckduckgo_search import DDGS
+        # P6: 优先使用新版 ddgs 包，降级 duckduckgo_search
+        DDGS = None
+        try:
+            from ddgs import DDGS  # type: ignore[import-untyped]  # 新版包名
+        except ImportError:
+            try:
+                from duckduckgo_search import DDGS  # type: ignore[import-untyped]  # 旧版包名
+            except ImportError:
+                return None
         ddgs_kwargs = {}
         if proxies:
-            ddgs_kwargs["proxies"] = proxies
+            ddgs_kwargs["proxy"] = proxies  # 新版参数名是 proxy 而非 proxies
         with DDGS(**ddgs_kwargs) as ddgs:
             results = list(ddgs.text(query, max_results=min(max_results, 10)))
         if not results:

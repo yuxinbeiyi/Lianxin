@@ -4,7 +4,7 @@
 
 # 莲心 AI
 
-**你的 Windows 桌面 AI 伙伴 —— 有情绪、有记忆、能感知世界**
+**你的 Windows 桌面 AI 伙伴 —— 有情绪、有记忆、能感知世界、能定时执行任务**
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![PyQt5](https://img.shields.io/badge/GUI-PyQt5-41CD52?logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
@@ -36,7 +36,7 @@
 - **DeepSeek V4** / **Agnes AI** 双提供商
 - **Ollama 本地模型** 一键切换，离线可用
 - LiteLLM 统一网关，支持 OpenAI / Anthropic 双格式
-- Function Calling 工具调用，50+ 内置工具
+- **71 个 Function Calling 工具**，覆盖文件、系统、搜索、视觉、记忆等
 - 意图路由器：小模型分类 + 规则兜底，零成本智能化路由
 - 上下文压缩器：长对话智能摘要，告别记忆丢失
 
@@ -57,16 +57,23 @@
 - MediaPipe Pose 人体姿态推理
 - 摄像头视觉事件：人脸出现/消失、微笑、挥手
 
-### 🐧 QQ 桥接
-- 通过 **NapCatQQ** WebSocket 接入 QQ
-- 多用户/群聊独立会话上下文
-- 文字 · 图片（AI 分析）· 语音（SILK 转录）· 文件
-- TTS 回复 → SILK 编码 → QQ 语音消息
-- 长文本智能分段 · 群聊 @ 感知 · 限速保护
+### 🤖 定时自动化（NEW）
+- **自然语言 → 定时任务**："每天14:00清理回收站"
+- **ReAct Agent 执行**：运行时 LLM 自主决定工具调用，非静态计划
+- 5 种调度类型：一次性 · 间隔 · 每天 · 每周 · 每月
+- 取消执行 · 超时保护 · 死循环检测 · 自动清理
+- 错过任务询问 · 执行日志追溯
 
 </td>
 </tr>
 </table>
+
+### 🌐 多端桥接
+
+| 桥接 | 方案 | 能力 |
+|------|------|------|
+| **QQ 桥接** | NapCatQQ WebSocket | 多用户/群聊独立会话 · 文字 · 图片 · 语音 · 文件 · TTS 回复 |
+| **微信桥接** | AstrBot + weixin_oc 插件 | 扫码登录 · HTTP 消息转发 · 反封控参数调节 · 日限额 · 链接拦截 |
 
 ### 🎮 特色模式
 
@@ -76,6 +83,7 @@
 | **待机模式** | 阿里云 NLS 实时语音识别，说"完毕"触发回复，无需鼠标键盘，适合休息时陪伴 |
 | **观察模式** | ESP32-CAM 肩载摄像头自动转动云台拍照，AI 分析画面内容，发现值得关注的事物并记录 |
 | **人体跟踪** | ESP32 实时推流 + MediaPipe Pose，舵机自动跟随人物移动 |
+| **摸鱼模式** | 用户空闲时自动找事做：翻看旧日记、浏览相册、逛逛 B 站、补写日记 |
 
 ### 🔌 技能系统 · 插件式扩展
 
@@ -88,12 +96,13 @@
 | 📷 肩部外设控制 | ESP32-CAM 云台 + 观察 + 人体跟踪 | ✅ |
 | 📖 日记与备忘 | 日记读写 + 备忘本整理 | ✅ |
 | 🎵 音乐播放控制 | 音乐盒播放/暂停/切歌/音量 | ✅ |
+| 📺 B站视频摘要 | Bilibili 视频搜索 + 字幕提取 + AI 总结 | ✅ |
 | 💻 系统信息工具 | CPU/内存/磁盘/网络状态查询 | ❌ |
 | 📚 学习助手 | 学习方法与记忆力建议 | ❌ |
 
-> 渐进式披露架构：技能知识按需注入 System Prompt，与全量注入相比节省 **78% Token**。
+> 渐进式披露架构：技能知识按需注入 System Prompt，12 个 `_prompt_guides` 模块按关键词触发，与全量注入相比大幅节省 Token。
 
-### 🧠 记忆系统 · 双引擎
+### 🧠 棱镜记忆系统 · 双引擎
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -111,14 +120,15 @@
 
 **6 大记忆分类**：档案 · 偏好 · 事件 · 知识 · 行为 · 技能
 
-### 🎭 情感系统
+### 🎭 涟漪情感引擎
 
 莲心拥有 **涟漪情感引擎**，不是简单的情绪标签，而是持续演化的情感状态：
 
-- **16 种事件检测**：欺骗、否定、使唤、道歉、深聊、夸奖、感谢等
-- **多维状态向量**：好感度、信任度、疲惫度、防御值
+- **5 维需求模型**：被尊重、被需要、自主权、新鲜感、安全感，各有独立衰减常数
+- **3 层状态系统**：表层（即时表达）→ 中层（暖春/微凉/寒冬/修复期）→ 深层（信任基线）
+- **13 种事件检测**：命令连击、真诚交流、欺骗、否定、道歉、夸奖、感谢等
+- **防御模式（寒冬）**：被频繁使唤时自动限制工具可用性
 - **主动聊天调度**：根据时段 + 情感状态 + 用户活跃度智能触发
-- **防御模式**：被频繁使唤时自动限制工具可用性
 - **表情包联动**：16 种情绪表情自然表达，Galgame 立绘同步切换
 
 ### 🌐 联网搜索 · 四通道
@@ -134,9 +144,76 @@ web_search → fetch_webpage (HTTP 直连)
 ### 🔗 MCP 协议支持
 
 兼容 **Model Context Protocol**，可接入外部 MCP 服务扩展能力：
-- 自动扫描 `mcp_servers/` 目录注册服务
-- 统一 `mcp__{service}__{tool}` 命名路由
-- 内置知乎搜索 MCP 服务
+
+| 服务 | 类型 | 能力 |
+|------|------|------|
+| **filesystem** | 外部 (Node.js) | 本地文件系统：列表、读写、搜索、创建目录、移动 |
+| **firecrawl** | 外部 (Node.js) | 网页爬虫：页面转 Markdown、批量抓取 |
+| **tavily_search** | 外部 (Node.js) | AI 原生搜索引擎，实时搜索、深度爬取 |
+| **zhihu_search** | 内置 Agent | 知乎全网搜索 |
+
+---
+
+## 🤖 定时自动化系统（NEW）
+
+用户可以**用自然语言下达定时执行的任务**，莲心自动解析、调度、执行。
+
+### 工作流程
+
+```
+"每天14:00帮我搜索 AI 新闻并写成 docx"
+        │
+        ▼
+  ┌──────────────┐
+  │ 解析器        │  LLM 提取调度信息（时间、频率、描述）
+  │ (parser)     │  LLM 超时 → 规则降级（正则时间提取）
+  └──────┬───────┘
+         │ AutoTask { schedule_type, schedule_time, description }
+         ▼
+  ┌──────────────┐
+  │ 调度器        │  QThread 后台轮询（30s 间隔）
+  │ (scheduler)  │  到期检测 → 错过询问 → 自动清理
+  └──────┬───────┘
+         │ task_due signal
+         ▼
+  ┌──────────────┐
+  │ ReAct Agent  │  LLM 运行时自主决定工具调用
+  │ (executor)   │  搜索 → 分析结果 → 写文档 → 通知
+  └──────────────┘
+         │
+         ▼
+    完成通知（聊天框 + 语音播报）
+```
+
+### 核心特性
+
+| 特性 | 说明 |
+|------|------|
+| **5 种调度** | once（一次性）/ interval（每隔N分钟）/ daily / weekly / monthly |
+| **ReAct 执行** | LLM 看到实际搜索结果后才写文档，杜绝占位文本 |
+| **自适应重试** | 搜索无结果时自动切换搜索引擎和查询词 |
+| **死循环检测** | 连续 3 轮相同工具调用 → 注入破圈提示 |
+| **取消执行** | UI 一键取消，下轮迭代边界安全停止 |
+| **超时保护** | 默认 5 分钟全局限时，可配置 |
+| **LLM 重试** | 网络错误 3 次指数退避重试 |
+| **错过策略** | 询问用户 / 跳过 / 自动补做 |
+| **自动清理** | 完成超过 24h 的 once 任务每 10 分钟自动清理 |
+| **执行日志** | 每步工具调用的耗时、结果、成功/失败追溯 |
+
+### 实际执行示例
+
+```
+任务: "两分钟后帮我搜索最新 AI 大模型新闻，写一份 docx 保存到 E:\Desktop\test"
+
+ReAct 第1轮 → tavily_search("AI 大模型 最新新闻") + create_directory(E:/Desktop/test)
+ReAct 第2轮 → tavily_search(调整查询词)
+ReAct 第4轮 → web_search(DuckDuckGo 切换搜索引擎)
+ReAct 第6轮 → fetch_webpage(直接抓取 AI 新闻聚合页)
+ReAct 第7轮 → format_document(基于真实搜索结果生成 docx)
+ReAct 第8轮 → "任务完成！已保存至 E:\Desktop\test\AI大模型最新快讯.docx"
+
+✅ 42 秒完成，文档内容为真实 AI 新闻摘要，零占位文本
+```
 
 ---
 
@@ -152,7 +229,7 @@ web_search → fetch_webpage (HTTP 直连)
 │  │ MainWindow │ ChatWidget   │ InputPanel   │ CharacterWidget  │ │
 │  │ 主窗口      │ 聊天气泡      │ 输入面板      │ 角色动画/表情     │ │
 │  ├────────────┼──────────────┼──────────────┼──────────────────┤ │
-│  │ Galgame模式 │ 设置/配置面板 │ 工具对话框群  │ 20+ 弹窗组件     │ │
+│  │ Galgame模式 │ 设置/配置面板 │ 工具对话框群  │ 自动化任务管理    │ │
 │  └────────────┴──────────────┴──────────────┴──────────────────┘ │
 ├──────────────────────────────────────────────────────────────────┤
 │                    Intent Router (brain/intent_router.py)          │
@@ -163,13 +240,22 @@ web_search → fetch_webpage (HTTP 直连)
 │     LiteLLM 统一网关 · Function Calling 对话循环                    │
 │     工具并行执行(ThreadPool) · 资源锁分组 · 线程亲和性              │
 ├───────────────────┬──────────────────────────────────────────────┤
-│  Tool Layer (50+)  │  Skill System (7 skills)                     │
+│  Tool Layer (71)   │  Skill System (8 skills)                     │
 │  brain/tools.py    │  brain/skill_manager.py                      │
 │  文件·系统·网络     │  自动发现→激活→工具注入→System Prompt注入       │
 │  视觉·记忆·音乐     │  渐进式披露 · 动态加载                        │
 │  闹钟·待办·外设     │                                              │
 ├───────────────────┴──────────────────────────────────────────────┤
-│                      Memory Engine                                 │
+│                   Automated Task System (NEW)                      │
+│  ┌─────────────────────┐  ┌──────────────────────────────────┐   │
+│  │ auto_task_parser.py  │  │ auto_task_executor.py (ReAct)    │   │
+│  │ NL → 调度信息提取     │  │ LLM 运行时自主决定工具调用         │   │
+│  ├─────────────────────┼──────────────────────────────────┤   │
+│  │ auto_task_manager.py │  │ auto_task_scheduler.py (QThread) │   │
+│  │ CRUD · 持久化 · 日志  │  │ 30s 轮询 · 错过检测 · 自动清理    │   │
+│  └─────────────────────┘  └──────────────────────────────────┘   │
+├──────────────────────────────────────────────────────────────────┤
+│                      Memory Engine (棱镜)                          │
 │  ┌─────────────────────┐  ┌──────────────────────────────────┐   │
 │  │ graph_memory.py      │  │ SQLite: entities + edges + facts │   │
 │  │ 五元组图CRUD+查询     │  │ WAL模式 · 并发安全 · 索引优化    │   │
@@ -181,21 +267,22 @@ web_search → fetch_webpage (HTTP 直连)
 ├──────────────────────────────────────────────────────────────────┤
 │                    MCP Bridge (brain/mcp/)                         │
 │     Registry → Client → Manager → 统一工具路由                    │
+│     4 个服务: filesystem · firecrawl · tavily · zhihu            │
 ├──────────────────────────────────────────────────────────────────┤
-│                    Emotional Engine (brain/emotional/)             │
-│     Event Detection → State Update → Prompt Injection              │
+│               Emotional Engine (brain/emotional/) 涟漪             │
+│     5维需求 → 13事件检测 → 3层状态 → Prompt注入                    │
 ├──────────────────────────────────────────────────────────────────┤
 │                    Background Workers (workers/)                   │
 │  AgentWorker │ VoiceWorker │ SpeakerWorker │ QQBridgeWorker       │
-│  ProactiveWorker │ HeartbeatWorker │ StandbyWorker                │
-│  ObservationModeWorker │ TrackWorker │ SmartReminderWorker        │
-│  ListeningWorker │ OCRWorker │ TrackFrameReceiver │ PoseDetector   │
+│  WeChatBridgeWorker │ ProactiveWorker │ HeartbeatWorker           │
+│  StandbyWorker │ ObservationModeWorker │ TrackWorker              │
+│  ListeningWorker │ OCRWorker │ SlackWorker │ SmartReminderWorker   │
 ├──────────────────────────────────────────────────────────────────┤
 │                  External APIs & Hardware                          │
 │  ┌─────────┬──────────┬──────────┬──────────┬──────────────────┐ │
 │  │DeepSeek │ Agnes AI │SiliconFlow│ Ollama  │ 阿里云 NLS        │ │
 │  ├─────────┼──────────┼──────────┼──────────┼──────────────────┤ │
-│  │GPT-SoVITS│Edge-TTS │ESP32-CAM │ SG90 舵机│ NapCatQQ          │ │
+│  │GPT-SoVITS│Edge-TTS │ESP32-CAM │ SG90 舵机│ NapCatQQ·AstrBot  │ │
 │  ├─────────┼──────────┼──────────┼──────────┼──────────────────┤ │
 │  │Playwright│Tesseract│faster-Whisper│MediaPipe│                │ │
 │  └─────────┴──────────┴──────────┴──────────┴──────────────────┘ │
@@ -282,6 +369,14 @@ python main.py --autostart
 | 语音回复开关 | TTS 语音消息回复 |
 | 定时参数 | 思考延迟、打字速度、分段阈值、全局限速、日限额 |
 
+### 微信桥接（NEW）
+
+| 配置项 | 说明 |
+|--------|------|
+| 桥接开关 | 启用/禁用微信消息收发 |
+| 监听端口 | AstrBot weixin_oc 插件的 HTTP 转发端口 |
+| 反封控参数 | 思考延迟、打字速度、回复间隔、分段阈值、全局限速、日限额、链接拦截 |
+
 ### 网络搜索
 
 | 配置项 | 说明 |
@@ -297,6 +392,7 @@ python main.py --autostart
 | 组件 | 用途 | 需单独部署 |
 |------|------|:---:|
 | [NapCatQQ](https://github.com/NapNeko/NapCatQQ) | QQ 消息收发 | ✅ |
+| [AstrBot](https://github.com/Soulter/AstrBot) + weixin_oc | 微信消息收发 | ✅ |
 | [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) | 图片文字识别 | ✅ |
 | [Ollama](https://ollama.com) | 本地模型运行 / 意图路由 | ❌ |
 | [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) | 高质量声音克隆 | ❌ |
@@ -306,32 +402,26 @@ python main.py --autostart
 
 ## 🛠️ 内置工具清单
 
-莲心向 AI 模型暴露 **50+ 个 Function Calling 工具**，按类别组织：
+莲心向 AI 模型暴露 **71 个 Function Calling 工具**（不含技能和 MCP 扩展），按类别组织：
 
 <details open>
-<summary><b>📁 文件操作</b></summary>
+<summary><b>📁 文件操作（9 个）</b></summary>
 
 | 工具 | 说明 |
 |------|------|
-| `read_file` | 读取文件（自动编码检测 + 分块） |
-| `read_file_lines` | 读取指定行范围 |
-| `read_file_chunk` | 分块读取大文件 |
-| `write_file` | 写入/覆盖文件 |
-| `edit_file` | 精确字符串替换编辑 |
-| `list_directory` | 列出目录内容 |
-| `search_files` | 按模式搜索文件（glob） |
-| `grep_file` | 文件内容正则搜索 |
-| `search_code` | 代码库跨文件搜索 |
-| `read_excel` / `write_excel` | Excel 读写 |
-| `write_docx` / `format_document` | Word 文档生成与格式化 |
+| `read_file` / `read_file_lines` / `read_file_chunk` | 读取文件（自动编码检测 + 分块） |
+| `write_file` / `edit_file` | 写入/覆盖 + 精确字符串替换 |
+| `list_directory` / `search_files` / `glob_files` | 目录浏览 + 文件搜索 |
+| `grep_file` / `search_code` | 文件/代码库正则搜索 |
 | `diff_files` | 文件差异比较 |
-| `code_structure` | 代码结构分析 |
-| `goto_definition` / `find_references` | 代码智能跳转 |
+| `code_structure` / `goto_definition` / `find_references` / `code_diagnostics` | 代码智能 |
+| `read_excel` / `write_excel` / `copy_excel_content` | Excel 读写 |
+| `write_docx` / `format_document` | Word 文档生成与格式化 |
 
 </details>
 
 <details open>
-<summary><b>💻 系统命令</b></summary>
+<summary><b>💻 系统命令（8 个）</b></summary>
 
 | 工具 | 说明 |
 |------|------|
@@ -340,15 +430,18 @@ python main.py --autostart
 | `run_shell` | 执行 shell 命令 |
 | `run_python_code` | 执行 Python 代码片段 |
 | `get_clipboard` | 读取剪贴板内容 |
+| `get_current_time` | 当前时间/日期/星期 |
+| `get_balance` | 查询 API 余额 |
+| `get_system_info` | CPU/内存/磁盘/GPU 状态 |
 
 </details>
 
 <details open>
-<summary><b>🌐 联网搜索</b></summary>
+<summary><b>🌐 联网搜索（5 个）</b></summary>
 
 | 工具 | 说明 |
 |------|------|
-| `web_search` | 网页搜索（搜索引擎） |
+| `web_search` | 网页搜索（多引擎） |
 | `fetch_webpage` | HTTP 直接抓取 |
 | `fetch_webpage_via_api` | API 代理抓取（穿透力强） |
 | `fetch_webpage_browser` | Playwright 浏览器渲染抓取 |
@@ -357,56 +450,59 @@ python main.py --autostart
 </details>
 
 <details open>
-<summary><b>🔍 视觉理解</b></summary>
+<summary><b>🔍 视觉理解（5 个）</b></summary>
 
 | 工具 | 说明 |
 |------|------|
 | `describe_image` | AI 图片内容描述 |
-| `ocr_image` | OCR 文字识别 |
-| `camera_capture` | 摄像头拍照 |
-| `screenshot` | 屏幕截图 |
+| `ocr_image` / `ocr_batch` | OCR 文字识别 |
+| `capture_from_camera` | 摄像头拍照 |
+| `capture_desktop` | 屏幕截图 |
 
 </details>
 
 <details open>
-<summary><b>🧠 记忆与任务</b></summary>
+<summary><b>🧠 记忆与知识（10 个）</b></summary>
 
 | 工具 | 说明 |
 |------|------|
-| `save_memory` / `update_memory` / `delete_memory` | 分类事实 CRUD |
+| `save_memory` / `search_memory` / `update_memory` / `delete_memory` / `list_memories` | 分类事实 CRUD |
 | `search_graph_memory` | 统一搜索（事实 + 图边） |
+| `query_connected_entities` / `delete_graph_entity` | 图实体查询与删除 |
+| `add_graph_edge` / `remove_graph_edge` | 图关系管理 |
+
+</details>
+
+<details open>
+<summary><b>📋 待办 · 📅 闹钟 · 🎵 音乐 · 📖 日记 · 🔗 跨端</b></summary>
+
+| 工具 | 说明 |
+|------|------|
 | `add_todo` / `list_todos` / `complete_todo` | 待办管理 |
-
-</details>
-
-<details open>
-<summary><b>📅 信息查询</b></summary>
-
-| 工具 | 说明 |
-|------|------|
-| `get_current_time` | 当前时间/日期/星期 |
-| `get_balance` | 查询 API 余额 |
-| `get_system_info` | CPU/内存/磁盘/GPU 状态 |
-| `get_weather` | 天气查询（和风天气） |
-
-</details>
-
-<details open>
-<summary><b>🎵 音乐 · 📖 日记 · ⏰ 闹钟 · 🔗 跨端</b></summary>
-
-| 工具 | 说明 |
-|------|------|
+| `add_alarm` / `list_alarms` / `delete_alarm` | 闹钟管理 |
 | `control_music` / `get_music_playlist` / `get_music_status` | 音乐盒控制 |
 | `read_diary` / `write_diary` | 日记读写 |
-| `read_note` / `organize_note` | 备忘本读写与整理 |
-| `add_alarm` / `list_alarms` / `delete_alarm` | 闹钟管理 |
+| `read_note` / `organize_note` / `notebook_write` / `notebook_read` / `notebook_delete` | 备忘本与草稿本 |
 | `search_cross_session` | 跨会话/跨设备搜索 |
-| `send_to_phone` | 发送内容到手机 |
+| `send_file_to_qq` | QQ 文件发送 |
 
 </details>
 
 <details open>
-<summary><b>🎙️ 语音 · 🌐 浏览器 · 📷 外设</b></summary>
+<summary><b>🤖 代理调度 · 🌤️ 天气 · 🎨 媒体生成</b></summary>
+
+| 工具 | 说明 |
+|------|------|
+| `plan_tasks` / `delegate_task` / `track_tasks` | 子代理任务规划与委派 |
+| `get_weather` / `set_user_city` | 天气查询（和风天气） |
+| `generate_image` / `generate_video` | AI 图片/视频生成 |
+| `set_expression` | 角色表情切换 |
+| `toggle_proactive_chat` | 主动聊天开关 |
+
+</details>
+
+<details open>
+<summary><b>🎙️ 语音 · 🌐 浏览器 · 📷 外设 · 📺 B站（技能工具）</b></summary>
 
 | 工具 | 说明 |
 |------|------|
@@ -415,6 +511,7 @@ python main.py --autostart
 | `shoulder_photo` / `shoulder_pan` / `shoulder_tilt` / `shoulder_center` / `shoulder_status` / `shoulder_temp` | 肩载摄像头云台控制 |
 | `start_observation_mode` / `stop_observation_mode` / `shoulder_observe` | 观察模式 |
 | `shoulder_human_track` / `stop_human_track` | 人体跟踪 |
+| `bilibili_search` / `bilibili_add_tag` / `bilibili_list_tags` | B 站视频搜索与兴趣标签 |
 
 </details>
 
@@ -444,17 +541,18 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 ```
 莲心AI/
 ├── main.py                  # 入口：单实例互斥 · DPI适配 · 自启管理
-├── config.py                # 全局配置：API/视觉/TTS/记忆/QQ/代理等30+配置项
+├── config.py                # 全局配置：API/视觉/TTS/记忆/QQ/微信/代理等30+配置项
 ├── aliyun_stt.py            # 阿里云NLS实时语音识别
 ├── requirements.txt         # Python依赖
 │
 ├── brain/                   # 🧠 核心大脑
 │   ├── agent.py             #   AgentCore：LiteLLM网关 + Function Calling循环
-│   ├── tools.py             #   50+工具定义与执行调度
+│   ├── tools.py             #   71个工具定义与执行调度
 │   ├── intent_router.py     #   意图路由器：小模型分类 + 规则兜底
 │   ├── decision.py          #   规则路由（正则匹配）
 │   ├── skill_manager.py     #   技能系统：发现→激活→工具注入
 │   ├── tts_engine.py        #   语音合成：GPT-SoVITS + Edge-TTS + 情绪匹配
+│   ├── tts_sovits_worker.py #   GPT-SoVITS 子进程工作线程
 │   ├── graph_memory.py      #   五元组图记忆 + 分类事实 (SQLite)
 │   ├── memory_store.py      #   记忆格式化与统一查询
 │   ├── context_compressor.py #  长对话智能压缩
@@ -468,14 +566,18 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── hardware_bridge.py   #   ESP32 WebSocket 云桥接
 │   ├── browser_controller.py #  Playwright 浏览器控制
 │   ├── heartbeat.py         #   心跳自检引擎
-│   ├── notebook.py          #   笔记本/代码执行
+│   ├── notebook.py          #   草稿本/代码执行
 │   ├── task_tracker.py      #   任务追踪
 │   ├── weather.py           #   和风天气集成
 │   ├── vision.py            #   视觉分析统一入口
 │   ├── audio_utils.py       #   音频工具
+│   ├── auto_task_executor.py #  🤖 ReAct Agent 自动化任务执行器
+│   ├── auto_task_manager.py  #  🤖 任务CRUD · 持久化 · 日志
+│   ├── auto_task_parser.py   #  🤖 自然语言 → 调度信息解析
+│   ├── auto_task_scheduler.py # 🤖 QThread 后台调度
 │   ├── emotional/           #   🎭 涟漪情感引擎
-│   │   ├── state.py         #       情感状态向量
-│   │   ├── events.py        #       16种事件检测
+│   │   ├── state.py         #       5维需求 · 3层状态
+│   │   ├── events.py        #       13种事件检测
 │   │   └── manager.py       #       情感管理器
 │   └── mcp/                 #   🔗 MCP协议支持
 │       ├── mcp_manager.py   #       统一调用路由
@@ -496,7 +598,7 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── api_config_dialog.py #   API配置面板
 │   ├── settings_dialog.py   #   全局设置
 │   ├── capability_center.py #   能力中心总览
-│   ├── alarm_dialog.py      #   闹钟管理
+│   ├── alarm_dialog.py      #   闹钟 + 倒计时 + 提醒 + 待办 + 自动化任务
 │   ├── diary_dialog.py      #   日记查看
 │   ├── todo_dialog.py       #   待办清单
 │   ├── note_dialog.py       #   备忘本
@@ -508,11 +610,12 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── reminder_dialog.py   #   提醒管理
 │   ├── camera_dialog.py     #   摄像头预览
 │   ├── quick_launch_dialog.py # 快捷启动
-│   ├── qq_settings_dialog.py #  QQ桥接配置
+│   ├── qq_settings_dialog.py  # QQ桥接配置
+│   ├── wechat_settings_dialog.py # 微信桥接配置（NEW）
 │   ├── network_settings_dialog.py # 网络/代理配置
 │   ├── sound_settings_dialog.py   # 音效设置
-│   ├── memory_settings_dialog.py  # 记忆系统设置
-│   ├── emotional_debug_dialog.py  # 情感系统调试面板
+│   ├── memory_settings_dialog.py  # 棱镜记忆系统设置
+│   ├── emotional_debug_dialog.py  # 涟漪情感系统调试面板
 │   └── galgame/             #   🎮 Galgame模式
 │       ├── tachie_window.py      #   透明立绘窗口
 │       ├── galgame_dialog.py     #   可拖拽拉伸对话框
@@ -525,16 +628,17 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── speaker_worker.py    #   语音合成线程
 │   ├── listening_worker.py  #   持续监听线程
 │   ├── qq_bridge_worker.py  #   QQ桥接WebSocket线程
+│   ├── wechat_bridge_worker.py # 微信桥接HTTP线程（NEW）
 │   ├── proactive_worker.py  #   主动聊天调度线程
 │   ├── heartbeat_worker.py  #   心跳检测线程
 │   ├── standby_worker.py    #   待机模式线程
+│   ├── slack_worker.py      #   摸鱼模式线程（NEW）
 │   ├── observation_mode_worker.py # 观察模式循环
 │   ├── track_worker.py      #   人体跟踪统一线程
 │   ├── track_frame_receiver.py   # 跟踪帧接收
 │   ├── track_pose_detector.py    # Pose推理
 │   ├── ocr_worker.py        #   OCR后台线程
-│   ├── smart_reminder_worker.py  # 智能提醒
-│   └── qq_bridge_worker.py  #   QQ桥接
+│   └── smart_reminder_worker.py  # 智能提醒
 │
 ├── voice/                   # 🎤 语音子系统
 │   ├── listener.py          #   录音+VAD+Whisper识别
@@ -551,6 +655,7 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 ├── utils/                   # 🔧 工具模块
 │   ├── settings.py          #   全局设置管理
 │   ├── paths.py             #   路径管理+旧数据迁移
+│   ├── auto_task_data.py    #   🤖 AutoTask / ActionStep 数据模型
 │   ├── alarm_manager.py     #   闹钟管理
 │   ├── todo_manager.py      #   待办管理
 │   ├── reminder_manager.py  #   提醒管理
@@ -564,6 +669,8 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── balance.py           #   API余额查询
 │   ├── camera.py            #   摄像头工具
 │   ├── sound.py             #   音效播放
+│   ├── slack_utils.py       #   摸鱼模式数据收集（NEW）
+│   ├── bilibili_history.py  #   B站浏览历史与兴趣标签（NEW）
 │   └── autostart.py         #   开机自启管理
 │
 ├── skills/                  # 🔌 技能包（插件式）
@@ -572,13 +679,19 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── 肩部外设控制/        #   ESP32 云台
 │   ├── 日记与备忘/          #
 │   ├── 音乐播放控制/        #
+│   ├── B站视频摘要/         #   Bilibili API + 字幕提取（NEW）
 │   ├── 系统信息工具/        #
-│   └── _prompt_guides/      #   System Prompt 渐进式注入模块 (10个)
+│   ├── 学习助手/            #
+│   └── _prompt_guides/      #   System Prompt 渐进式注入模块（12个）
 │
 ├── mcp_servers/             # 🔗 MCP服务
+│   ├── filesystem/          #   本地文件系统操作（NEW）
+│   ├── firecrawl/           #   网页爬虫与内容提取（NEW）
+│   ├── tavily_search/       #   AI 原生搜索引擎（NEW）
 │   └── zhihu_search/        #   知乎搜索
 │
-├── alibabacloud-nls-python-sdk/ # 阿里云NLS官方SDK（内置）
+├── game/                    # 🎮 实验性功能
+│   └── genericrawl-main/    #   Roguelike 游戏引擎（开发中）
 │
 └── assets/                  # 🎨 静态资源
     ├── GIF/                 #   角色动画序列帧
@@ -595,7 +708,7 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 ## 🧬 数据流
 
 ```
-用户输入 (文字/语音/QQ消息)
+用户输入 (文字/语音/QQ/微信)
     │
     ▼
 ┌──────────────┐    规则路由(兜底)
@@ -608,11 +721,11 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │           AgentCore                  │
 │  System Prompt 组装                  │
 │  ├── 人格设定 (_BASE_PROMPT)         │
-│  ├── 记忆注入 (图记忆 + 分类记忆)     │
-│  ├── 情感状态 (涟漪引擎)              │
+│  ├── 记忆注入 (棱镜: 图记忆+分类记忆) │
+│  ├── 情感状态 (涟漪: 5维需求+3层状态) │
 │  ├── 技能知识 (激活的技能SKILL.md)    │
-│  ├── 渐进式技能模块 (关键词匹配)      │
-│  └── MCP服务描述                     │
+│  ├── 渐进式技能模块 (12个关键词触发)  │
+│  └── MCP服务描述 (4服务)             │
 │                                      │
 │  Function Calling 循环               │
 │  ├── LiteLLM → AI API                │
@@ -628,16 +741,43 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │  记忆提取 → 五元组+分类事实            │
 │  对话压缩 → 上下文摘要(如需)           │
 │  TTS合成 → 语音输出(如需)             │
-│  QQ发送 → 消息推送(如需)              │
+│  QQ/微信发送 → 消息推送(如需)          │
 │  历史记录 → SQLite持久化              │
 └─────────────────────────────────────┘
+
+═══════════════════════════════════════
+  定时自动化支线（独立调度线程）
+═══════════════════════════════════════
+
+用户输入 "每天14:00清理回收站"
+    │
+    ▼
+┌──────────────────────┐
+│ auto_task_parser     │  LLM 提取调度信息（时间/频率/描述）
+│ (LLM + 规则降级)     │
+└──────┬───────────────┘
+       │ AutoTask { schedule_type, schedule_time, description }
+       ▼
+┌──────────────────────┐
+│ auto_task_manager    │  JSON 持久化 + CRUD + 观察者通知
+└──────┬───────────────┘
+       │
+       ▼
+┌──────────────────────┐
+│ auto_task_scheduler  │  QThread 30s 轮询
+│ (后台线程)            │  到期检测 → task_due signal
+└──────┬───────────────┘
+       │
+       ▼
+┌──────────────────────┐
+│ auto_task_executor   │  ReAct Agent 循环
+│ (daemon 线程)         │  LLM 运行时自主决定工具调用
+│                      │  搜索结果 → 写文档 → 通知
+└──────┬───────────────┘
+       │
+       ▼
+  完成通知（聊天框 + 语音）
 ```
-
----
-
-## 📝 开发记录
-
-详见 `莲心AI开发档案记录.docx`
 
 ---
 

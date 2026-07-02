@@ -149,6 +149,35 @@ class AutoTaskManager:
     def complete_task(self, task_id: str) -> bool:
         return self.update_task(task_id, status="completed")
 
+    # ── P4: 自动清理已完成的 once 任务 ──
+
+    def cleanup_old_completed_tasks(self, hours: int = 24) -> int:
+        """移除已完成超过指定小时数的 once 任务。返回移除数量。"""
+        now = datetime.now()
+        to_remove = []
+        for t in self._tasks:
+            if t.schedule_type != "once":
+                continue
+            if t.status != "completed":
+                continue
+            if not t.last_executed:
+                # 无执行记录但状态为 completed，也清理
+                to_remove.append(t.task_id)
+                continue
+            try:
+                last_dt = datetime.strptime(t.last_executed, "%Y-%m-%d %H:%M")
+                if (now - last_dt).total_seconds() > hours * 3600:
+                    to_remove.append(t.task_id)
+            except ValueError:
+                to_remove.append(t.task_id)
+
+        if to_remove:
+            self._tasks = [t for t in self._tasks if t.task_id not in to_remove]
+            self.save()
+            self._notify()
+            print(f"🧹 [AutoTaskManager] 已清理 {len(to_remove)} 个过期 once 任务")
+        return len(to_remove)
+
     # ── 调度检查 ──
 
     def get_due_tasks(self) -> list[AutoTask]:

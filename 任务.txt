@@ -1,0 +1,111 @@
+# 莲心AI — 自动化任务系统 交接简报
+
+## 项目背景
+
+莲心AI 是一个 PyQt5 桌面助手，具备语音对话、定时待办等能力。最近新增了**自动化任务系统**，让用户用自然语言下达定时执行的任务（如"两分钟后帮我删除某目录下的docx文件"），系统自动解析、调度、执行。
+
+## 当前状态
+
+核心流程已跑通，但执行层有 6 个待改进项（P0~P6）。P0 最重要，不改的话搜索+写文档类任务永远生成空壳。
+
+---
+
+## 相关文件清单
+
+| 文件 | 用途 | 行数 |
+|------|------|------|
+| `brain/auto_task_parser.py` | 自然语言 → AutoTask 解析（LLM + 规则降级） | ~520 |
+| `brain/auto_task_executor.py` | 按序执行工具链，含重试/超时/日志 | ~250 |
+| `brain/auto_task_manager.py` | 任务 CRUD、持久化(`auto_tasks.json`)、到期检测 | ~270 |
+| `brain/auto_task_scheduler.py` | QThread 后台调度，30s 间隔检查到期任务 | ~80 |
+| `utils/auto_task_data.py` | AutoTask / ActionStep 数据模型 | ~220 |
+| `gui/main_window.py` | 意图检测、信号连接、任务完成通知 | ~2820 |
+| `gui/alarm_dialog.py` | 闹钟提醒 → 新增"自动化任务"标签页 | ~1200 |
+| `gui/chat_widget.py` | `add_system_tip` 滚动修复 | ~120 |
+| `brain/tools.py` | 工具定义 + 执行器（write_docx, web_search 等） | ~4700 |
+
+---
+
+## P0~P6 待改进项
+
+### P0：执行时缺少 LLM 参与（最关键）
+
+**问题**：任务解析时 LLM 生成静态工具链，但执行时没有 LLM。导致 `web_search` 搜到结果后，`write_docx` 的 content 只是占位文本"从搜索结果中提取的新闻摘要"，而非真正的摘要。
+
+**文件**：`brain/auto_task_executor.py` → `_execute_sync` 函数
+
+**改法**：
+1. 新增 `execution_context` 字符串，每步执行后累积结果
+2. 在 `write_docx`/`write_file`/`write_excel` 步骤后，若 content 很短（<20字）或含"占位/提取"，则调用 LLM 基于 execution_context 生成真正内容
+3. 替换 tool_params 后重新调用 `execute_tool`
+4. 重试策略改为**只重试当前步骤**，而非整个任务（避免已成功的步骤重复执行）
+
+**关键代码位置**：`auto_task_executor.py` 第 47 行 `def _execute_sync`
+
+---
+
+### P1：重试策略不合理
+
+**问题**：步骤 1 失败 → 从头重试步骤 0+1，浪费 API。参数错误也重试（无意义）。重试等待期间锁占着，调度器每 30s 刷"正在执行中"。
+
+**文件**：`brain/auto_task_executor.py`
+
+**改法**：
+- 重试循环改为只包裹单步（`for step in actions: while retry <= max_retries:`）
+- 区分 `KeyError`/`TypeError`（参数错误，不重试）和网络错误（重试）
+- 重试等待期间不阻塞锁，或改为异步等待
+
+---
+
+### P2：失败时用户无感知
+
+**问题**：任务失败只在终端打印，聊天框无提示。
+
+**文件**：`gui/main_window.py` 第 1763 行 `_on_auto_task_completed`
+
+**改法**：失败时调用 `self._chat_widget.add_ai_message(...)` 发一条醒目的 AI 消息（类似普通聊天），同时 `_speak` 语音播报。
+
+---
+
+### P3：任务状态缺少"执行中"
+
+**问题**：`active` 同时表示"等待"和"执行中"，UI 无法区分。
+
+**文件**：`utils/auto_task_data.py`（数据模型）、`gui/alarm_dialog.py`（UI 显示）
+
+**改法**：在 `_running_tasks` 集合中判断，UI 显示"执行中..."。
+
+---
+
+### P4：once 任务执行完不自动清理
+
+**问题**：once 任务完成后标记 `completed`，但永远留在列表里。
+
+**文件**：`brain/auto_task_manager.py`（标记完成）、`gui/alarm_dialog.py`（UI 刷新）
+
+**改法**：三个选项选一 — A) 自动移除 B) 折叠到"已完成"分组 C) 24h 后清理。
+
+---
+
+### P5：不支持手动取消
+
+**问题**：任务开始执行后无法取消，只能等超时。
+
+**文件**：`brain/auto_task_executor.py`（执行循环）、`gui/alarm_dialog.py`（UI 按钮）
+
+**改法**：增加 `_cancel_flags: dict[str, bool]`，每步执行前检查，UI 加取消按钮。
+
+---
+
+### P6：小修小补
+
+| 项 | 文件 | 说明 |
+|----|------|------|
+| 别名表维护 | `auto_task_parser.py` | `_TOOL_NAME_ALIASES` 和 `_PARAM_NAME_ALIASES` 需随新工具手动更新 |
+| DuckDuckGo 警告 | `tools.py` | 升级 `duckduckgo_search` → `ddgs` |
+| 回收站清空 | `tools.py` / 降级规则 | 用 `Clear-RecycleBin -Force` 替代 `rd /s /q` |
+| 执行超时 | `auto_task_executor.py` | `EXECUTION_TIMEOUT=300` 硬编码，应可配置 |
+
+---
+
+## 关键数据流

@@ -1770,9 +1770,14 @@ class MainWindow(QMainWindow):
             self._chat_widget.add_system_tip(msg)
             self._speak(f"已完成自动化任务：{task.name}")
         else:
-            msg = f"⚠️ 自动化任务「{task.name}」执行失败: {message[:100]}"
-            self._chat_widget.add_system_tip(msg)
-            self._speak(f"自动化任务「{task.name}」执行失败")
+            # P2: 失败时发送醒目的 AI 消息 + 语音播报，而非仅在终端打印
+            fail_msg = (
+                f"⚠️ 自动化任务「{task.name}」执行失败了 😢\n\n"
+                f"原因：{message[:200]}\n\n"
+                f"💡 可以在「闹钟&提醒 → 自动化」标签页查看详细日志。"
+            )
+            self._chat_widget.add_ai_message(fail_msg)
+            self._speak(f"主人，自动化任务「{task.name}」执行失败了，请查看详情")
     # ── 自动化任务自然语言解析 ──────────────────────────────
 
     def _detect_auto_task_intent(self, text: str) -> bool:
