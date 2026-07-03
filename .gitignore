@@ -66,4 +66,3 @@ test_workspace/
 .codegraph/started
 .codegraph/daemon.pid
 logs/
-game/
