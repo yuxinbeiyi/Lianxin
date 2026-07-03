@@ -65,4 +65,4 @@ test_workspace/
 # Codegraph 运行时
 .codegraph/started
 .codegraph/daemon.pid
-logs/
+logs/"game/" 
