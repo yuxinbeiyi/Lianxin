@@ -74,6 +74,11 @@ graphify-out/cost.json
 # Graphify 输出目录
 graphify-out/
 
+# 项目配置文件（不提交到 Gitee）
+.graphifyignore
+.mcp.json
+CLAUDE.md
+
 # 音频文件
 *.wav
 
