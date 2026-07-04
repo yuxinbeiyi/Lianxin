@@ -4135,8 +4135,58 @@ def diff_files(file_a, file_b, context_lines=3):
     return result
 
 
+def _find_powershell():
+    """查找系统中可用的 PowerShell 路径。优先 pwsh (PowerShell 7+)，其次 powershell (Windows PowerShell 5.1)。"""
+    import shutil
+    for name in ("pwsh", "pwsh.exe", "powershell", "powershell.exe"):
+        found = shutil.which(name)
+        if found:
+            return found
+    candidates = [
+        r"C:\Program Files\PowerShell\7\pwsh.exe",
+        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        r"C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe",
+    ]
+    for c in candidates:
+        if Path(c).is_file():
+            return c
+    return None
+
+
+def _unwrap_powershell_command(command: str) -> str:
+    """如果命令是 cmd/powershell 包装格式，提取内部的 PowerShell 命令。
+
+    例如:
+      'powershell -Command "Clear-RecycleBin -Force"' → 'Clear-RecycleBin -Force'
+      'powershell -c "Get-Process"' → 'Get-Process'
+      'cmd /c "echo Y|PowerShell ..."' → 内层命令
+      'Clear-RecycleBin -Force' → 'Clear-RecycleBin -Force' (不变)
+    """
+    cmd_stripped = command.strip()
+
+    # 剥离 cmd /c 或 cmd /C 包装
+    cmd_match = re.match(r'^cmd\s+/[cC]\s+["\']?(.+?)["\']?\s*$', cmd_stripped, re.DOTALL)
+    if cmd_match:
+        cmd_stripped = cmd_match.group(1).strip()
+
+    # 剥离 powershell/pwsh -Command/-c 包装
+    ps_match = re.match(
+        r'^(?:powershell|pwsh)(?:\.exe)?\s+(?:-Command|-c|/c)\s+["\']?(.+?)["\']?\s*$',
+        cmd_stripped, re.IGNORECASE | re.DOTALL
+    )
+    if ps_match:
+        inner = ps_match.group(1).strip()
+        # 递归解包（处理多层包装，如 cmd /c powershell -Command "..."）
+        if inner != command:
+            return _unwrap_powershell_command(inner)
+        return inner
+
+    return cmd_stripped
+
+
 def run_shell(command, working_dir=None, timeout=60, max_output_lines=200, cancel_event=None):
-    """增强版 Shell 执行 — 借鉴 Claude Code BashTool，支持主动中断"""
+    """增强版 Shell 执行 — 借鉴 Claude Code BashTool，支持主动中断
+    Windows 上 cmd 失败时自动回退到 PowerShell 重试。"""
     cwd = str(Path(working_dir).expanduser().resolve()) if working_dir else None
     proc = None
     try:
@@ -4179,6 +4229,36 @@ def run_shell(command, working_dir=None, timeout=60, max_output_lines=200, cance
         for line in remaining_stderr.splitlines():
             stderr_lines.append(line)
 
+        full_stderr = '\n'.join(stderr_lines)
+        is_not_recognized = (
+            proc.returncode != 0
+            and ("not recognized" in full_stderr.lower()
+                 or "not found" in full_stderr.lower()
+                 or "not operable" in full_stderr.lower())
+        )
+
+        if is_not_recognized and sys.platform == "win32":
+            ps_path = _find_powershell()
+            if ps_path:
+                # 智能解包：如果原命令是 powershell/cmd 包装格式，提取内部命令
+                inner_cmd = _unwrap_powershell_command(command)
+                logger.info(f"cmd 无法识别命令，自动回退到 PowerShell: {ps_path}")
+                if inner_cmd != command:
+                    logger.info(f"  已解包包装命令: {command[:80]} → {inner_cmd[:80]}")
+                ps_proc = subprocess.run(
+                    [ps_path, "-NoProfile", "-Command", inner_cmd],
+                    cwd=cwd, capture_output=True, text=True,
+                    encoding='utf-8', errors='replace', timeout=timeout,
+                )
+                ps_stdout = ps_proc.stdout.strip()
+                ps_stderr = ps_proc.stderr.strip()
+                ps_parts = [f"[PowerShell 回退] 退出码: {ps_proc.returncode}"]
+                if ps_stdout:
+                    ps_parts.append(ps_stdout[:3000])
+                if ps_stderr:
+                    ps_parts.append(f"[stderr]\n{ps_stderr[:1000]}")
+                return '\n'.join(ps_parts)
+
         output_parts = [f"退出码: {proc.returncode}"]
         if stdout_lines:
             output_parts.append('\n'.join(stdout_lines))
@@ -4195,7 +4275,6 @@ def run_shell(command, working_dir=None, timeout=60, max_output_lines=200, cance
             proc.kill()
             proc.wait()
         return f"命令执行失败：{e}"
-
 
 
 def git_status(repo_path=None, action="status", limit=10):
@@ -4249,8 +4328,6 @@ def code_structure(file_path):
         return f"文件中未检测到已支持的代码结构（{path.name}）"
     return f"{path.name} 代码结构：\n" + '\n'.join(results)
 
-
-# ── 第二阶段新增：子代理任务分解 ─────────────────────────
 
 def plan_tasks(task_description: str, context: str = "", max_subtasks: int = 5) -> str:
     """使用 LLM 将复杂任务分解为子任务列表"""

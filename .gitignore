@@ -55,15 +55,27 @@ nul
 
 # 环境变量（防密钥泄露）
 .env
-"" 
-"# GIF ѹ������" 
-"*.gif.bak" 
-"assets/����GIF/" 
-claude-code-main/ 
+# GIF 压缩备份
+*.gif.bak
+assets/原始GIF/
+claude-code-main/
 test_workspace/
 
-# Codegraph 运行时
-.codegraph/started
-.codegraph/daemon.pid
-logs/"game/" 
-"logs/" 
+# CodeGraph 本地索引（机器专属，92MB+，不提交）
+.codegraph/
+
+# Graphify 本地缓存和费用记录
+graphify-out/cache/
+graphify-out/cost.json
+
+# Claude Code 本地配置
+.claude/
+
+# Graphify 输出目录
+graphify-out/
+
+# 音频文件
+*.wav
+
+logs/
+game/
