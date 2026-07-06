@@ -6,6 +6,7 @@ import webbrowser
 import os
 import ctypes
 from ctypes import wintypes
+from typing import Optional
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox,QDialog,QTextEdit
 )
@@ -40,6 +41,7 @@ from workers.speaker_worker    import SpeakerWorker
 from workers.proactive_worker  import ProactiveWorker
 from workers.heartbeat_worker import HeartbeatWorker
 from workers.standby_worker    import StandbyWorker   # 不再需要 contains_end_phrase, strip_end_phrase
+from brain.voice_duplex        import VoiceDuplexManager
 from workers.slack_worker      import SlackWorker
 from utils.accompany_stats  import AccompanyStats
 
@@ -117,6 +119,8 @@ class MainWindow(QMainWindow):
     _route_ready = pyqtSignal(str, bool, object)
     _auto_task_parsed_signal = pyqtSignal(bool, str, object)  # (success, message, task)
     _auto_task_done_signal = pyqtSignal(str, bool, str)       # (task_id, success, message)
+    _duplex_voice_start_signal = pyqtSignal()                  # 跨线程：VAD 检测到语音 → UI 更新
+    _duplex_transcript_signal = pyqtSignal(str)                # 跨线程：转录结果 → 发送消息
     def __init__(self, autostart_mode: bool = False):
         super().__init__()
         self._autostart_mode = autostart_mode
@@ -228,6 +232,8 @@ class MainWindow(QMainWindow):
         self._note_poll_timer = None
         self._note_timeout_timer = None
         self._note_file = None
+        self._voice_duplex: Optional[VoiceDuplexManager] = None
+        self._standby_mode = "full_duplex"        # "full_duplex" / "legacy"
 
         self._build_ui()
         import brain.tools as brain_tools
@@ -236,6 +242,12 @@ class MainWindow(QMainWindow):
         brain_tools.set_note_refresh_callback(self.refresh_note_dialog_content)
         brain_tools.set_proactive_toggle_callback(self._proactive_scheduler.reload_settings)
         self._route_ready.connect(self._on_route_ready)
+        self._duplex_voice_start_signal.connect(
+            lambda: self._input_panel.set_text("🎤 聆听中...")
+        )
+        self._duplex_transcript_signal.connect(
+            self._handle_duplex_transcript
+        )
 
         # 初始化 pygame 混音器（用于音乐播放）
         if not pygame.mixer.get_init():
@@ -2504,54 +2516,67 @@ class MainWindow(QMainWindow):
             self._exit_standby()
 
     def _enter_standby(self):
-        """开启待机模式：启动阿里云语音识别子进程"""
+        """开启待机模式。
+        full_duplex: 全双工语音（Silero VAD + 本地 Whisper，随时插话，无需结束词）
+        legacy: 旧模式（阿里云 + 文件轮询，需要结束词）
+        """
         if self._standby_state != "IDLE":
             return
         self._standby_state = "STANDBY"
         self._char_widget.enter_standby()
         self._is_waiting_for_response = False
 
-        # 从配置获取小纸条文件路径
-        from utils.settings import get_settings
-        settings = get_settings()
-        self._note_file = Path(settings.note_file_path)
-        
-        # 确保目录存在
-        self._note_file.parent.mkdir(parents=True, exist_ok=True)
-        self._note_file.write_text("", encoding="utf-8")
-      
-
-        # 启动阿里云语音识别子进程
-        import subprocess
-        self._stt_process = subprocess.Popen(
-            ["python", "aliyun_stt.py"],
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-        )
-
-        # 启动轮询定时器
-        self._note_poll_timer = QTimer(self)
-        self._note_poll_timer.timeout.connect(self._check_note_file)
-        self._note_poll_timer.start(2000)
-
-        # 超时定时器
-        self._note_timeout_timer = QTimer(self)
-        self._note_timeout_timer.setSingleShot(True)
-        self._note_timeout_timer.timeout.connect(self._on_note_timeout)
-
-        self._update_standby_button()
-        if self._global_settings.standby_auto_send:
-            self._chat_widget.add_system_tip('—— 待机模式已开启，直接说话，说完稍等即可——')
+        if self._standby_mode == "full_duplex":
+            self._voice_duplex = VoiceDuplexManager(
+                on_transcript=self._on_duplex_transcript,
+                on_voice_start_ui=self._on_duplex_voice_start,
+                on_state_change=self._on_duplex_state_change,
+            )
+            self._voice_duplex.start()
+            self._update_standby_button()
+            self._chat_widget.add_system_tip(
+                '—— 全双工待机已开启，**随时开口说话即可**，莲心说话时随时打断——')
         else:
-            end_word = self._global_settings.standby_end_word or "完毕"
-            self._chat_widget.add_system_tip(f'—— 待机模式已开启，直接说话，说完请说「{end_word}」——')
+            # 旧模式：阿里云 + 文件轮询
+            from utils.settings import get_settings
+            settings = get_settings()
+            self._note_file = Path(settings.note_file_path)
+            self._note_file.parent.mkdir(parents=True, exist_ok=True)
+            self._note_file.write_text("", encoding="utf-8")
+
+            import subprocess
+            self._stt_process = subprocess.Popen(
+                ["python", "aliyun_stt.py"],
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+            )
+
+            self._note_poll_timer = QTimer(self)
+            self._note_poll_timer.timeout.connect(self._check_note_file)
+            self._note_poll_timer.start(2000)
+
+            self._note_timeout_timer = QTimer(self)
+            self._note_timeout_timer.setSingleShot(True)
+            self._note_timeout_timer.timeout.connect(self._on_note_timeout)
+
+            self._update_standby_button()
+            if self._global_settings.standby_auto_send:
+                self._chat_widget.add_system_tip('—— 待机模式已开启，直接说话，说完稍等即可——')
+            else:
+                end_word = self._global_settings.standby_end_word or "完毕"
+                self._chat_widget.add_system_tip(f'—— 待机模式已开启，直接说话，说完请说「{end_word}」——')
 
 
     def _exit_standby(self):
-        """关闭待机模式：终止阿里云子进程并停止监听"""
+        """关闭待机模式"""
         self._standby_state = "IDLE"
         self._char_widget.exit_standby()
         
-        # 终止子进程
+        # 全双工模式
+        if self._voice_duplex:
+            self._voice_duplex.stop()
+            self._voice_duplex = None
+        
+        # 旧模式：终止子进程
         if self._stt_process:
             self._stt_process.terminate()
             self._stt_process = None
@@ -2568,8 +2593,9 @@ class MainWindow(QMainWindow):
     def _update_standby_button(self):
         """根据当前待机状态更新顶部栏待机按钮样式"""
         is_active = self._standby_state == "STANDBY"
+        is_duplex = getattr(self, '_standby_mode', 'full_duplex') == "full_duplex"
         if is_active:
-            self._btn_standby.setText("🌙 待机 ●")
+            self._btn_standby.setText("🔊 全双工 ●" if is_duplex else "🌙 待机 ●")
             self._btn_standby.setStyleSheet("""
                 QPushButton {
                     background-color: #2D2D3F;
@@ -2581,7 +2607,7 @@ class MainWindow(QMainWindow):
                 QPushButton:pressed{ background-color: #4D4D65; }
             """)
         else:
-            self._btn_standby.setText("🌙 待机")
+            self._btn_standby.setText("🔊 全双工" if is_duplex else "🌙 待机")
             self._btn_standby.setStyleSheet("""
                 QPushButton {
                     background-color: #2D2D3F;
@@ -2592,6 +2618,27 @@ class MainWindow(QMainWindow):
                 QPushButton:hover  { background-color: #3D3D55; }
                 QPushButton:pressed{ background-color: #4D4D65; }
             """)
+    def _on_duplex_voice_start(self):
+        """全双工：检测到用户开始说话 → 输入框显示聆听中（线程安全）"""
+        self._duplex_voice_start_signal.emit()
+    def _on_duplex_transcript(self, text: str):
+        """全双工模式：收到用户语音转录文本（VAD 线程调用 → 转发到主线程）"""
+        if self._standby_state != "STANDBY":
+            return
+        if not text or not text.strip():
+            return
+        self._duplex_transcript_signal.emit(text.strip())
+
+    def _handle_duplex_transcript(self, text: str):
+        """全双工模式：在主线程中处理转录文本 → 显示气泡 + 发送给 Agent"""
+        self._is_waiting_for_response = True
+        self._on_user_message(text)
+
+    def _on_duplex_state_change(self, state: str):
+        """全双工状态变化回调（可选：显示在状态栏）"""
+        from brain.voice_duplex import STATE_LABELS
+        label = STATE_LABELS.get(state, state)
+        print(f"[全双工] {label}")
 
     def _check_note_file(self):
         """轮询检查小纸条.txt。内容有变化时重置倒计时，
@@ -2835,6 +2882,10 @@ class MainWindow(QMainWindow):
             self._note_poll_timer.stop()
         if hasattr(self, '_note_timeout_timer') and self._note_timeout_timer:
             self._note_timeout_timer.stop()
+        # 全双工语音
+        if hasattr(self, '_voice_duplex') and self._voice_duplex:
+            self._voice_duplex.stop()
+            self._voice_duplex = None
         
         for worker in (self._agent_worker, self._voice_worker,
                     self._speaker_worker, self._proactive_worker):
@@ -3516,7 +3567,8 @@ class MainWindow(QMainWindow):
         """根据 QQ 桥接状态更新按钮外观"""
         btn = self._char_widget.get_qq_bridge_button()
         connected = self._qq_bridge is not None and self._qq_bridge.isRunning()
-        enabled = self._global_settings.qq_bridge_enabled
+        from config import get_qq_bridge_config
+        enabled = get_qq_bridge_config().get("enabled", False)
         if connected:
             btn.setText("✅ QQ聊天")
             btn.setStyleSheet("""
@@ -3706,6 +3758,10 @@ class SegmentSender(QObject):
         p = self.parent()
         if p and hasattr(p, '_global_settings') and not p._global_settings.silent_mode:
             self._speaker_worker = SpeakerWorker(self._speaker, seg, self)
+            # TTS 播放 → 暂停 VAD（防止回声循环）
+            if hasattr(p, '_voice_duplex') and p._voice_duplex:
+                self._speaker_worker.speaking_started.connect(p._voice_duplex.pause_vad)
+                self._speaker_worker.speaking_finished.connect(p._voice_duplex.resume_vad)
             self._speaker_worker.speaking_finished.connect(self._on_tts_finished)
             self._speaker_worker.start()
         else:

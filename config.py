@@ -218,6 +218,19 @@ def save_aliyun_stt_config(access_key_id: str, access_key_secret: str, app_key: 
     _save_full_config(full)
 
 
+# ── 火山引擎语音识别配置 ─────────────────────────────────
+# 免费额度: 20,000 次（半年），超出后 ¥1~4.5/小时
+# 获取地址: https://console.volcengine.com/asr
+# 进入控制台 → 应用管理 → 选择应用 → 复制以下三项:
+#   APPID      = 应用 ID
+#   ACCESS_KEY = 应用令牌 (token)
+#   CLUSTER    = 请求集群（在"应用管理"页面，AppID 下方或右侧可找到，通常类似 "volc_asr_demo"）
+#   SECRET_KEY = 应用密钥（可选，仅 HMAC256 签名鉴权使用）
+# 如果不知道 CLUSTER，检查 PDF 文档中列出的 cluster 值
+STT_VOLCANO_APPID = "5850927016"
+STT_VOLCANO_ACCESS_KEY = "AKLTYTMzYzMwZWY5ODhiNDU5YmIyYzg1NDc4ZTU4MWJiNzg"
+STT_VOLCANO_CLUSTER = "volcengine_input_common"
+STT_VOLCANO_SECRET_KEY = "WmpBNVl6TTVNakl4WVRnME5HUmtOMkk0WWpKa05XSTFaR1JoTTJVM1pqaw=="
 
 
 # ── 兼容旧代码的模块级变量（从用户配置动态读取）────────────

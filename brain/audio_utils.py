@@ -6,10 +6,13 @@ QQ 桥接音频工具：SILK ↔ WAV 转换、Whisper STT、Edge-TTS。
 
 import io
 import os
+import logging
 import tempfile
 import wave
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger("lianxin.audio_utils")
 
 
 # ── 常量 ──────────────────────────────────────────────────
@@ -39,12 +42,21 @@ def silk_to_wav(silk_path: str, wav_path: str, sample_rate: int = SILK_SAMPLE_RA
 def wav_to_silk(wav_path: str, silk_path: str,
                 sample_rate: int = SILK_SAMPLE_RATE,
                 bitrate: int = SILK_BITRATE):
-    """WAV 文件 → SILK 文件。末尾补 100ms 静音防截断。"""
+    """WAV 文件 → SILK 文件。自动重采样到 24000Hz（QQ 兼容）。末尾补 100ms 静音防截断。"""
     import pysilk
-    pcm_data = _wav_to_pcm(wav_path)
+    from pydub import AudioSegment
+
+    # 读取 WAV，检查采样率，如果不是 24000Hz 则重采样
+    audio = AudioSegment.from_wav(wav_path)
+    if audio.frame_rate != sample_rate:
+        logger.info(f"重采样: {audio.frame_rate}Hz → {sample_rate}Hz")
+        audio = audio.set_frame_rate(sample_rate)
+
+    # 导出为 24000Hz 16bit mono PCM
+    pcm_data = audio.raw_data  # 已经是 16bit mono after from_wav
     # 补 100ms 静音，避免 pysilk 最后半帧被吞
-    pad_samples = sample_rate // 10  # 100ms
-    pcm_data += b'\x00' * (pad_samples * SILK_SAMPLE_WIDTH)
+    pad_samples = sample_rate // 10
+    pcm_data += b'\x00' * (pad_samples * 2)  # 16bit = 2 bytes per sample
     with io.BytesIO(pcm_data) as f_in:
         with open(silk_path, "wb") as f_out:
             pysilk.encode(f_in, f_out, sample_rate, bitrate)
@@ -290,36 +302,51 @@ def clean_tts_text(text: str) -> str:
 
 
 
-def tts_to_wav(text: str, wav_path: str, voice: str = "zh-CN-XiaoxiaoNeural",
-               mood: str = None):
+def tts_to_wav(text: str, wav_path: str, voice: str = None,
+               mood: str = None, engine: str = "auto"):
     """文字 → TTS 语音文件（WAV 24000Hz 单声道 16bit）。
 
-    优先使用 TtsEngine（GPT-SoVITS + 声音克隆），
-    不可用时回退到 Edge-TTS（云端标准发音）。
-    mood 参数用于选择 GPT-SoVITS 的情绪音色。
+    Args:
+        text: 要合成的文字
+        wav_path: 输出 WAV 文件路径
+        voice: Edge-TTS 音色名，为 None 时从配置读取
+        mood: GPT-SoVITS 情绪（仅 engine="auto" 或 "gpt_sovits" 时生效）
+        engine: "auto"=先试 GPT-SoVITS，失败回退 Edge-TTS
+                "edge_tts"=强制使用 Edge-TTS（QQ 桥接用，避免后台线程 GPT-SoVITS 音色异常）
     """
     # 先清洗文本，防止 TTS 读符号/emoji
     text = clean_tts_text(text)
 
-    # 尝试 TtsEngine（GPT-SoVITS 优先）
+    # 从配置读取 TTS 引擎偏好和 Edge-TTS 音色
     try:
-        from brain.tts_engine import TtsEngine
-        engine = TtsEngine()
-        if engine.gpt_sovits_available:
-            success = engine.synthesize(text, wav_path, mood=mood)
-            if success:
-                return
+        from config import get_tts_config
+        tts_cfg = get_tts_config()
+        edge_voice = voice or tts_cfg.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural")
     except Exception:
-        pass
+        edge_voice = voice or "zh-CN-XiaoxiaoNeural"
 
-    # 回退：原 Edge-TTS 逻辑
+    # 尝试 TtsEngine（仅在 engine!="edge_tts" 时尝试）
+    if engine != "edge_tts":
+        try:
+            from brain.tts_engine import TtsEngine
+            eng = TtsEngine()
+            if eng.gpt_sovits_available:
+                success = eng.synthesize(text, wav_path, mood=mood)
+                if success:
+                    logger.info("TTS 使用 GPT-SoVITS")
+                    return
+        except Exception:
+            pass
+
+    # Edge-TTS
+    logger.info(f"TTS 使用 Edge-TTS (voice={edge_voice})")
     import asyncio
     import edge_tts
     from pydub import AudioSegment
 
     mp3_path = wav_path + ".mp3"
     try:
-        asyncio.run(edge_tts.Communicate(text, voice).save(mp3_path))
+        asyncio.run(edge_tts.Communicate(text, edge_voice).save(mp3_path))
         audio = AudioSegment.from_mp3(mp3_path)
         audio = audio.set_frame_rate(24000).set_channels(1).set_sample_width(2)
         audio.export(wav_path, format="wav")

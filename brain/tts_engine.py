@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import threading
 import queue
 from pathlib import Path
 from typing import Optional, Callable
@@ -126,6 +127,7 @@ _gpt_sovits_state = None  # None=未尝试, True=可用, False=不可用
 # 持久 worker 进程（模块级共享，跨 TtsEngine 实例复用）
 _worker_process: Optional[subprocess.Popen] = None
 _stderr_thread: Optional[threading.Thread] = None
+_worker_lock = threading.Lock()  # 保护 worker stdin/stdout 不被多线程并发读写（桌面+QQ同时用GPT-SoVITS时）
 
 
 def _get_runtime_python(gs_path: str) -> Optional[str]:
@@ -665,37 +667,38 @@ class TtsEngine:
             f"ref={os.path.basename(ref['path'])}, text_len={len(text)}"
         )
 
-        # 发送请求到 worker
-        try:
-            worker.stdin.write(request + "\n")
-            worker.stdin.flush()
-        except BrokenPipeError:
-            # worker 挂了，重启一次
-            _close_worker()
-            worker = _ensure_worker()
-            worker.stdin.write(request + "\n")
-            worker.stdin.flush()
-
-        # 读取响应（带超时，使用线程避免 Windows select 限制）
-        result_queue: "queue.Queue[str | None]" = queue.Queue()
-
-        def _reader():
+        # 发送请求到 worker（加锁防止多线程并发读写同一个子进程 stdin/stdout）
+        with _worker_lock:
             try:
-                result_queue.put(worker.stdout.readline())
-            except Exception:
-                result_queue.put(None)
+                worker.stdin.write(request + "\n")
+                worker.stdin.flush()
+            except BrokenPipeError:
+                # worker 挂了，重启一次
+                _close_worker()
+                worker = _ensure_worker()
+                worker.stdin.write(request + "\n")
+                worker.stdin.flush()
 
-        reader = threading.Thread(target=_reader, daemon=True)
-        reader.start()
-        reader.join(timeout=300)  # 首运行含模型加载，最多等 5 分钟
+            # 读取响应（带超时，使用线程避免 Windows select 限制）
+            result_queue: "queue.Queue[str | None]" = queue.Queue()
 
-        if reader.is_alive():
-            _close_worker()
-            raise RuntimeError("GPT-SoVITS 合成超时（300s）")
+            def _reader():
+                try:
+                    result_queue.put(worker.stdout.readline())
+                except Exception:
+                    result_queue.put(None)
 
-        response_line = result_queue.get_nowait()
+            reader = threading.Thread(target=_reader, daemon=True)
+            reader.start()
+            reader.join(timeout=300)  # 首运行含模型加载，最多等 5 分钟
 
-        # 解析 JSON 响应
+            if reader.is_alive():
+                _close_worker()
+                raise RuntimeError("GPT-SoVITS 合成超时（300s）")
+
+            response_line = result_queue.get_nowait()
+
+        # 解析 JSON 响应（锁外解析，不阻塞其他线程）
         try:
             data = json.loads(response_line.strip())
         except json.JSONDecodeError:
@@ -706,29 +709,6 @@ class TtsEngine:
             return True
         else:
             raise RuntimeError(data.get("error", "未知错误"))
-            worker.stdin.write(request + "\n")
-            worker.stdin.flush()
-
-        # 读取响应（带超时，使用线程避免 Windows select 限制）
-        result_queue: "queue.Queue[str | None]" = queue.Queue()
-
-        def _reader():
-            try:
-                result_queue.put(worker.stdout.readline())
-            except Exception:
-                result_queue.put(None)
-
-        reader = threading.Thread(target=_reader, daemon=True)
-        reader.start()
-        reader.join(timeout=300)  # 首运行含模型加载，最多等 5 分钟
-
-        if reader.is_alive():
-            self._close_worker()
-            raise RuntimeError("GPT-SoVITS 合成超时（300s）")
-
-        response_line = result_queue.get_nowait()
-
-        # 解析 JSON 响应
         try:
             data = json.loads(response_line.strip())
         except json.JSONDecodeError:
