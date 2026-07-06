@@ -221,16 +221,51 @@ def save_aliyun_stt_config(access_key_id: str, access_key_secret: str, app_key: 
 # ── 火山引擎语音识别配置 ─────────────────────────────────
 # 免费额度: 20,000 次（半年），超出后 ¥1~4.5/小时
 # 获取地址: https://console.volcengine.com/asr
-# 进入控制台 → 应用管理 → 选择应用 → 复制以下三项:
-#   APPID      = 应用 ID
-#   ACCESS_KEY = 应用令牌 (token)
-#   CLUSTER    = 请求集群（在"应用管理"页面，AppID 下方或右侧可找到，通常类似 "volc_asr_demo"）
-#   SECRET_KEY = 应用密钥（可选，仅 HMAC256 签名鉴权使用）
-# 如果不知道 CLUSTER，检查 PDF 文档中列出的 cluster 值
-STT_VOLCANO_APPID = "5850927016"
-STT_VOLCANO_ACCESS_KEY = "AKLTYTMzYzMwZWY5ODhiNDU5YmIyYzg1NDc4ZTU4MWJiNzg"
+# 配置入口：主界面 → API Key 配置 → 火山引擎 选项卡
+_VOLCANO_STT_DEFAULTS = {
+    "appid": "",
+    "access_key": "",
+    "cluster": "volcengine_input_common",
+    "secret_key": "",
+}
+
+# 模块级变量保持向后兼容（UI 配置写入 user_config.json 后，会覆盖这些默认值）
+STT_VOLCANO_APPID = "6062204577"
+STT_VOLCANO_ACCESS_KEY = "qfkR9BZzMgl7Zn0mv9RsRjGP1R82EboF"
 STT_VOLCANO_CLUSTER = "volcengine_input_common"
-STT_VOLCANO_SECRET_KEY = "WmpBNVl6TTVNakl4WVRnME5HUmtOMkk0WWpKa05XSTFaR1JoTTJVM1pqaw=="
+STT_VOLCANO_SECRET_KEY = ""
+
+
+def get_volcano_stt_config() -> dict:
+    """读取火山引擎语音识别配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    cfg = full.get("volcano_stt", {})
+    result = {}
+    for k, v in _VOLCANO_STT_DEFAULTS.items():
+        result[k] = cfg.get(k, v)
+    # 为空时回退模块级变量（向后兼容）
+    if not result["appid"]:
+        result["appid"] = STT_VOLCANO_APPID
+    if not result["access_key"]:
+        result["access_key"] = STT_VOLCANO_ACCESS_KEY
+    if not result["cluster"]:
+        result["cluster"] = STT_VOLCANO_CLUSTER
+    if not result["secret_key"]:
+        result["secret_key"] = STT_VOLCANO_SECRET_KEY
+    return result
+
+
+def save_volcano_stt_config(config: dict):
+    """保存火山引擎语音识别配置。"""
+    full = _load_full_config()
+    full["volcano_stt"] = config
+    _save_full_config(full)
+    # 同步更新模块级变量，使当前进程生效
+    global STT_VOLCANO_APPID, STT_VOLCANO_ACCESS_KEY, STT_VOLCANO_CLUSTER, STT_VOLCANO_SECRET_KEY
+    STT_VOLCANO_APPID = config.get("appid", STT_VOLCANO_APPID)
+    STT_VOLCANO_ACCESS_KEY = config.get("access_key", STT_VOLCANO_ACCESS_KEY)
+    STT_VOLCANO_CLUSTER = config.get("cluster", STT_VOLCANO_CLUSTER)
+    STT_VOLCANO_SECRET_KEY = config.get("secret_key", STT_VOLCANO_SECRET_KEY)
 
 
 # ── 兼容旧代码的模块级变量（从用户配置动态读取）────────────
