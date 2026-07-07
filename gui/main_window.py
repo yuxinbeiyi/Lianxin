@@ -1402,7 +1402,17 @@ class MainWindow(QMainWindow):
         self._speaker_worker.speaking_finished.connect(lambda: self._input_panel.set_mute_visible(False))
         if self._voice_duplex:
             self._speaker_worker.speaking_finished.connect(self._voice_duplex.resume_vad)
+            # 莲心说完后延迟播提示音（等 VAD cooldown 结束，用户可发言时）
+            self._speaker_worker.speaking_finished.connect(
+                lambda: QTimer.singleShot(2500, self._play_speak_cue))
         self._speaker_worker.start()
+
+    def _play_speak_cue(self):
+        """播放\"轮到用户发言\"提示音。仅在待机模式播。"""
+        if self._standby_state != "STANDBY":
+            return
+        from utils.sound import play_sound
+        play_sound("StartSpeak.mp3")
 
 
     # ── 状态管理 ─────────────────────────────────────────────
@@ -2589,6 +2599,8 @@ class MainWindow(QMainWindow):
                     "🎧 检测到耳机 — 莲心说话时你可以直接开口打断~")
             self._voice_duplex.start()
             self._update_standby_button()
+            # 提示音：麦克风就绪，可以说话了
+            QTimer.singleShot(500, self._play_speak_cue)
             self._chat_widget.add_system_tip(
                 '—— 全双工待机已开启，**随时开口说话即可**，莲心说话时随时打断——')
         else:
