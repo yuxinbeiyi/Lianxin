@@ -89,7 +89,6 @@ class VoiceDuplexManager:
         self._lock = threading.Lock()
         self._vad_paused = False
         self._vad_cooldown_until = 0.0
-        self._pending_interrupt = False  # TTS 期间的语音需要转录验证
 
     # ── 状态 ──────────────────────────────────────────
 
@@ -143,17 +142,11 @@ class VoiceDuplexManager:
 
     def _on_voice_end(self, wav_bytes: bytes):
         with self._lock:
-            was_paused = self._vad_paused
             if self._vad_paused:
-                # TTS 播放中检测到声音 → 先收集音频，转录后再判断是回声还是用户打断
-                self._vad_paused = False
-                self._vad_cooldown_until = 0.0
-            elif time.time() < self._vad_cooldown_until:
-                return  # TTS 刚结束 → 冷却期内丢弃延迟的 TTS 回声帧
+                return  # TTS 播放中 → 丢弃（防扬声器回声被误识别为用户说话）
+            if time.time() < self._vad_cooldown_until:
+                return  # TTS 刚结束 → 冷却期内丢弃延迟的回声尾帧
         self._audio_queue.put(wav_bytes)
-        # 标记这段音频来自 TTS 期间（需要在转录后判断是否有效打断）
-        if was_paused:
-            self._pending_interrupt = True
         self._audio_queue.put(wav_bytes)
 
     # ── 启动/停止 ─────────────────────────────────────
@@ -213,14 +206,6 @@ class VoiceDuplexManager:
             if t.startswith("<|") or t in ("。", "，", "？", "！"):
                 self._set_state(STATE_LISTENING)
                 continue
-
-            # TTS 期间采集的音频：转录有效 = 用户真的要打断！
-            if self._pending_interrupt:
-                self._pending_interrupt = False
-                logger.info(f"🗣️ TTS 打断确认！转录: {t}")
-                if self._on_interrupt_tts:
-                    _safe_call(self._on_interrupt_tts)
-                # 继续处理这段语音（用户的打断内容）
 
             logger.info(f"📝 转录: {transcript}")
             if self._on_transcript:
