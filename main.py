@@ -5,6 +5,7 @@
 
 import sys
 import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 import ctypes
 import warnings
 import traceback

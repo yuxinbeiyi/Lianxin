@@ -224,15 +224,15 @@ def save_aliyun_stt_config(access_key_id: str, access_key_secret: str, app_key: 
 # 配置入口：主界面 → API Key 配置 → 火山引擎 选项卡
 _VOLCANO_STT_DEFAULTS = {
     "appid": "",
-    "access_key": "",
+    "access_key": "", 
     "cluster": "volcengine_input_common",
     "secret_key": "",
 }
 
 # 模块级变量保持向后兼容（UI 配置写入 user_config.json 后，会覆盖这些默认值）
-STT_VOLCANO_APPID = "6062204577"
-STT_VOLCANO_ACCESS_KEY = "qfkR9BZzMgl7Zn0mv9RsRjGP1R82EboF"
-STT_VOLCANO_CLUSTER = "volcengine_input_common"
+STT_VOLCANO_APPID = ""
+STT_VOLCANO_ACCESS_KEY = ""
+STT_VOLCANO_CLUSTER = ""
 STT_VOLCANO_SECRET_KEY = ""
 
 

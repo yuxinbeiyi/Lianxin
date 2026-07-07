@@ -68,6 +68,7 @@ class HistoryDialog(QDialog):
     """历史对话查看器（含搜索、摘要、导出、删除、置顶）。"""
 
     import_memory = pyqtSignal(int)   # 携带 session_id，供主窗口导入记忆
+    session_deleted = pyqtSignal(int) # 携带 session_id，通知主窗口会话已删除
 
     def __init__(self, history_manager: HistoryManager,
                  current_session_id: int = -1, parent=None,
