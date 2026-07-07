@@ -89,6 +89,7 @@ class VoiceDuplexManager:
         self._lock = threading.Lock()
         self._vad_paused = False
         self._vad_cooldown_until = 0.0
+        self._pending_interrupt = False  # TTS 期间的语音需要转录验证
 
     # ── 状态 ──────────────────────────────────────────
 
@@ -136,26 +137,23 @@ class VoiceDuplexManager:
         if self._on_voice_start_ui:
             _safe_call(self._on_voice_start_ui)
 
-        # TTS 播放中检测到用户说话 → 用户想要打断！立即恢复 VAD
-        if self._vad_paused:
-            logger.info("🗣️ TTS 播放中检测到用户语音 → 打断 TTS")
-            with self._lock:
-                self._vad_paused = False
-                self._vad_cooldown_until = 0.0
-            if self._on_interrupt_tts:
-                _safe_call(self._on_interrupt_tts)
-            return
-
         # 思考中打断
         if self._state == STATE_PROCESSING:
             self.interrupt()
 
     def _on_voice_end(self, wav_bytes: bytes):
         with self._lock:
+            was_paused = self._vad_paused
             if self._vad_paused:
-                return  # TTS 播放中无用户语音 → 丢弃麦克风拾取的 TTS 回声
-            if time.time() < self._vad_cooldown_until:
+                # TTS 播放中检测到声音 → 先收集音频，转录后再判断是回声还是用户打断
+                self._vad_paused = False
+                self._vad_cooldown_until = 0.0
+            elif time.time() < self._vad_cooldown_until:
                 return  # TTS 刚结束 → 冷却期内丢弃延迟的 TTS 回声帧
+        self._audio_queue.put(wav_bytes)
+        # 标记这段音频来自 TTS 期间（需要在转录后判断是否有效打断）
+        if was_paused:
+            self._pending_interrupt = True
         self._audio_queue.put(wav_bytes)
 
     # ── 启动/停止 ─────────────────────────────────────
@@ -207,15 +205,22 @@ class VoiceDuplexManager:
             self._set_state(STATE_PROCESSING)
             transcript = self._transcribe(wav_bytes)
 
-            # 过滤无效转录：空文本、纯标签、过短（1-2字几乎肯定是噪音）
+            # 过滤无效转录：空文本、纯标签、过短
             t = (transcript or "").strip()
             if not t or len(t) <= 1:
                 self._set_state(STATE_LISTENING)
                 continue
-            # 过滤纯 FunASR 标签残余（防御性检查，stt_funasr 已处理）
             if t.startswith("<|") or t in ("。", "，", "？", "！"):
                 self._set_state(STATE_LISTENING)
                 continue
+
+            # TTS 期间采集的音频：转录有效 = 用户真的要打断！
+            if self._pending_interrupt:
+                self._pending_interrupt = False
+                logger.info(f"🗣️ TTS 打断确认！转录: {t}")
+                if self._on_interrupt_tts:
+                    _safe_call(self._on_interrupt_tts)
+                # 继续处理这段语音（用户的打断内容）
 
             logger.info(f"📝 转录: {transcript}")
             if self._on_transcript:
