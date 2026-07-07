@@ -29,6 +29,7 @@ def _load_model():
             model="iic/SenseVoiceSmall",
             device="cuda:0",
             disable_pbar=True,
+            disable_update=True,        # 跳过每次启动的版本检查
         )
         logger.info("✅ FunASR 模型加载完成")
     except ImportError:
@@ -88,3 +89,15 @@ def transcribe(wav_bytes: bytes, language: str = "zh") -> str:
 def is_available() -> bool:
     """检测 FunASR 是否可用（模型已加载或可加载）。"""
     return _load_model() is not None
+
+
+def warmup():
+    """预热模型：在后台线程加载，不阻塞启动。"""
+    import threading
+    def _load():
+        logger.info("🔥 后台预热 FunASR 模型…")
+        m = _load_model()
+        if m:
+            logger.info("🔥 FunASR 预热完成")
+    t = threading.Thread(target=_load, daemon=True)
+    t.start()

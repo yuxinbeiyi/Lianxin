@@ -159,6 +159,13 @@ class VoiceDuplexManager:
         self._vad_worker.start()
         self._set_state(STATE_LISTENING)
 
+        # 后台预热 FunASR 模型（不阻塞聆听）
+        try:
+            from brain.stt_funasr import warmup
+            warmup()
+        except Exception:
+            pass
+
         # STT 处理线程（只转录，不做 LLM/TTS）
         threading.Thread(target=self._process_loop, daemon=True).start()
         logger.info("✅ 全双工语音已启动")
@@ -200,13 +207,22 @@ class VoiceDuplexManager:
         """语音转文字：FunASR 本地主力 → 火山引擎云端备份。"""
         import time as _time
 
-        # 调试录音
-        debug_path = os.path.join(os.path.expanduser("~"), "Desktop",
-                                  f"lianxin_debug_{int(_time.time())}.wav")
+        # 调试录音（保存到用户数据目录，而非 Desktop）
+        from utils.paths import get_user_data_dir
+        debug_dir = get_user_data_dir() / "voice_debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        debug_path = str(debug_dir / f"lianxin_debug_{int(_time.time())}.wav")
         try:
             with open(debug_path, "wb") as f:
                 f.write(wav_bytes)
-            logger.info(f"💾 调试录音已保存: {debug_path}")
+            # 保留最近 10 个录音文件
+            try:
+                files = sorted(debug_dir.glob("lianxin_debug_*.wav"),
+                              key=lambda p: p.stat().st_mtime, reverse=True)
+                for old in files[10:]:
+                    old.unlink()
+            except Exception:
+                pass
         except Exception:
             pass
 
