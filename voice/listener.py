@@ -1,5 +1,5 @@
 """
-VoiceListener：麦克风录音 + 静音检测VAD + Whisper语音识别
+VoiceListener：麦克风录音 + 静音检测VAD + FunASR语音识别
 """
 
 import numpy as np
@@ -19,17 +19,12 @@ class VoiceListener:
     # ── 模型加载 ─────────────────────────────────────────────
 
     def load_model(self):
-        """加载 Whisper 模型（首次约需 5-15 秒，之后缓存）。"""
-        if self._model is not None:
-            return
-        import os
-        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-        from faster_whisper import WhisperModel
-        self._model = WhisperModel(
-            self._model_size,
-            device="cpu",
-            compute_type="int8",
-        )
+        """预热 FunASR 模型（后台线程调用，不阻塞 UI）。"""
+        try:
+            from brain.stt_funasr import warmup
+            warmup()
+        except Exception:
+            pass
 
     # ── 录音 ─────────────────────────────────────────────────
 
@@ -80,14 +75,39 @@ class VoiceListener:
     # ── 转录 ─────────────────────────────────────────────────
 
     def transcribe(self, audio: np.ndarray) -> str:
-        """将音频数组转为文字（调用前确保已 load_model）。"""
+        """将音频数组转为文字。FunASR GPU 主力 → 火山引擎云端备份。"""
         if len(audio) == 0:
             return ""
-        if self._model is None:
-            self.load_model()
-        segments, _ = self._model.transcribe(
-            audio,
-            language=self._language,
-            beam_size=5,
-        )
-        return "".join(s.text for s in segments).strip()
+
+        # numpy float32 → 16-bit PCM WAV bytes
+        import io
+        import wave as _wave
+        buf = io.BytesIO()
+        with _wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(self.SAMPLE_RATE)
+            # clamp to int16 range
+            samples = np.clip(audio * 32767, -32768, 32767).astype(np.int16)
+            w.writeframes(samples.tobytes())
+        wav_bytes = buf.getvalue()
+
+        # ── 第1优先级：FunASR 本地 GPU ──
+        try:
+            from brain.stt_funasr import transcribe as funasr_transcribe
+            result = funasr_transcribe(wav_bytes)
+            if result and result.strip():
+                return result
+        except Exception:
+            pass
+
+        # ── 第2优先级：火山引擎云端 ──
+        try:
+            from brain.stt_volcano import transcribe as cloud_transcribe
+            result = cloud_transcribe(wav_bytes)
+            if result and result.strip():
+                return result
+        except Exception:
+            pass
+
+        return ""
