@@ -36,6 +36,15 @@ warnings.simplefilter("ignore", ResourceWarning)
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 os.chdir(_PROJECT_ROOT)
 
+# 每次启动清空旧日志（避免日积月累）
+_LOG_DIR = os.path.join(_PROJECT_ROOT, "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
+for _p in ("debug.log", "crash.log"):
+    try:
+        open(os.path.join(_LOG_DIR, _p), "w").close()
+    except Exception:
+        pass
+
 # ── 终端防卡：双通道输出（终端 + 日志文件）─────────────────────
 # Windows 终端"快速编辑模式"（点击选中文本）会锁定 stdout 缓冲区，
 # 导致 print() 调用阻塞。解决：终端写入走独立线程，日志文件实时落盘。
@@ -44,8 +53,6 @@ if sys.platform == "win32":
     import threading
     import queue as _queue_mod
 
-    _LOG_DIR = os.path.join(_PROJECT_ROOT, "logs")
-    os.makedirs(_LOG_DIR, exist_ok=True)
     _LOG_PATH = os.path.join(_LOG_DIR, "debug.log")
 
     _REAL_STDOUT = sys.stdout
@@ -159,9 +166,7 @@ def _global_exception_handler(exc_type, exc_value, exc_tb):
     """全局未处理异常捕获：记录到日志文件后优雅退出。"""
     tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
     try:
-        log_dir = os.path.join(_PROJECT_ROOT, "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        crash_path = os.path.join(log_dir, "crash.log")
+        crash_path = os.path.join(_LOG_DIR, "crash.log")
         with open(crash_path, "a", encoding="utf-8") as f:
             from datetime import datetime
             f.write(f"\n{'='*60}\n")
