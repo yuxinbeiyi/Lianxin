@@ -1372,9 +1372,14 @@ class MainWindow(QMainWindow):
         self._speaker_worker.speaking_started.connect(self._char_widget.set_talking)
         self._speaker_worker.speaking_started.connect(lambda: self._input_panel.set_mute_visible(True))
         self._speaker_worker.speaking_started.connect(self._on_galgame_speaking_start)
+        # 全双工模式：TTS 播放时暂停 VAD，防止莲心声音被麦克风拾取→打断循环
+        if self._voice_duplex:
+            self._speaker_worker.speaking_started.connect(self._voice_duplex.pause_vad)
         self._speaker_worker.speaking_finished.connect(self._on_galgame_speaking_stop)
         self._speaker_worker.speaking_finished.connect(self._char_widget.set_normal)
         self._speaker_worker.speaking_finished.connect(lambda: self._input_panel.set_mute_visible(False))
+        if self._voice_duplex:
+            self._speaker_worker.speaking_finished.connect(self._voice_duplex.resume_vad)
         self._speaker_worker.start()
 
 
