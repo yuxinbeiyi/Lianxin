@@ -10,6 +10,7 @@
 
 import sqlite3
 import threading
+import logging
 from pathlib import Path
 
 _DB_PATH = Path(__file__).parent.parent / "memory" / "conversations.db"
@@ -464,7 +465,32 @@ def add_fact(content: str, category: str = "knowledge",
 
     conn = _get_conn()
 
-    # 尝试编码 embedding
+    # ── 语义去重：插入前检查相似记忆，避免重复存储 ──
+    try:
+        from brain.memory_rag import find_similar_memory
+        similar = find_similar_memory(content, category, threshold=0.85)
+        if similar:
+            sim, existing = similar
+            # 保留更完整的内容，强度叠加
+            keep_content = content if len(content) >= len(existing["content"]) else existing["content"]
+            conn.execute(
+                """UPDATE memory_facts SET content=?, strength=strength+?,
+                   source='merged' WHERE content=? AND category=?""",
+                (keep_content, existing["strength"], existing["content"], category)
+            )
+            conn.commit()
+            logging.getLogger("MemoryDedup").info(
+                f"Merged '{content[:30]}' ~ '{existing['content'][:30]}' (sim={sim:.2f})"
+            )
+            row = conn.execute(
+                "SELECT id FROM memory_facts WHERE content=? AND category=?",
+                (keep_content, category)
+            ).fetchone()
+            return row["id"] if row else 0
+    except Exception:
+        pass
+
+    # ── 无相似记忆 → 正常插入 ──
     emb_bytes = None
     try:
         from brain.memory_rag import embed_bytes

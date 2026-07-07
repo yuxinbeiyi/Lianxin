@@ -130,6 +130,17 @@ def search_similar(
         return []
 
 
+def find_similar_memory(
+    content: str,
+    category: str = None,
+    threshold: float = 0.85,
+) -> Optional[tuple[float, dict]]:
+    """查找与 content 语义相近的已有记忆（用于去重合并）。
+    返回最相似的那条 (相似度, 记忆dict) 或 None。"""
+    results = search_similar(content, top_k=1, threshold=threshold, category=category)
+    return results[0] if results else None
+
+
 def format_rag_context(memories: list[tuple[float, dict]]) -> str:
     """将检索到的记忆格式化为 LLM 可读的提示文本。"""
     if not memories:
