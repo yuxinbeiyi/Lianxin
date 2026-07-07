@@ -365,6 +365,7 @@ class MainWindow(QMainWindow):
         self._last_route_result = route_result
         self._agent_worker.response_ready.connect(self._on_ai_response)
         self._agent_worker.progress_update.connect(self._on_progress_update)
+        self._agent_worker.tool_round_start.connect(self._chat_widget.start_tool_round)
         self._agent_worker.tool_called.connect(self._on_tool_called)
         self._agent_worker.tool_result.connect(self._on_tool_result)
         self._agent_worker.observation_image.connect(self._on_observation_image)
@@ -1020,6 +1021,7 @@ class MainWindow(QMainWindow):
             self._agent_worker = AgentWorker(self._agent, text, self, forced_tool=selected_tool)
             self._agent_worker.response_ready.connect(self._on_ai_response)
             self._agent_worker.progress_update.connect(self._on_progress_update)
+            self._agent_worker.tool_round_start.connect(self._chat_widget.start_tool_round)
             self._agent_worker.tool_called.connect(self._on_tool_called)
             self._agent_worker.tool_result.connect(self._on_tool_result)
             self._agent_worker.observation_image.connect(self._on_observation_image)
@@ -1066,6 +1068,7 @@ class MainWindow(QMainWindow):
         self._agent_worker = AgentWorker(self._agent, full_context, self, forced_tool=self._staged_selected_tool)
         self._agent_worker.response_ready.connect(self._on_ai_response)
         self._agent_worker.progress_update.connect(self._on_progress_update)
+        self._agent_worker.tool_round_start.connect(self._chat_widget.start_tool_round)
         self._agent_worker.tool_called.connect(self._on_tool_called)
         self._agent_worker.tool_result.connect(self._on_tool_result)
         self._agent_worker.observation_image.connect(self._on_observation_image)
@@ -1073,18 +1076,20 @@ class MainWindow(QMainWindow):
         self._agent_worker.start()
         self._input_panel.show_interrupt_bar(self._agent_worker)
 
-    def _on_tool_called(self, tool_name: str):
-        
-        
-        self._chat_widget.show_thinking(tool_name)
+    def _on_tool_called(self, tool_name: str, args_json: str, round_num: int):
+        self._chat_widget.add_tool_call_card(tool_name, args_json, round_num)
         self._task_progress.set_subtitle(f"🔧 {tool_name} 执行中…")
         self._pending_arms_cross = random.random() < 0.03
         if self._galgame_visible and self._galgame_dialog:
             self._galgame_dialog.show_thinking()
 
-    def _on_tool_result(self, tool_name: str, preview: str):
-        """工具执行完毕，更新进度条副标题显示结果摘要"""
-        self._task_progress.set_subtitle(f"✅ {tool_name} → {preview}")
+    def _on_tool_result(self, tool_name: str, preview: str, is_error: bool,
+                         round_num: int, elapsed_ms: float):
+        """工具执行完毕，更新聊天卡片和进度条"""
+        self._chat_widget.update_tool_call_result(
+            tool_name, preview, is_error, round_num, elapsed_ms)
+        status = "❌" if is_error else "✅"
+        self._task_progress.set_subtitle(f"{status} {tool_name} → {preview}")
 
 
     def _on_progress_update(self, text: str):
@@ -1093,6 +1098,7 @@ class MainWindow(QMainWindow):
 
 
     def _on_error(self, err: str):
+        self._chat_widget.finalize_tool_groups()
         self._input_panel.set_enabled(True)
         self._input_panel.hide_interrupt_bar()
         self._chat_widget.add_system_tip(f"错误：{err}")
@@ -1102,6 +1108,7 @@ class MainWindow(QMainWindow):
         from brain.task_tracker import get_task_tracker
         get_task_tracker().clear()
         self._input_panel.hide_interrupt_bar()
+        self._chat_widget.finalize_tool_groups()
         # 先结束思考（如果是非待机模式，会播放放下手机动画；如果是待机模式，则什么都不做）
         if self._standby_state != "STANDBY":
             # 非待机模式，使用原有的思考结束逻辑（等待打字动画结束）

@@ -21,6 +21,9 @@ class ChatWidget(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._last_message_time: datetime | None = None
+        self._current_tool_group = None       # ToolCallGroup | None
+        self._tool_groups: list = []          # list[ToolCallGroup]
+        self._tool_round_count = 0            # highest round seen
         self._build_ui()
 
     def _build_ui(self):
@@ -95,12 +98,64 @@ class ChatWidget(QScrollArea):
         self._thinking_label.show()
         self._scroll_to_bottom()
 
+    # ── 工具调用卡片管理 ──────────────────────────────────
+
+    def start_tool_round(self, round_num: int):
+        """新 ReAct 轮开始：创建 ToolCallGroup 并插入聊天流"""
+        from gui.tool_call_group import ToolCallGroup
+        # finalize 前一组
+        if self._current_tool_group is not None:
+            self._current_tool_group.finalize(round_num - 1)
+        group = ToolCallGroup(round_num)
+        self._layout.insertWidget(self._layout.count() - 1, group)
+        self._current_tool_group = group
+        self._tool_groups.append(group)
+        self._tool_round_count = max(self._tool_round_count, round_num)
+        self._hide_thinking()
+        self._scroll_to_bottom()
+
+    def add_tool_call_card(self, tool_name: str, args_json: str, round_num: int):
+        """工具开始执行：在对应轮组中添加 running 卡片"""
+        if self._current_tool_group is None or self._current_tool_group.round_num != round_num:
+            self.start_tool_round(round_num)
+        self._current_tool_group.add_card(tool_name, args_json)
+        self._container.updateGeometry()
+        self._scroll_to_bottom()
+
+    def update_tool_call_result(self, tool_name: str, preview: str,
+                                 is_error: bool, round_num: int, elapsed_ms: float):
+        """工具执行完成：更新匹配卡片的状态"""
+        target = None
+        for g in reversed(self._tool_groups):
+            if g.round_num == round_num:
+                target = g
+                break
+        if target is None:
+            self.start_tool_round(round_num)
+            target = self._current_tool_group
+        target.update_card(tool_name, preview, is_error, elapsed_ms)
+        self._container.updateGeometry()
+
+    def finalize_tool_groups(self):
+        """AI 回复就绪：完结所有工具组，设置轮次标题"""
+        total = self._tool_round_count
+        for g in self._tool_groups:
+            if not g.finalized:
+                g.finalize(total)
+        self._current_tool_group = None
+        self._tool_groups.clear()
+        self._tool_round_count = 0
+        self._hide_thinking()
+
     def hide_thinking(self):
         self._hide_thinking()
 
     def clear_messages(self):
         """清空所有消息气泡和系统提示（保留内部 _thinking_label）。"""
         self._last_message_time = None
+        self._current_tool_group = None
+        self._tool_groups.clear()
+        self._tool_round_count = 0
         while self._layout.count() > 1:
             item = self._layout.takeAt(0)
             if item.widget():

@@ -28,8 +28,9 @@ _INTERRUPT_SYSTEM = """【用户中途插话】
 class AgentWorker(QThread):
     response_ready = pyqtSignal(str)
     progress_update = pyqtSignal(str)   # 插话进度回复（仅追加文字，不改动画状态）
-    tool_called    = pyqtSignal(str)
-    tool_result    = pyqtSignal(str, str)  # 工具执行结果 (name, preview)
+    tool_round_start = pyqtSignal(int)                          # round_num
+    tool_called    = pyqtSignal(str, str, int)                  # name, args_json, round_num
+    tool_result    = pyqtSignal(str, str, bool, int, float)     # name, preview, is_error, round_num, elapsed_ms
     observation_image = pyqtSignal(str, str)  # 观察图片 (path, desc) 用于气泡显示
     error_occurred = pyqtSignal(str)
 
@@ -69,20 +70,22 @@ class AgentWorker(QThread):
             return "（收到，正在处理中…）"
 
     def run(self):
+        import json as _json
         try:
-            def on_tool_call(name, args):
-                self.tool_called.emit(name)
+            current_round = [0]  # mutable closure for round tracking
 
-            def on_tool_result(name, result):          # ← 新增
-                preview = result[:80].replace("\n", " ")
-                preview += ("…" if len(result) > 80 else "")
-                self.tool_result.emit(name, preview)
-                # 截屏/摄像头 → 发射图片气泡信号
-                if name in ("capture_desktop", "capture_from_camera"):
-                    from brain.tools import get_observation_image
-                    obs = get_observation_image()
-                    if obs["path"]:
-                        self.observation_image.emit(obs["path"], obs["desc"])
+            def on_round_start(round_num):
+                current_round[0] = round_num
+                self.tool_round_start.emit(round_num)
+
+            def on_tool_call(name, args):
+                args_json = _json.dumps(args, ensure_ascii=False) if args else "{}"
+                self.tool_called.emit(name, args_json, current_round[0])
+
+            def on_tool_result(name, result, is_error=False, elapsed_ms=0):
+                preview = (result or "")[:80].replace("\n", " ")
+                preview += ("…" if len(result or "") > 80 else "")
+                self.tool_result.emit(name, preview, is_error, current_round[0], elapsed_ms)
                 # 截屏/摄像头 → 发射图片气泡信号
                 if name in ("capture_desktop", "capture_from_camera"):
                     from brain.tools import get_observation_image
@@ -94,6 +97,7 @@ class AgentWorker(QThread):
                 self.message,
                 on_tool_call=on_tool_call,
                 on_tool_result=on_tool_result,
+                on_round_start=on_round_start,
                 forced_tool=self.forced_tool,
                 disable_tools=self.disable_tools,
                 interrupt_queue=self.interrupt_queue,

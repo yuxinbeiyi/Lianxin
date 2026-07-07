@@ -238,6 +238,7 @@ class AgentCore:
 
     def chat(self, user_message: str,
             on_tool_call=None, on_tool_result=None,
+            on_round_start=None,
             forced_tool: str = None,
             disable_tools: bool = False,
             interrupt_queue=None,
@@ -279,7 +280,8 @@ class AgentCore:
         effective_disable = disable_tools or self._disable_tools or self._use_local
         response_text = self._function_calling_loop(on_tool_call, on_tool_result, forced_tool,
                                                       effective_disable, interrupt_queue,
-                                                      on_interrupt, on_progress, user_message)
+                                                      on_interrupt, on_progress, user_message,
+                                                      on_round_start=on_round_start)
 
 
         # ── 剥离情绪标签：只存/显示干净文本，情绪通过属性传递 ──
@@ -850,12 +852,15 @@ class AgentCore:
         results = [None] * n
         parsed_order = {id(item["tc"]): i for i, item in enumerate(parsed)}
 
+        import time as _perf_time
         def _run_one(item: dict):
             """执行单个工具调用（在 worker 线程内）。"""
             _set_ctx(self._session_id, self._history_mgr)
             name, args = item["name"], item["args"]
             if on_tool_call:
                 on_tool_call(name, args)
+            t0 = _perf_time.perf_counter()
+            is_error = False
             try:
                 print(f"\n  [工具调用] {name}({json.dumps(args, ensure_ascii=False)})", flush=True)
                 if name == "run_shell":
@@ -866,9 +871,11 @@ class AgentCore:
                 print(f"  [工具结果] {name} → {preview}\n", flush=True)
             except Exception as e:
                 result = f"工具执行错误: {e}"
+                is_error = True
                 print(f"  [工具错误] {name} → {e}\n", flush=True)
+            elapsed_ms = (_perf_time.perf_counter() - t0) * 1000
             if on_tool_result:
-                on_tool_result(name, result)
+                on_tool_result(name, result, is_error, elapsed_ms)
             idx = parsed_order[id(item["tc"])]
             results[idx] = result
 
@@ -1119,7 +1126,8 @@ class AgentCore:
     def _function_calling_loop(self, on_tool_call=None, on_tool_result=None, forced_tool: str = None,
                                disable_tools: bool = False,
                                interrupt_queue=None, on_interrupt=None,
-                               on_progress=None, user_message: str = "") -> str:
+                               on_progress=None, user_message: str = "",
+                               on_round_start=None) -> str:
 
        
         messages = [{"role": "system", "content": self._system_prompt}]
@@ -1290,6 +1298,8 @@ class AgentCore:
 
         while iteration < MAX_ITERATIONS:
             iteration += 1
+            if on_round_start:
+                on_round_start(iteration)
 
             # ── Todo 规划（第1轮，复杂任务） ──
             if iteration == 1 and is_complex and not self._use_local:
