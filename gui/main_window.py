@@ -2690,11 +2690,16 @@ class MainWindow(QMainWindow):
         self._duplex_voice_start_signal.emit()
 
     def _on_duplex_interrupt_tts(self):
-        """全双工：用户在 TTS 播放时开口说话 → 立刻停止 TTS"""
+        """全双工：用户在 TTS 播放时开口说话 → 立刻停止 TTS + 取消后续分段"""
+        # 停止当前播放
         if self._speaker_worker and self._speaker_worker.isRunning():
             self._speaker_worker.stop()
             self._speaker_worker = None
-        # 恢复角色动画为正常状态
+        # 取消分段发送器（防止继续播下一段）
+        if hasattr(self, '_segment_sender') and self._segment_sender:
+            self._segment_sender.cancel()
+            self._segment_sender = None
+        # 恢复角色动画
         if self._char_widget:
             self._char_widget.set_normal()
         self._chat_widget.add_system_tip("🗣️ 莲心被打断了，你说吧~")
