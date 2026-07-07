@@ -14,7 +14,8 @@ os.environ.setdefault("TQDM_DISABLE", "1")
 logger = logging.getLogger("lianxin.stt_funasr")
 
 # 抑制 ModelScope Hub 每次启动的下载校验日志
-for _name in ("modelscope", "modelscope_hub", "modelscope_hub.download"):
+for _name in ("modelscope", "modelscope_hub", "modelscope_hub.download",
+              "funasr"):
     logging.getLogger(_name).setLevel(logging.WARNING)
 
 # 全局单例，首次调用时懒加载
@@ -28,6 +29,10 @@ def _load_model():
     if _load_attempted:
         return _model
     _load_attempted = True
+
+    # 抑制 modelscope trust_remote_code 警告
+    import warnings as _w
+    _w.filterwarnings("ignore", message=".*trust_remote_code.*")
 
     try:
         from funasr import AutoModel

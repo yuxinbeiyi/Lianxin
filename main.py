@@ -6,6 +6,7 @@
 import sys
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+os.environ['TQDM_DISABLE'] = '1'          # 抑制 modelscope/funasr tqdm 进度条
 import ctypes
 import warnings
 import traceback
