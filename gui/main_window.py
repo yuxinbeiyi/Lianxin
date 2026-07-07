@@ -8,7 +8,7 @@ import ctypes
 from ctypes import wintypes
 from typing import Optional
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QDialog, QTextEdit, QMenu
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QDialog, QTextEdit, QMenu, QCheckBox
 )
 from PyQt5.QtCore import Qt, QTimer, QAbstractNativeEventFilter, QPoint, QObject
 from PyQt5.QtGui import QFont, QIcon
