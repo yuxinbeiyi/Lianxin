@@ -243,7 +243,7 @@ class MainWindow(QMainWindow):
         brain_tools.set_proactive_toggle_callback(self._proactive_scheduler.reload_settings)
         self._route_ready.connect(self._on_route_ready)
         self._duplex_voice_start_signal.connect(
-            lambda: self._input_panel.set_text("🎤 聆听中...")
+            lambda: self._input_panel._input.setPlaceholderText("🎤 聆听中...")
         )
         self._duplex_transcript_signal.connect(
             self._handle_duplex_transcript
@@ -2754,6 +2754,10 @@ class MainWindow(QMainWindow):
         from brain.voice_duplex import STATE_LABELS
         label = STATE_LABELS.get(state, state)
         print(f"[全双工] {label}")
+        # 待机时恢复输入框占位提示
+        if state == "LISTENING":
+            self._input_panel._input.setPlaceholderText(
+                "🎤 随时开口说话…（按 Enter 发送文字，Shift+Enter 换行）")
 
     def _check_note_file(self):
         """轮询检查小纸条.txt。内容有变化时重置倒计时，
@@ -3875,6 +3879,9 @@ class SegmentSender(QObject):
             if hasattr(p, '_voice_duplex') and p._voice_duplex:
                 self._speaker_worker.speaking_started.connect(p._voice_duplex.pause_vad)
                 self._speaker_worker.speaking_finished.connect(p._voice_duplex.resume_vad)
+                # 莲心说完后延迟播提示音
+                self._speaker_worker.speaking_finished.connect(
+                    lambda: QTimer.singleShot(2500, p._play_speak_cue))
             self._speaker_worker.speaking_finished.connect(self._on_tts_finished)
             self._speaker_worker.start()
         else:
