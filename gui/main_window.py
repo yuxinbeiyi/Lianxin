@@ -966,6 +966,9 @@ class MainWindow(QMainWindow):
 
 
     def _on_user_message(self, text: str, images: list = None):
+        # 取消语音转录的自动发送定时器（用户手动发送了）
+        if hasattr(self, '_voice_auto_send_timer') and self._voice_auto_send_timer:
+            self._voice_auto_send_timer.stop()
         # 用户发消息 → 立即停止语音播放、重置语音标记
         try:
             from skills.语音合成.tools import stop_voice_playback
@@ -1352,10 +1355,29 @@ class MainWindow(QMainWindow):
         self._chat_widget.add_system_tip("识别中…")
 
     def _on_voice_text(self, text: str):
+        """麦克风录音完成 → 文字进输入框预览 → 延迟发送"""
         self._input_panel.set_enabled(True)
+        text = text.strip()
+        if not text:
+            self._is_recording = False
+            self._input_panel.set_voice_idle()
+            self._chat_widget.add_system_tip("未识别到语音内容")
+            return
+
         self._input_panel.set_text(text)
-        if self._input_panel.is_auto_send_enabled():
-            self._input_panel._on_send()
+        self._chat_widget.add_system_tip("已识别，1.5秒后自动发送…")
+        self._is_recording = False
+        self._input_panel.set_voice_idle()
+
+        # 取消之前的定时器
+        if hasattr(self, '_voice_auto_send_timer') and self._voice_auto_send_timer:
+            self._voice_auto_send_timer.stop()
+
+        # 1.5 秒后自动发送
+        self._voice_auto_send_timer = QTimer(self)
+        self._voice_auto_send_timer.setSingleShot(True)
+        self._voice_auto_send_timer.timeout.connect(self._on_mic_auto_send)
+        self._voice_auto_send_timer.start(1500)
 
     def _on_voice_error(self, err: str):
         self._is_recording = False
@@ -2657,8 +2679,45 @@ class MainWindow(QMainWindow):
         self._duplex_transcript_signal.emit(text.strip())
 
     def _handle_duplex_transcript(self, text: str):
-        """全双工模式：在主线程中处理转录文本 → 显示气泡 + 发送给 Agent"""
+        """全双工模式：转录文字 → 输入框预览 → 延迟自动发送"""
+        if not text or not text.strip():
+            return
+        text = text.strip()
+
+        # 取消上一次的自动发送定时器（用户连续说话）
+        if hasattr(self, '_voice_auto_send_timer') and self._voice_auto_send_timer:
+            self._voice_auto_send_timer.stop()
+
+        # 文字显示在输入框，用户可以预览/修改
+        existing = self._input_panel.get_text().strip()
+        if existing:
+            # 如果用户正在编辑上一次的转录 → 不覆盖
+            self._input_panel.set_text(text)
+        else:
+            self._input_panel.set_text(text)
+
+        # 1.5 秒后自动发送（期间新语音到达会取消）
+        self._voice_auto_send_timer = QTimer(self)
+        self._voice_auto_send_timer.setSingleShot(True)
+        self._voice_auto_send_timer.timeout.connect(self._on_voice_auto_send)
+        self._voice_auto_send_timer.start(1500)
+
+    def _on_voice_auto_send(self):
+        """全双工：定时器到期 → 自动发送输入框中的转录文字"""
+        text = self._input_panel.get_text().strip()
+        if not text:
+            return
+        # 先清空输入框再发送（避免重复）
+        self._input_panel.set_text("")
         self._is_waiting_for_response = True
+        self._on_user_message(text)
+
+    def _on_mic_auto_send(self):
+        """麦克风按钮：定时器到期 → 自动发送转录文字"""
+        text = self._input_panel.get_text().strip()
+        if not text:
+            return
+        self._input_panel.set_text("")
         self._on_user_message(text)
 
     def _on_duplex_state_change(self, state: str):

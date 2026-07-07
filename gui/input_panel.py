@@ -1065,6 +1065,10 @@ class InputPanel(QWidget):
             }
         """)
 
+    def get_text(self) -> str:
+        """获取当前输入框中的文本（不清空）。"""
+        return self._input.toPlainText()
+
     def is_auto_send_enabled(self) -> bool:
         return self._auto_send_cb.isChecked()
 
