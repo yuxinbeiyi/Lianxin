@@ -75,11 +75,13 @@ class VoiceDuplexManager:
                  on_state_change: Optional[Callable] = None,
                  on_transcript: Optional[Callable] = None,
                  on_voice_start_ui: Optional[Callable] = None,
+                 on_interrupt_tts: Optional[Callable] = None,
                  input_device_index: Optional[int] = None):
         self._on_state_change = on_state_change
         self._on_transcript   = on_transcript
         self._input_device_index = input_device_index
         self._on_voice_start_ui = on_voice_start_ui
+        self._on_interrupt_tts  = on_interrupt_tts
         self._state = STATE_STOPPED
         self._vad_worker: Optional[WebRTCVADWorker] = None
 
@@ -133,14 +135,25 @@ class VoiceDuplexManager:
     def _on_voice_start(self):
         if self._on_voice_start_ui:
             _safe_call(self._on_voice_start_ui)
-        # 思考中打断，说话中（TTS 播放）不打断防回声
+
+        # TTS 播放中检测到用户说话 → 用户想要打断！立即恢复 VAD
+        if self._vad_paused:
+            logger.info("🗣️ TTS 播放中检测到用户语音 → 打断 TTS")
+            with self._lock:
+                self._vad_paused = False
+                self._vad_cooldown_until = 0.0
+            if self._on_interrupt_tts:
+                _safe_call(self._on_interrupt_tts)
+            return
+
+        # 思考中打断
         if self._state == STATE_PROCESSING:
             self.interrupt()
 
     def _on_voice_end(self, wav_bytes: bytes):
         with self._lock:
             if self._vad_paused:
-                return  # TTS 播放中 → 丢弃麦克风拾取的 TTS 回声
+                return  # TTS 播放中无用户语音 → 丢弃麦克风拾取的 TTS 回声
             if time.time() < self._vad_cooldown_until:
                 return  # TTS 刚结束 → 冷却期内丢弃延迟的 TTS 回声帧
         self._audio_queue.put(wav_bytes)

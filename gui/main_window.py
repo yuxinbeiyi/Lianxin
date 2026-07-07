@@ -2580,6 +2580,7 @@ class MainWindow(QMainWindow):
                 on_transcript=self._on_duplex_transcript,
                 on_voice_start_ui=self._on_duplex_voice_start,
                 on_state_change=self._on_duplex_state_change,
+                on_interrupt_tts=self._on_duplex_interrupt_tts,
             )
             self._voice_duplex.start()
             self._update_standby_button()
@@ -2670,6 +2671,17 @@ class MainWindow(QMainWindow):
     def _on_duplex_voice_start(self):
         """全双工：检测到用户开始说话 → 输入框显示聆听中（线程安全）"""
         self._duplex_voice_start_signal.emit()
+
+    def _on_duplex_interrupt_tts(self):
+        """全双工：用户在 TTS 播放时开口说话 → 立刻停止 TTS"""
+        if self._speaker_worker and self._speaker_worker.isRunning():
+            self._speaker_worker.stop()
+            self._speaker_worker = None
+        # 恢复角色动画为正常状态
+        if self._char_widget:
+            self._char_widget.set_normal()
+        self._chat_widget.add_system_tip("🗣️ 莲心被打断了，你说吧~")
+
     def _on_duplex_transcript(self, text: str):
         """全双工模式：收到用户语音转录文本（VAD 线程调用 → 转发到主线程）"""
         if self._standby_state != "STANDBY":
