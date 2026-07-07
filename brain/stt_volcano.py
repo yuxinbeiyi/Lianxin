@@ -156,9 +156,19 @@ def _parse_response(data: bytes) -> Optional[str]:
                 for item in parsed:
                     if isinstance(item, dict):
                         r = item.get("result") or item
-                        t = r.get("text", "") if isinstance(r, dict) else str(r)
-                        if t:
-                            texts.append(t.strip())
+                        if isinstance(r, list):
+                            # result 是数组: [{"text": "..."}]
+                            for sub in r:
+                                if isinstance(sub, dict):
+                                    t = sub.get("text", "")
+                                    if t:
+                                        texts.append(t.strip())
+                        elif isinstance(r, dict):
+                            t = r.get("text", "")
+                            if t:
+                                texts.append(t.strip())
+                        elif isinstance(r, str):
+                            texts.append(r.strip())
                 return "".join(texts) or None
 
             # dict 形式的标准响应
@@ -167,8 +177,11 @@ def _parse_response(data: bytes) -> Optional[str]:
                 return None
             code = parsed.get("code", -1)
             if code != SUCCESS_CODE:
-                logger.warning(f"☁️ 火山返回: code={code}, msg={parsed.get('message', '')}, "
-                              f"detail={json.dumps(parsed, ensure_ascii=False)[:500]}")
+                # code 1013 = "no valid speech" — 用户没说话，静默即可，不打印警告刷屏
+                if code == 1013:
+                    logger.debug(f"☁️ 火山 v2: 未检测到语音 (code=1013)")
+                else:
+                    logger.warning(f"☁️ 火山返回: code={code}, msg={parsed.get('message', '')}")
                 return None
             r = parsed.get("result", {})
             if isinstance(r, list):
@@ -358,8 +371,7 @@ async def _transcribe_async(wav_bytes: bytes) -> str:
     if result:
         return result
 
-    logger.warning("☁️ 火山引擎转录失败（尝试过所有鉴权方式）")
-    logger.warning(f"☁️ 请检查应用 {cfg.get('appid', '?')} 在 ASR 控制台的关联配置")
+    # 静默失败是正常的（用户没说话、环境噪音等），不打印配置警告
     return ""
 
 
