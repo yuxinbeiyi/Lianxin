@@ -1049,7 +1049,9 @@ class MainWindow(QMainWindow):
             self._chat_widget.add_user_message(display_text)
         # ── 自动化任务检测 ──────────────────────────────
             if text.strip() and self._detect_auto_task_intent(text):
-                self._try_parse_auto_task(text)
+                # 剥离【自动化】标签后传给解析器
+                clean = text.replace("【自动化】", "").strip()
+                self._try_parse_auto_task(clean)
                 return
             play_sound("ButtonAll.mp3") 
 
@@ -1887,28 +1889,8 @@ class MainWindow(QMainWindow):
     # ── 自动化任务自然语言解析 ──────────────────────────────
 
     def _detect_auto_task_intent(self, text: str) -> bool:
-        import re
-        # 否定过滤：包含"不用/不要/不必/没必要/别"的不是任务指令
-        if re.search(r'(不用|不要|不必|没必要|别|不提醒|不需要)', text):
-            return False
-
-        keywords = [
-            "每天", "每隔", "定时", "定期",
-            "每天早", "每天晚", "每天下", "每天中",
-            "每过", "每30", "每60", "每1", "每2", "每3", "每5", "每10",
-            "每15", "每20", "每45", "每半",
-            "提醒我", "提醒一下", "记得提醒",
-            "下个月", "下周", "明天这个", "以后都",
-            "帮我自动", "自动帮我",
-            # 延迟执行——需要明确的时间指示
-            "分钟后", "秒后", "小时后",
-        ]
-        if any(kw in text for kw in keywords):
-            return True
-        # 正则：匹配 "X分钟后" "X秒后" "X小时后" 等数字+时间单位的模式
-        if re.search(r'\d+\s*(分钟|秒|小时|天|周|月)后', text):
-            return True
-        return False
+        """仅在消息开头包含【自动化】标签时才触发任务解析。零误触。"""
+        return "【自动化】" in text
 
     def _try_parse_auto_task(self, text: str):
         from brain.auto_task_parser import parse_auto_task, generate_confirm_message
