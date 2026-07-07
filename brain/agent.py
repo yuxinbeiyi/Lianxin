@@ -1012,41 +1012,75 @@ class AgentCore:
 
     from config import get_memory_config
     _mem_cfg = get_memory_config()
-    _WINDOW_SIZE = _mem_cfg.get("context_window_size", 20)
-    _SUMMARY_TRIGGER = _mem_cfg.get("summary_trigger_threshold", 30)
-    _ENABLE_SUMMARY = _mem_cfg.get("enable_conversation_summary", True)
-    def _apply_history_window(self):
-        """对 self.history 应用滑动窗口截断 + 早期摘要压缩。
+    @staticmethod
+    def _split_into_loops(history: list[dict]) -> list[list[dict]]:
+        """按 user 消息切分对话历史为 loops。
+        每个 loop 从一条 user 消息开始，包含后续的 assistant/tool 消息。
+        system 消息被跳过（不属于任何 loop）。"""
+        loops = []
+        current = []
+        for m in history:
+            if m.get("role") == "user":
+                if current:
+                    loops.append(current)
+                current = [m]
+            elif m.get("role") in ("assistant", "tool"):
+                current.append(m)
+            # system 消息跳过
+        if current:
+            loops.append(current)
+        return loops
 
-        仅在云端模式调用。
+    def _apply_history_window(self):
+        """对 self.history 应用 loop 切分 + 滑动窗口 + 滚动摘要。
 
         Returns:
             (summary_text, recent_messages)
-            - summary_text: 为 None 或待注入的 system 消息文本
-            - recent_messages: 最近窗口内的完整历史消息列表
         """
         cfg = get_memory_config()
-        window_size = cfg.get("context_window_size", 20)
-        trigger = cfg.get("summary_trigger_threshold", 30)
+        keep_loops = cfg.get("context_keep_loops", 8)
+        trigger_loops = cfg.get("context_summary_trigger", 12)
         enable_summary = cfg.get("enable_conversation_summary", True)
 
         history = self.history
-        if not enable_summary or len(history) <= trigger:
+        if not enable_summary:
             return None, list(history)
-        keep_start = max(0, len(history) - window_size)
-        # 增量摘要：只对上次摘要后新增的溢出部分调用 LLM
-        new_overflow = history[self._summarized_history_idx:keep_start]
-        if len(new_overflow) >= 10:
-            chunk_summary = self._generate_history_summary(new_overflow)
+
+        # 1. 按 user 消息切分为 loops
+        loops = self._split_into_loops(history)
+
+        # 2. 未达触发阈值，返回全部
+        if len(loops) <= trigger_loops:
+            return None, list(history)
+
+        # 3. 保留最近 keep_loops 轮完整
+        keep = loops[-keep_loops:] if len(loops) > keep_loops else loops
+        overflow = loops[:-keep_loops] if len(loops) > keep_loops else []
+
+        # 4. 增量摘要：提取溢出 loop 中的全部消息
+        old_flat = [m for loop in overflow for m in loop]
+        total_overflow = len(old_flat)
+
+        # 只压缩上次摘要游标之后的新内容
+        if self._summarized_history_idx < total_overflow:
+            new_chunk = old_flat[self._summarized_history_idx:]
+        else:
+            new_chunk = []
+
+        if len(new_chunk) >= 6:
+            chunk_summary = self._generate_history_summary(new_chunk)
             if self._conversation_summary and chunk_summary:
-                # 合并新旧摘要
                 self._conversation_summary = self._merge_summaries(
                     self._conversation_summary, chunk_summary
                 )
             else:
                 self._conversation_summary = chunk_summary or self._conversation_summary
-            self._summarized_history_idx = keep_start
 
+        # 更新摘要游标
+        self._summarized_history_idx = total_overflow
+
+        # 5. 构建返回
+        recent = [m for loop in keep for m in loop]
         summary = None
         if self._conversation_summary:
             omitted = self._summarized_history_idx
@@ -1055,7 +1089,7 @@ class AgentCore:
                 f"{self._conversation_summary}"
             )
 
-        return summary, list(history[keep_start:])
+        return summary, recent
 
     def _generate_history_summary(self, history_chunk: list[dict]) -> str | None:
         """将一段对话历史压缩为简洁摘要（调用 LLM）。"""
@@ -1269,22 +1303,6 @@ class AgentCore:
             )
         })
 
-
-        # ── 运行时压缩：长对话自动压缩早期消息 ────────────
-        if self._use_local and len(messages) > 30:
-            try:
-                compress_model = "ollama/my-qwen"
-                compress_base = self._api_base
-                from brain.context_compressor import maybe_compress
-                # 从 messages 中找出非 system 消息进行压缩检查
-                non_system = [m for m in messages if m.get("role") != "system"]
-                if len(non_system) > 20:
-                    compressed = maybe_compress(non_system, model=compress_model, api_base=compress_base)
-                    # 重建 messages：保留 system 消息 + 压缩后的结果
-                    system_msgs = [m for m in messages if m.get("role") == "system"]
-                    messages = system_msgs + compressed
-            except Exception:
-                pass
 
         MAX_ITERATIONS = 50          # 安全网，正常不会触发
         TODO_CHECK_INTERVAL = 6      # 每N轮检查一次进度

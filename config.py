@@ -684,6 +684,8 @@ _MEMORY_DEFAULTS = {
     "max_items_per_category": 200,      # 每类最多保留多少条
     "default_save_category": "knowledge",  # 默认保存分类
     "context_window_size": 20,          # 滑动窗口：保留最近 N 条完整消息
+    "context_keep_loops": 8,            # Loop 模式：保留最近 N 轮对话完整
+    "context_summary_trigger": 12,      # Loop 模式：超过 N 轮时触发摘要压缩
     "summary_trigger_threshold": 30,    # 摘要触发：超过 N 条才开始压缩（0=始终压缩）
     "enable_conversation_summary": True,  # 是否启用对话摘要压缩
 }
