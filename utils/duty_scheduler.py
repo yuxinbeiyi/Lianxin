@@ -666,7 +666,7 @@ class SmartReminderDuty(Duty):
         for d in due:
             d["triggered"] = True
         # 构建提醒文本
-        names = [d.name for d in due]
+        names = [d.get("name", d.get("title", "")) for d in due]
         self._pending_names = names
         return True
 

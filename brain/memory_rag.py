@@ -30,10 +30,10 @@ def _get_model():
             logger.info("Embedding model ready")
         except ImportError:
             logger.warning("sentence-transformers not installed, RAG disabled")
-            return None
         except Exception as e:
             logger.warning(f"Embedding model load failed: {e}")
-            return None
+        _load_attempted = False  # 允许后续重试
+        return None
     return _model
 
 
