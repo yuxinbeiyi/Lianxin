@@ -3,12 +3,19 @@ stt_funasr.py — FunASR SenseVoice-Small 语音识别封装
 作为全双工语音的主力 STT 引擎（本地 GPU，免费无限次）
 """
 
+import os
 import logging
 import tempfile
-import os
 from typing import Optional
 
+# ── 必须在 import funasr 之前设置 ──
+os.environ.setdefault("TQDM_DISABLE", "1")
+
 logger = logging.getLogger("lianxin.stt_funasr")
+
+# 抑制 ModelScope Hub 每次启动的下载校验日志
+for _name in ("modelscope", "modelscope_hub", "modelscope_hub.download"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
 
 # 全局单例，首次调用时懒加载
 _model = None
@@ -68,10 +75,14 @@ def transcribe(wav_bytes: bytes, language: str = "zh") -> str:
         )
         if result and len(result) > 0:
             text = result[0].get("text", "").strip()
-            # SenseVoice 有时会在文本前加情绪标签如 "<|HAPPY|>"，去掉
-            if text.startswith("<|") and "|>" in text:
-                tag_end = text.index("|>") + 2
-                text = text[tag_end:].strip()
+            # 去掉所有 SenseVoice 标签: <|HAPPY|>, <|NEUTRAL|>, <|Speech|>, <|withitn|> 等
+            import re as _re
+            text = _re.sub(r'<\|[^|>]+\|>', '', text).strip()
+            # 过滤：仅剩标点/单字=静音/噪音
+            if not text or len(text) <= 1:
+                return ""
+            if _re.fullmatch(r'[\s。，、；：？！…\.\,\;\:\?\!]+', text):
+                return ""
             return text
 
     except Exception as e:

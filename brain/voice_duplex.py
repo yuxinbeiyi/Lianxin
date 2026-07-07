@@ -194,7 +194,13 @@ class VoiceDuplexManager:
             self._set_state(STATE_PROCESSING)
             transcript = self._transcribe(wav_bytes)
 
-            if not transcript or not transcript.strip():
+            # 过滤无效转录：空文本、纯标签、过短（1-2字几乎肯定是噪音）
+            t = (transcript or "").strip()
+            if not t or len(t) <= 1:
+                self._set_state(STATE_LISTENING)
+                continue
+            # 过滤纯 FunASR 标签残余（防御性检查，stt_funasr 已处理）
+            if t.startswith("<|") or t in ("。", "，", "？", "！"):
                 self._set_state(STATE_LISTENING)
                 continue
 
