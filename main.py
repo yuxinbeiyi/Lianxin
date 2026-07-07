@@ -204,6 +204,24 @@ def main():
     font = QFont("Microsoft YaHei UI", 10)
     app.setFont(font)
 
+    # ── 启动健康检查 ──────────────────────────────────────
+    if "--skip-check" not in sys.argv:
+        try:
+            from utils.startup_check import run_checks, has_warnings, format_report
+            print("[启动体检] 正在检测关键依赖…", flush=True)
+            results = run_checks()
+            if has_warnings(results):
+                report = format_report(results)
+                print(report, flush=True)
+                if not autostart_mode:
+                    QMessageBox.information(
+                        None, "莲心AI - 启动体检", report
+                    )
+            else:
+                print("  全部通过 ✅", flush=True)
+        except Exception as e:
+            print(f"[启动体检] 检测过程异常: {e}", flush=True)
+
     window = MainWindow(autostart_mode=autostart_mode)
 
     # ── 自动激活标记为 auto_activate 的技能 ────────────────────
