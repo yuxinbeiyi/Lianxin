@@ -8,6 +8,22 @@ import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 os.environ['TQDM_DISABLE'] = '1'          # 抑制 modelscope/funasr tqdm 进度条
 import ctypes
+
+# ── 禁用 Windows 终端快速编辑模式（防止误触终端导致进程卡住） ──
+if sys.platform == "win32":
+    try:
+        _kernel32 = ctypes.windll.kernel32
+        _STD_INPUT_HANDLE = -10
+        _ENABLE_QUICK_EDIT = 0x0040
+        _handle = _kernel32.GetStdHandle(_STD_INPUT_HANDLE)
+        _mode = ctypes.c_uint32()
+        _kernel32.GetConsoleMode(_handle, ctypes.byref(_mode))
+        # 清除快速编辑和插入模式
+        _new_mode = _mode.value & ~(_ENABLE_QUICK_EDIT | 0x0020)
+        if _new_mode != _mode.value:
+            _kernel32.SetConsoleMode(_handle, _new_mode)
+    except Exception:
+        pass  # 非终端环境（如 IDE 启动）跳过
 import warnings
 import traceback
 
