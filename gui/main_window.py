@@ -8,7 +8,7 @@ import ctypes
 from ctypes import wintypes
 from typing import Optional
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox,QDialog,QTextEdit
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QDialog, QTextEdit, QMenu
 )
 from PyQt5.QtCore import Qt, QTimer, QAbstractNativeEventFilter, QPoint, QObject
 from PyQt5.QtGui import QFont, QIcon
@@ -674,12 +674,19 @@ class MainWindow(QMainWindow):
         self._galgame_btn.clicked.connect(self._toggle_galgame)
         top_bar_layout.addWidget(self._galgame_btn)
 
-        self._btn_standby = QPushButton("🌙 待机")
-        self._btn_standby.setFixedSize(72, 24)
+        self._btn_standby = QPushButton("🎤 语音聊天")
+        self._btn_standby.setFixedSize(88, 24)
         self._btn_standby.setFont(QFont("Microsoft YaHei UI", 8))
         self._btn_standby.setCursor(Qt.PointingHandCursor)
-        self._btn_standby.setToolTip("待机模式：通过语音与小纸条交互")
+        self._btn_standby.setToolTip(
+            "左击：开启/关闭语音聊天\n"
+            "右击：使用说明与设置\n\n"
+            "🎧 插耳机时：莲心说话中可随时开口打断\n"
+            "🔊 用扬声器时：等莲心说完 + 提示音后再说话"
+        )
         self._btn_standby.clicked.connect(self._on_standby_clicked)
+        self._btn_standby.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._btn_standby.customContextMenuRequested.connect(self._show_voice_chat_menu)
         self._update_standby_button()
         top_bar_layout.addWidget(self._btn_standby)
         top_bar_layout.addStretch()
@@ -2564,7 +2571,86 @@ class MainWindow(QMainWindow):
         except Exception:
             return False
 
-    # ── 待机模式（文件中转模式）────────────────────────────────────────────
+    # ── 语音聊天 ──────────────────────────────────────────
+
+    def _show_voice_chat_menu(self, pos):
+        """右击语音聊天按钮 → 弹出菜单"""
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background: #2D2D3F; color: #E0E0E0; border: 1px solid #5B5B7A;
+                    border-radius: 6px; padding: 4px; }
+            QMenu::item { padding: 6px 24px; border-radius: 4px; }
+            QMenu::item:selected { background: #4A4A6A; }
+            QMenu::separator { height: 1px; background: #3D3D5A; margin: 4px 8px; }
+        """)
+
+        if self._standby_state == "STANDBY":
+            menu.addAction("⏹ 关闭语音聊天", self._on_standby_clicked)
+        else:
+            menu.addAction("▶ 开启语音聊天", self._on_standby_clicked)
+        menu.addSeparator()
+        menu.addAction("⚙ 使用说明与设置", self._show_voice_chat_settings)
+        menu.exec_(self._btn_standby.mapToGlobal(pos))
+
+    def _show_voice_chat_settings(self):
+        """语音聊天设置面板"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("🎤 语音聊天 — 说明与设置")
+        dlg.setFixedSize(440, 360)
+        dlg.setStyleSheet("""
+            QDialog { background: #2D2D3F; color: #E0E0E0; }
+            QLabel { color: #E0E0E0; background: transparent; }
+            QCheckBox { color: #E0E0E0; }
+            QCheckBox::indicator { width: 16px; height: 16px; }
+        """)
+
+        root = QVBoxLayout(dlg)
+        root.setSpacing(10)
+        root.setContentsMargins(16, 14, 16, 14)
+
+        # ── 当前模式 ──
+        is_headphone = (self._voice_duplex and self._voice_duplex._headphone_mode)
+        mode_text = "🎧 耳机模式 — 可随时打断莲心说话" if is_headphone else "🔊 扬声器模式 — 莲心说话时请等她说完"
+        mode_label = QLabel(mode_text)
+        mode_label.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
+        mode_label.setStyleSheet(f"color: {'#27AE60' if is_headphone else '#E67E22'}; padding: 8px;")
+        root.addWidget(mode_label)
+
+        # ── 说明 ──
+        guide = QLabel(
+            "<b>使用说明</b><br><br>"
+            "<table>"
+            "<tr><td>🎧 <b>插耳机时</b></td><td>真正全双工——莲心说话中随时开口打断，"
+            "像打电话一样自然</td></tr>"
+            "<tr><td>🔊 <b>用扬声器时</b></td><td>半双工——等莲心说完 + 🔔提示音后再说话，"
+            "防止麦克风录到扬声器回声</td></tr>"
+            "<tr><td>🔔 <b>提示音</b></td><td>响起时表示麦克风在听，可以说话了</td></tr>"
+            "</table>"
+        )
+        guide.setWordWrap(True)
+        guide.setFont(QFont("Microsoft YaHei UI", 9))
+        guide.setStyleSheet("color: #B0B0C0; padding: 8px; line-height: 1.6;")
+        root.addWidget(guide)
+
+        # ── 手动切换 ──
+        cb = QCheckBox("强制耳机模式（插耳机但未自动识别时手动开启）")
+        cb.setChecked(is_headphone)
+        cb.setFont(QFont("Microsoft YaHei UI", 9))
+        cb.toggled.connect(lambda on: self._voice_duplex.set_headphone_mode(on) if self._voice_duplex else None)
+        root.addWidget(cb)
+
+        root.addStretch()
+
+        close_btn = QPushButton("关闭")
+        close_btn.setFont(QFont("Microsoft YaHei UI", 10))
+        close_btn.setStyleSheet("""
+            QPushButton { background: #4A4A6A; color: #E0E0E0; border-radius: 6px; padding: 6px 24px; }
+            QPushButton:hover { background: #5B5B7A; }
+        """)
+        close_btn.clicked.connect(dlg.accept)
+        root.addWidget(close_btn, alignment=Qt.AlignCenter)
+
+        dlg.exec_()
 
     def _on_standby_clicked(self):
         from utils.sound import play_sound
@@ -2660,9 +2746,8 @@ class MainWindow(QMainWindow):
     def _update_standby_button(self):
         """根据当前待机状态更新顶部栏待机按钮样式"""
         is_active = self._standby_state == "STANDBY"
-        is_duplex = getattr(self, '_standby_mode', 'full_duplex') == "full_duplex"
         if is_active:
-            self._btn_standby.setText("🔊 全双工 ●" if is_duplex else "🌙 待机 ●")
+            self._btn_standby.setText("🎤 语音聊天 ●")
             self._btn_standby.setStyleSheet("""
                 QPushButton {
                     background-color: #2D2D3F;
@@ -2674,7 +2759,7 @@ class MainWindow(QMainWindow):
                 QPushButton:pressed{ background-color: #4D4D65; }
             """)
         else:
-            self._btn_standby.setText("🔊 全双工" if is_duplex else "🌙 待机")
+            self._btn_standby.setText("🎤 语音聊天")
             self._btn_standby.setStyleSheet("""
                 QPushButton {
                     background-color: #2D2D3F;
