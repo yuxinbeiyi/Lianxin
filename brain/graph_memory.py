@@ -69,6 +69,11 @@ def _init_tables(conn: sqlite3.Connection):
         CREATE INDEX IF NOT EXISTS idx_graph_edges_relation ON graph_edges(relation);
         CREATE INDEX IF NOT EXISTS idx_memory_facts_category ON memory_facts(category);
     """)
+    # 为 RAG 向量检索添加 embedding 列（已存在的表不影响）
+    try:
+        conn.execute("ALTER TABLE memory_facts ADD COLUMN embedding BLOB")
+    except Exception:
+        pass  # 列已存在
 
 
 def _get_or_create_entity(conn: sqlite3.Connection, name: str, entity_type: str) -> int:
@@ -450,7 +455,7 @@ CATEGORY_DESCRIPTIONS = {
 
 def add_fact(content: str, category: str = "knowledge",
              source: str = "user_saved") -> int:
-    """插入一条分类事实。同分类下内容重复则 strength+1。返回条目 id。"""
+    """插入一条分类事实。自动生成 embedding 向量。同分类下内容重复则 strength+1。"""
     content = content.strip()
     if not content:
         return 0
@@ -458,14 +463,33 @@ def add_fact(content: str, category: str = "knowledge",
         category = "knowledge"
 
     conn = _get_conn()
-    cur = conn.execute(
-        """INSERT INTO memory_facts(content, category, source)
-           VALUES (?, ?, ?)
-           ON CONFLICT(content, category) DO UPDATE SET
-           strength = strength + 1,
-           source = excluded.source""",
-        (content, category, source)
-    )
+
+    # 尝试编码 embedding
+    emb_bytes = None
+    try:
+        from brain.memory_rag import embed_bytes
+        emb_bytes = embed_bytes(content)
+    except Exception:
+        pass
+
+    if emb_bytes:
+        conn.execute(
+            """INSERT INTO memory_facts(content, category, source, embedding)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(content, category) DO UPDATE SET
+               strength = strength + 1,
+               source = excluded.source""",
+            (content, category, source, emb_bytes)
+        )
+    else:
+        conn.execute(
+            """INSERT INTO memory_facts(content, category, source)
+               VALUES (?, ?, ?)
+               ON CONFLICT(content, category) DO UPDATE SET
+               strength = strength + 1,
+               source = excluded.source""",
+            (content, category, source)
+        )
     conn.commit()
 
     _prune_category(conn, category)

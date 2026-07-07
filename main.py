@@ -240,6 +240,14 @@ def main():
 
     window = MainWindow(autostart_mode=autostart_mode)
 
+    # ── 记忆 RAG 向量检索：后台预热 + 补建旧记忆的 embedding ──
+    try:
+        from brain.memory_rag import warmup, reindex_all_facts
+        warmup()
+        reindex_all_facts()
+    except Exception:
+        pass
+
     # ── 自动激活标记为 auto_activate 的技能 ────────────────────
     from brain.skill_manager import activate_all_skills
     activate_all_skills()

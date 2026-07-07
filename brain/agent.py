@@ -1273,6 +1273,19 @@ class AgentCore:
                 except Exception:
                     pass
 
+        # ── 记忆 RAG 注入：向量检索相关长期记忆 ──
+        if not self._use_local:
+            try:
+                from brain.memory_rag import search_similar, format_rag_context
+                memories = search_similar(
+                    last_user_msg if last_user_msg else user_message,
+                    top_k=3, threshold=0.5
+                )
+                if memories:
+                    rag_text = format_rag_context(memories)
+                    messages.append({"role": "system", "content": rag_text})
+            except Exception:
+                pass
 
         # ── 禁用工具模式：直接纯文本对话，不走工具循环 ──────
         if disable_tools:
