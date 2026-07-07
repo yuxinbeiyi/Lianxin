@@ -12,6 +12,21 @@ import numpy as np
 import os as _os
 _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
+# torch 2.5.1 移除了 torch.distributed.fsdp，sentence-transformers 依赖它
+# 创建兼容模块避免 import 失败
+import torch.distributed as _dist
+if not hasattr(_dist, "fsdp"):
+    import types as _types
+    _fsdp = _types.ModuleType("torch.distributed.fsdp")
+    _fsdp.FullyShardedDataParallel = type("FullyShardedDataParallel", (), {})
+    _fsdp.ShardingStrategy = type("ShardingStrategy", (), {
+        "FULL_SHARD": 1, "SHARD_GRAD_OP": 2, "NO_SHARD": 3, "HYBRID_SHARD": 4, "_HYBRID_SHARD_ZERO2": 5
+    })
+    _fsdp.StateDictType = type("StateDictType", (), {
+        "FULL_STATE_DICT": 1, "LOCAL_STATE_DICT": 2, "SHARDED_STATE_DICT": 3
+    })
+    _dist.fsdp = _fsdp
+
 logger = logging.getLogger("MemoryRAG")
 
 # 全局单例
@@ -26,7 +41,7 @@ def _get_model():
         try:
             from sentence_transformers import SentenceTransformer
             logger.info(f"Loading embedding model: {_model_name}")
-            _model = SentenceTransformer(_model_name, device="cpu")
+            _model = SentenceTransformer(_model_name, device="cpu", local_files_only=True)
             logger.info("Embedding model ready")
         except ImportError:
             logger.warning("sentence-transformers not installed, RAG disabled")
