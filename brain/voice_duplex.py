@@ -24,12 +24,10 @@
 """
 
 import os
-import sys
 import time
 import queue
 import threading
 import logging
-import tempfile
 from typing import Optional, Callable
 
 from brain.vad_webrtc import WebRTCVADWorker
@@ -41,15 +39,6 @@ STATE_STOPPED    = "STOPPED"
 STATE_LISTENING  = "LISTENING"
 STATE_PROCESSING = "PROCESSING"
 
-# ── Whisper 经典幻觉过滤 ──────────────────────────────
-# 当 VAD 触发但实际没有有效语音时，Whisper 会脑补这些常见短语
-_WHISPER_HALLUCINATIONS = {
-    "谢谢", "感谢", "谢谢观看", "謝謝觀看", "谢谢收看", "感謝觀看",
-    "谢谢大家", "谢谢观赏", "感謝收看", "感谢观看", "感谢收看",
-    "Thank you", "Thanks", "Thank you for watching",
-    "订阅", "点赞", "关注", "转发",
-    "一首", "一首歌", "music", "Music",
-}
 
 # 状态中文标签
 STATE_LABELS = {
@@ -207,52 +196,39 @@ class VoiceDuplexManager:
                 _safe_call(self._on_transcript, transcript)
             self._set_state(STATE_LISTENING)
 
-    def _is_hallucination(self, text: str) -> bool:
-        """检查转录文本是否为 Whisper 幻觉（TTS 回声/静音被误识别）。"""
-        t = text.strip()
-        if not t:
-            return True
-        if len(t) <= 1:  # 单字几乎肯定是幻觉
-            return True
-        if t in _WHISPER_HALLUCINATIONS:
-            return True
-        return False
-
     def _transcribe(self, wav_bytes: bytes) -> str:
+        """语音转文字：FunASR 本地主力 → 火山引擎云端备份。"""
         import time as _time
-        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+
+        # 调试录音
+        debug_path = os.path.join(os.path.expanduser("~"), "Desktop",
+                                  f"lianxin_debug_{int(_time.time())}.wav")
         try:
-            tmp.write(wav_bytes)
-            tmp.close()
-            # 调试录音
-            debug_path = os.path.join(os.path.expanduser("~"), "Desktop",
-                                      f"lianxin_debug_{int(_time.time())}.wav")
             with open(debug_path, "wb") as f:
                 f.write(wav_bytes)
             logger.info(f"💾 调试录音已保存: {debug_path}")
+        except Exception:
+            pass
 
-            # 优先火山云端
+        # ── 第1优先级：FunASR 本地 GPU（免费，低延迟，中文最优）──
+        try:
+            from brain.stt_funasr import transcribe as funasr_transcribe
+            result = funasr_transcribe(wav_bytes)
+            if result and result.strip():
+                logger.info(f"🎯 FunASR: {result}")
+                return result
+        except Exception as e:
+            logger.debug(f"FunASR 不可用: {e}")
+
+        # ── 第2优先级：火山引擎云端（付费，网络依赖）─────────
+        try:
             from brain.stt_volcano import transcribe as cloud_transcribe
             result = cloud_transcribe(wav_bytes)
-            if result:
+            if result and result.strip():
+                logger.info(f"☁️ 火山引擎: {result}")
                 return result
-
-            # 回退本地 Faster-Whisper
-            from brain.audio_utils import transcribe as local_transcribe
-            result = local_transcribe(tmp.name, language="zh").strip()
-            logger.info(f"📝 本地转录: {result}")
-
-            # 过滤 Whisper 幻觉（"謝謝觀看"、"谢谢"等常见脑补）
-            if self._is_hallucination(result):
-                logger.info(f"🗑️ 过滤幻觉: {result}")
-                return ""
-
-            return result
         except Exception as e:
-            logger.warning(f"转录失败: {e}")
-            return ""
-        finally:
-            try:
-                os.unlink(tmp.name)
-            except Exception:
-                pass
+            logger.debug(f"火山引擎不可用: {e}")
+
+        logger.debug("所有 STT 引擎均未返回结果")
+        return ""
