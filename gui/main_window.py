@@ -689,6 +689,23 @@ class MainWindow(QMainWindow):
         self._btn_standby.customContextMenuRequested.connect(self._show_voice_chat_menu)
         self._update_standby_button()
         top_bar_layout.addWidget(self._btn_standby)
+
+        # 后台职责中心入口
+        self._btn_duty = QPushButton("🔧")
+        self._btn_duty.setFixedSize(28, 24)
+        self._btn_duty.setFont(QFont("Microsoft YaHei UI", 9))
+        self._btn_duty.setCursor(Qt.PointingHandCursor)
+        self._btn_duty.setToolTip("后台职责中心：查看/管理莲心的主动行为")
+        self._btn_duty.setStyleSheet("""
+            QPushButton {
+                background-color: #2D2D3F; color: #A0A0B0;
+                border-radius: 5px; border: 1px solid #3D3D5A;
+            }
+            QPushButton:hover { background-color: #3D3D55; color: #FFD700; }
+        """)
+        self._btn_duty.clicked.connect(self._show_duty_center)
+        top_bar_layout.addWidget(self._btn_duty)
+
         top_bar_layout.addStretch()
 
         # 窗口控制按钮（最右侧）
@@ -2572,6 +2589,12 @@ class MainWindow(QMainWindow):
             return False
 
     # ── 语音聊天 ──────────────────────────────────────────
+
+    def _show_duty_center(self):
+        """打开后台职责中心"""
+        from gui.duty_center import DutyCenter
+        dlg = DutyCenter(self._duty_scheduler, self)
+        dlg.exec_()
 
     def _show_voice_chat_menu(self, pos):
         """右击语音聊天按钮 → 弹出菜单"""
