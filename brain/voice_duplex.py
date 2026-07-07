@@ -89,6 +89,7 @@ class VoiceDuplexManager:
         self._lock = threading.Lock()
         self._vad_paused = False
         self._vad_cooldown_until = 0.0
+        self._headphone_mode = False  # 耳机模式：允许TTS期间语音打断
 
     # ── 状态 ──────────────────────────────────────────
 
@@ -104,7 +105,7 @@ class VoiceDuplexManager:
             if self._on_state_change:
                 _safe_call(self._on_state_change, new)
 
-    # ── 中断 ──────────────────────────────────────────
+    # ── 中断 / 耳机模式 ────────────────────────────────
 
     def interrupt(self):
         """打断当前操作。"""
@@ -112,6 +113,30 @@ class VoiceDuplexManager:
             return
         logger.info("🛑 中断！")
         self._set_state(STATE_LISTENING)
+
+    def set_headphone_mode(self, enabled: bool):
+        """设置耳机模式。耳机/耳麦场景下允许TTS期间语音打断（无回声风险）。"""
+        self._headphone_mode = enabled
+        logger.info(f"🎧 耳机模式: {'开启 (可打断TTS)' if enabled else '关闭 (扬声器安全模式)'}")
+
+    def auto_detect_headphone(self) -> bool:
+        """自动检测是否使用耳机。返回 True 表示检测到耳机。"""
+        try:
+            import sounddevice as sd
+            # 检查默认输出设备名称
+            device = sd.query_devices(kind='output')
+            name = (device.get('name', '') or '').lower()
+            keywords = ['headphone', 'headset', 'earphone', 'earbud',
+                       '耳机', '耳麦', '头戴', '蓝牙']
+            detected = any(kw in name for kw in keywords)
+            if detected:
+                logger.info(f"🎧 自动检测到耳机: {device.get('name', '')}")
+                self._headphone_mode = True
+            return detected
+        except Exception:
+            return False
+
+    # ── TTS 协同（由主窗口在 TTS 播放前后调用）────────────
 
     # ── TTS 协同（由主窗口在 TTS 播放前后调用）────────────
     def pause_vad(self):
@@ -136,6 +161,16 @@ class VoiceDuplexManager:
         if self._on_voice_start_ui:
             _safe_call(self._on_voice_start_ui)
 
+        # 耳机模式：TTS 期间用户开口 → 立刻打断（无回声风险）
+        if self._vad_paused and self._headphone_mode:
+            logger.info("🎧 耳机模式：TTS 中检测到用户语音 → 打断！")
+            with self._lock:
+                self._vad_paused = False
+                self._vad_cooldown_until = 0.0
+            if self._on_interrupt_tts:
+                _safe_call(self._on_interrupt_tts)
+            return
+
         # 思考中打断
         if self._state == STATE_PROCESSING:
             self.interrupt()
@@ -143,7 +178,7 @@ class VoiceDuplexManager:
     def _on_voice_end(self, wav_bytes: bytes):
         with self._lock:
             if self._vad_paused:
-                return  # TTS 播放中 → 丢弃（防扬声器回声被误识别为用户说话）
+                return  # 扬声器模式：丢弃 TTS 回声
             if time.time() < self._vad_cooldown_until:
                 return  # TTS 刚结束 → 冷却期内丢弃延迟的回声尾帧
         self._audio_queue.put(wav_bytes)

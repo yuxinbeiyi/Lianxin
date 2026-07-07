@@ -2582,6 +2582,11 @@ class MainWindow(QMainWindow):
                 on_state_change=self._on_duplex_state_change,
                 on_interrupt_tts=self._on_duplex_interrupt_tts,
             )
+            # 自动检测耳机：耳机/耳麦 → 允许TTS期间语音打断
+            detected = self._voice_duplex.auto_detect_headphone()
+            if detected:
+                self._chat_widget.add_system_tip(
+                    "🎧 检测到耳机 — 莲心说话时你可以直接开口打断~")
             self._voice_duplex.start()
             self._update_standby_button()
             self._chat_widget.add_system_tip(
