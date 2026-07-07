@@ -166,8 +166,7 @@ _threading_excepthook = threading.excepthook if hasattr(threading, "excepthook")
 
 
 def _thread_exception_handler(args):
-    exc_type, exc_value, exc_tb, thread = args.thread if hasattr(args, "thread") else (args.exc_type, args.exc_value, args.exc_traceback, args.thread)
-    _global_exception_handler(exc_type, exc_value, exc_tb)
+    _global_exception_handler(args.exc_type, args.exc_value, args.exc_traceback)
 
 
 if _threading_excepthook is not None:

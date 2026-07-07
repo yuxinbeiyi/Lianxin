@@ -2609,7 +2609,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(16, 14, 16, 14)
 
         # ── 当前模式 ──
-        is_headphone = (self._voice_duplex and self._voice_duplex._headphone_mode)
+        is_headphone = bool(self._voice_duplex and self._voice_duplex._headphone_mode)
         mode_text = "🎧 耳机模式 — 可随时打断莲心说话" if is_headphone else "🔊 扬声器模式 — 莲心说话时请等她说完"
         mode_label = QLabel(mode_text)
         mode_label.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
