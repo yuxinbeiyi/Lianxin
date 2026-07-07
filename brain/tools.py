@@ -4732,24 +4732,46 @@ def _bilibili_list_tags_tool() -> str:
 
 def execute_tool(name: str, tool_input: dict) -> str:
     """根据工具名称调用对应的执行函数。调用前检查防御模式。"""
-    # ── MCP 工具路由 ──────────────────────────────────────
-    if name.startswith("mcp__"):
-        try:
-            from brain.mcp.mcp_bridge import wrap_as_sync
-            return wrap_as_sync(name, tool_input)
-        except Exception as e:
-            return f"MCP工具调用失败: {e}"
-
-    # ── 情感系统防御模式检查 ────────────────────────────────
+    t0 = time.perf_counter()
+    success = True
     try:
-        from brain.emotional import get_manager as _get_emotion_mgr
-        _allowed, _reason = _get_emotion_mgr().check_tool_allowed(name)
-        if not _allowed:
-            return f"[拒绝] {_reason}"
-    except Exception:
-        pass
+        # ── MCP 工具路由 ──────────────────────────────────────
+        if name.startswith("mcp__"):
+            try:
+                from brain.mcp.mcp_bridge import wrap_as_sync
+                return wrap_as_sync(name, tool_input)
+            except Exception as e:
+                success = False
+                return f"MCP工具调用失败: {e}"
 
-    executor = TOOL_EXECUTORS.get(name)
-    if not executor:
-        return f"未知工具: {name}"
-    return executor(tool_input)
+        # ── 情感系统防御模式检查 ────────────────────────────────
+        try:
+            from brain.emotional import get_manager as _get_emotion_mgr
+            _allowed, _reason = _get_emotion_mgr().check_tool_allowed(name)
+            if not _allowed:
+                return f"[拒绝] {_reason}"
+        except Exception:
+            pass
+
+        executor = TOOL_EXECUTORS.get(name)
+        if not executor:
+            success = False
+            return f"未知工具: {name}"
+        return executor(tool_input)
+    except Exception:
+        success = False
+        raise
+    finally:
+        elapsed = (time.perf_counter() - t0) * 1000
+        try:
+            from brain.tool_registry import record_tool_call
+            record_tool_call(name, success, elapsed)
+        except Exception:
+            pass
+
+# ── 初始化工具注册中心（模块导入时自动注册所有工具）─────────
+try:
+    from brain.tool_registry import init_tool_registry
+    init_tool_registry(list(TOOL_EXECUTORS.keys()))
+except Exception:
+    pass

@@ -156,6 +156,17 @@ class CapabilityCenter(QDialog):
         mcp_wrapper.addWidget(self._mcp_scroll)
         self._tabs.addTab(self._mcp_tab, "⚡ MCP 服务")
 
+        self._tool_tab = QWidget()
+        self._tool_scroll = self._make_scroll_area()
+        self._tool_layout = QVBoxLayout(self._tool_scroll.widget())
+        self._tool_layout.setContentsMargins(0, 0, 0, 0)
+        self._tool_layout.setSpacing(8)
+        self._tool_layout.addStretch()
+        tool_wrapper = QVBoxLayout(self._tool_tab)
+        tool_wrapper.setContentsMargins(0, 0, 0, 0)
+        tool_wrapper.addWidget(self._tool_scroll)
+        self._tabs.addTab(self._tool_tab, "🛠️ 内置工具")
+
         root.addWidget(self._tabs)
 
     def _make_scroll_area(self):
@@ -336,6 +347,7 @@ class CapabilityCenter(QDialog):
     def _refresh_all(self):
         self._load_skills()
         self._load_mcp()
+        self._load_tools()
         self._update_refresh_time()
         self._on_search("")
 
@@ -495,6 +507,99 @@ class CapabilityCenter(QDialog):
                           if getattr(a, "_connected", True))
         self._rebuild_stats(active_count)
 
+    # ── 内置工具加载 ─────────────────────────────────────
+
+    def _load_tools(self):
+        layout = self._tool_layout
+        while layout.count() > 1:
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        try:
+            from brain.tool_registry import get_tool_registry
+            reg = get_tool_registry()
+            by_cat = reg.get_by_category()
+        except Exception:
+            empty = QLabel("工具注册中心暂不可用。")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setStyleSheet("color: #AAA; padding: 40px;")
+            layout.insertWidget(layout.count() - 1, empty)
+            return
+
+        if not by_cat:
+            empty = QLabel("暂无内置工具。发送消息让莲心调用工具后，统计将在此显示。")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setStyleSheet("color: #AAA; padding: 40px;")
+            layout.insertWidget(layout.count() - 1, empty)
+            return
+
+        for cat, tools in by_cat.items():
+            # 分类标题
+            cat_label = QLabel(cat)
+            cat_label.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
+            cat_label.setStyleSheet("color: #4A4A6A; padding: 8px 4px 2px 4px;")
+            cat_label.setProperty("card_type", "tool_cat")
+            cat_label.setProperty("tool_names", " ".join(t.name for t in tools))
+            layout.insertWidget(layout.count() - 1, cat_label)
+
+            for ts in tools:
+                card = self._make_tool_card(ts)
+                layout.insertWidget(layout.count() - 1, card)
+
+    def _make_tool_card(self, ts):
+        """为单个工具创建统计卡片。"""
+        card = QFrame()
+        card.setStyleSheet("""
+            QFrame {
+                background: #FFF8DC; border: 1px solid #E8E0C0;
+                border-radius: 8px;
+            }
+        """)
+        card.setProperty("card_type", "builtin_tool")
+        card.setProperty("tool_name", ts.name)
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(12, 6, 12, 6)
+        layout.setSpacing(10)
+
+        # 名称
+        name_lbl = QLabel(ts.name)
+        name_lbl.setFont(QFont("Consolas", 10, QFont.Bold))
+        name_lbl.setStyleSheet("color: #2C2C2C; background: transparent;")
+        layout.addWidget(name_lbl)
+
+        layout.addStretch()
+
+        # 调用次数
+        count_lbl = QLabel(f"📊 {ts.call_count}")
+        count_lbl.setFont(QFont("Microsoft YaHei UI", 9))
+        count_lbl.setStyleSheet("color: #6C7BFF; background: transparent;")
+        layout.addWidget(count_lbl)
+
+        # 成功率
+        if ts.call_count > 0:
+            rate = ts.success_rate * 100
+            rate_color = "#27AE60" if rate >= 90 else "#E67E22" if rate >= 50 else "#E74C3C"
+            rate_lbl = QLabel(f"✅ {rate:.0f}%")
+            rate_lbl.setFont(QFont("Microsoft YaHei UI", 9))
+            rate_lbl.setStyleSheet(f"color: {rate_color}; background: transparent;")
+            layout.addWidget(rate_lbl)
+
+            # 平均耗时
+            avg = ts.avg_duration_ms
+            if avg >= 1000:
+                dur_text = f"⏱ {avg/1000:.1f}s"
+            else:
+                dur_text = f"⏱ {avg:.0f}ms"
+            dur_lbl = QLabel(dur_text)
+            dur_lbl.setFont(QFont("Microsoft YaHei UI", 9))
+            dur_lbl.setStyleSheet("color: #888; background: transparent;")
+            layout.addWidget(dur_lbl)
+
+        return card
+
     def _rebuild_stats(self, mcp_connected=0):
         from brain.skill_manager import _skill_registry, _active_skills
         from brain.mcp.mcp_registry import MCP_REGISTRY
@@ -527,4 +632,17 @@ class CapabilityCenter(QDialog):
                 w = item.widget()
                 if w.property("card_type") == "mcp":
                     name = w.property("mcp_name") or ""
+                    w.setVisible(kw in name.lower() if kw else True)
+
+        for i in range(self._tool_layout.count()):
+            item = self._tool_layout.itemAt(i)
+            if item and item.widget():
+                w = item.widget()
+                ct = w.property("card_type") or ""
+                if ct == "tool_cat":
+                    names = w.property("tool_names") or ""
+                    visible = kw in names.lower() if kw else True
+                    w.setVisible(visible)
+                elif ct == "builtin_tool":
+                    name = w.property("tool_name") or ""
                     w.setVisible(kw in name.lower() if kw else True)
