@@ -4731,9 +4731,11 @@ def _bilibili_list_tags_tool() -> str:
 
 
 def execute_tool(name: str, tool_input: dict) -> str:
-    """根据工具名称调用对应的执行函数。调用前检查防御模式。"""
+    """根据工具名称调用对应的执行函数。调用前检查防御模式。
+    支持错误恢复链：网络类工具失败后自动重试+降级。"""
     t0 = time.perf_counter()
     success = True
+    retries = 0
     try:
         # ── MCP 工具路由 ──────────────────────────────────────
         if name.startswith("mcp__"):
@@ -4757,7 +4759,23 @@ def execute_tool(name: str, tool_input: dict) -> str:
         if not executor:
             success = False
             return f"未知工具: {name}"
-        return executor(tool_input)
+
+        # ── 错误恢复链 ──────────────────────────────────────
+        from brain.tool_recovery import should_recover, execute_with_recovery
+
+        def _exec(name_to_run, args_to_run):
+            ex = TOOL_EXECUTORS.get(name_to_run)
+            if not ex:
+                return f"未知工具: {name_to_run}"
+            return ex(args_to_run)
+
+        if should_recover(name):
+            result, retries, log = execute_with_recovery(name, tool_input, _exec)
+            if log:
+                pass  # 恢复日志由 AgentCore._execute_tool_calls_parallel 中的 print 输出
+            return result
+        else:
+            return executor(tool_input)
     except Exception:
         success = False
         raise

@@ -330,6 +330,10 @@ class AgentCore:
                 self._extraction_counter = 0
                 self._trigger_auto_extraction()
 
+        # ── Checklist 提取（后台执行，对话结束后回顾待办）────
+        if not effective_disable and len(self.history) >= 4:
+            self._trigger_checklist_extraction()
+
         # 防御性过滤：确保没有任何残留的表情标签泄漏到显示文本
         display_response = re.sub(
             r"(?:[【［\[]|\*\*)表情[：:]\s*[^】\]］\]\*]*(?:[】\]］\]]|\*\*)?", "", display_response
@@ -417,6 +421,36 @@ class AgentCore:
                     logging.getLogger("Agent").warning(f"五元组提取失败: {e}")
 
         threading.Thread(target=_do_extract, daemon=True).start()
+
+    def _trigger_checklist_extraction(self):
+        """对话结束后在后台提取待办事项（借鉴 NagaAgent DogTag）。"""
+        if self._use_local:
+            return
+        recent = self.history[-20:]
+        lines = []
+        for msg in recent:
+            role = "用户" if msg.get("role") == "user" else "莲心"
+            content = msg.get("content", "")
+            if content and len(content) > 5:
+                lines.append(f"[{role}]: {content[:300]}")
+        if len(lines) < 4:
+            return
+
+        conversation_text = "\n".join(lines)
+
+        try:
+            from brain.checklist_extractor import run_checklist_async
+            import brain.tools as _bt
+            tm = getattr(_bt, '_todo_manager', None)
+            run_checklist_async(
+                conversation_text,
+                api_key=self._api_key,
+                api_base=self._api_base,
+                model=self._model,
+                todo_manager=tm,
+            )
+        except Exception:
+            pass
 
     def clear_history(self):
         """清除当次会话的内存历史（数据库记录保留）。"""
