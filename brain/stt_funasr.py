@@ -4,6 +4,7 @@ stt_funasr.py — FunASR SenseVoice-Small 语音识别封装
 """
 
 import os
+import sys
 import logging
 import tempfile
 from typing import Optional
@@ -30,12 +31,19 @@ def _load_model():
         return _model
     _load_attempted = True
 
-    # 抑制 modelscope trust_remote_code 警告
+    # 抑制 funasr import 时的 print() 和 modelscope 的 warnings
     import warnings as _w
-    _w.filterwarnings("ignore", message=".*trust_remote_code.*")
+    _w.simplefilter("ignore")
+    _saved_stdout = sys.stdout
+    sys.stdout = open(os.devnull, "w")
 
     try:
         from funasr import AutoModel
+    finally:
+        sys.stdout.close()
+        sys.stdout = _saved_stdout
+
+    try:
         logger.info("🔊 正在加载 FunASR SenseVoice-Small 模型…")
         _model = AutoModel(
             model="iic/SenseVoiceSmall",
