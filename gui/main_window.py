@@ -2308,21 +2308,21 @@ class MainWindow(QMainWindow):
             print(f"[摸鱼] 调用工具: get_diary_by_date({today})")
             diary = get_diary_by_date(today)
             if diary:
-                print(f"[摸鱼] ✅ 找到今天的日记，{len(diary['content'])} 字")
+                print(f"[摸鱼] [OK]找到今天的日记，{len(diary['content'])} 字")
                 parts.append(f"【今天的日记】\n{diary['content'][:500]}")
             else:
-                print(f"[摸鱼] ⚠️ 今天还没有日记，无法补充")
+                print(f"[摸鱼] [WARN]今天还没有日记，无法补充")
 
         elif action == "review_old_diary":
             print(f"[摸鱼] 调用工具: get_all_diaries()")
             diaries = get_all_diaries()
             if diaries:
-                print(f"[摸鱼] ✅ 找到 {len(diaries)} 篇日记，随机选一篇")
+                print(f"[摸鱼] [OK]找到 {len(diaries)} 篇日记，随机选一篇")
                 import random
                 old = random.choice(diaries)
                 parts.append(f"【旧日记 - {old['date']}】\n{old['content'][:500]}")
             else:
-                print(f"[摸鱼] ⚠️ 没有旧日记")
+                print(f"[摸鱼] [WARN]没有旧日记")
 
         elif action in ("search_old_topic", "random_question"):
             print(f"[摸鱼] 调用工具: history_manager.get_sessions() + get_messages()")
@@ -2330,18 +2330,18 @@ class MainWindow(QMainWindow):
             if sessions:
                 msgs = self._agent.get_history_manager().get_messages(sessions[0]["id"])
                 recent = msgs[-30:] if len(msgs) > 30 else msgs
-                print(f"[摸鱼] ✅ 获取最近 {len(recent)} 条对话")
+                print(f"[摸鱼] [OK]获取最近 {len(recent)} 条对话")
                 user_name = _get_user_name_from_settings()
                 lines = [f"{user_name if m['role'] == 'user' else '莲心'}：{m['content'][:200]}" for m in recent]
                 parts.append("【最近的对话】\n" + "\n".join(lines))
             else:
-                print(f"[摸鱼] ⚠️ 没有对话历史")
+                print(f"[摸鱼] [WARN]没有对话历史")
 
         elif action == "remind_todo":
             print(f"[摸鱼] 调用工具: _todo_manager.get_todos(completed=False)")
             todos = self._todo_manager.get_todos(completed=False)
             if todos:
-                print(f"[摸鱼] ✅ 找到 {len(todos)} 个未完成待办，取前5个")
+                print(f"[摸鱼] [OK]找到 {len(todos)} 个未完成待办，取前5个")
                 now = datetime.now()
                 today_str = now.strftime("%Y-%m-%d")
                 todo_lines = []
@@ -2352,7 +2352,7 @@ class MainWindow(QMainWindow):
                         todo_lines.append(f"- {t.title}")
                 parts.append(f"【当前日期】{today_str}\n【未完成的待办】\n" + "\n".join(todo_lines))
             else:
-                print(f"[摸鱼] ⚠️ 没有未完成待办")
+                print(f"[摸鱼] [WARN]没有未完成待办")
 
         elif action == "weather_chitchat":
             try:
@@ -2362,23 +2362,23 @@ class MainWindow(QMainWindow):
                 qw_cfg = get_qweather_config()
                 api_key = qw_cfg.get("api_key", "").strip()
                 if api_key:
-                    print(f"[摸鱼] ✅ API Key 已配置")
+                    print(f"[摸鱼] [OK]API Key 已配置")
                     city = get_user_city_from_memory()
                     print(f"[摸鱼] 调用工具: get_user_city_from_memory() → {city or '未找到'}")
                     if city:
                         print(f"[摸鱼] 调用工具: get_full_weather(city='{city}')")
                         weather_text = get_full_weather(city, api_key=api_key)
                         if weather_text and "错误" not in weather_text:
-                            print(f"[摸鱼] ✅ 天气获取成功")
+                            print(f"[摸鱼] [OK]天气获取成功")
                             parts.append(f"【当前天气】\n{weather_text}")
                         else:
-                            print(f"[摸鱼] ⚠️ 天气获取失败")
+                            print(f"[摸鱼] [WARN]天气获取失败")
                     else:
-                        print(f"[摸鱼] ⚠️ 未找到用户城市")
+                        print(f"[摸鱼] [WARN]未找到用户城市")
                 else:
-                    print(f"[摸鱼] ⚠️ 未配置和风天气 API Key")
+                    print(f"[摸鱼] [WARN]未配置和风天气 API Key")
             except Exception as e:
-                print(f"[摸鱼] ❌ 天气查询异常: {e}")
+                print(f"[摸鱼] [ERR]天气查询异常: {e}")
 
         elif action == "read_local_files":
             try:
@@ -2386,7 +2386,7 @@ class MainWindow(QMainWindow):
                 from utils.slack_utils import get_random_document
                 doc = get_random_document()
                 if doc:
-                    print(f"[摸鱼] ✅ 找到文件: {doc['name']} ({doc['size_kb']} KB)")
+                    print(f"[摸鱼] [OK]找到文件: {doc['name']} ({doc['size_kb']} KB)")
                     parts.append(
                         f"【翻到的文件】\n"
                         f"文件名：{doc['name']}\n"
@@ -2395,9 +2395,9 @@ class MainWindow(QMainWindow):
                         f"\n内容摘要：\n{doc['snippet']}"
                     )
                 else:
-                    print(f"[摸鱼] ⚠️ 没找到可读文件")
+                    print(f"[摸鱼] [WARN]没找到可读文件")
             except Exception as e:
-                print(f"[摸鱼] ❌ 读本地文件异常: {e}")
+                print(f"[摸鱼] [ERR]读本地文件异常: {e}")
 
         elif action == "browser_history":
             try:
@@ -2405,12 +2405,12 @@ class MainWindow(QMainWindow):
                 from utils.slack_utils import get_browser_history_snippet
                 history = get_browser_history_snippet()
                 if history:
-                    print(f"[摸鱼] ✅ 获取到浏览器历史记录")
+                    print(f"[摸鱼] [OK]获取到浏览器历史记录")
                     parts.append(f"【浏览器最近访问记录】\n{history}")
                 else:
-                    print(f"[摸鱼] ⚠️ 浏览器历史为空")
+                    print(f"[摸鱼] [WARN]浏览器历史为空")
             except Exception as e:
-                print(f"[摸鱼] ❌ 浏览器历史异常: {e}")
+                print(f"[摸鱼] [ERR]浏览器历史异常: {e}")
 
         elif action == "check_cpu_disk":
             try:
@@ -2427,12 +2427,12 @@ class MainWindow(QMainWindow):
                 if status.get("disk_info"):
                     lines.append(f"磁盘：{status['disk_info']}")
                 if lines:
-                    print(f"[摸鱼] ✅ CPU={status.get('cpu_percent')}%, 内存={status.get('memory_percent')}%")
+                    print(f"[摸鱼] [OK]CPU={status.get('cpu_percent')}%, 内存={status.get('memory_percent')}%")
                     parts.append("【电脑系统状态】\n" + "\n".join(lines))
                 else:
-                    print(f"[摸鱼] ⚠️ 系统状态获取失败")
+                    print(f"[摸鱼] [WARN]系统状态获取失败")
             except Exception as e:
-                print(f"[摸鱼] ❌ 系统状态异常: {e}")
+                print(f"[摸鱼] [ERR]系统状态异常: {e}")
 
         elif action == "check_recycle_bin":
             try:
@@ -2440,12 +2440,12 @@ class MainWindow(QMainWindow):
                 from utils.slack_utils import get_recycle_bin_info
                 info = get_recycle_bin_info()
                 if info:
-                    print(f"[摸鱼] ✅ 回收站信息获取成功")
+                    print(f"[摸鱼] [OK]回收站信息获取成功")
                     parts.append(f"【回收站信息】\n{info}")
                 else:
-                    print(f"[摸鱼] ⚠️ 回收站信息为空")
+                    print(f"[摸鱼] [WARN]回收站信息为空")
             except Exception as e:
-                print(f"[摸鱼] ❌ 回收站查询异常: {e}")
+                print(f"[摸鱼] [ERR]回收站查询异常: {e}")
 
         elif action == "remind_rest":
             try:
@@ -2454,10 +2454,10 @@ class MainWindow(QMainWindow):
                 boot = datetime.fromtimestamp(psutil.boot_time())
                 uptime = datetime.now() - boot
                 hours = int(uptime.total_seconds() / 3600)
-                print(f"[摸鱼] ✅ 开机时长: {hours} 小时")
+                print(f"[摸鱼] [OK]开机时长: {hours} 小时")
                 parts.append(f"【电脑开机时长】约 {hours} 小时")
             except Exception as e:
-                print(f"[摸鱼] ⚠️ 无法获取开机时长: {e}")
+                print(f"[摸鱼] [WARN]无法获取开机时长: {e}")
                 parts.append("【电脑开机时长】（无法获取）")
 
         elif action == "remind_water":
@@ -2470,21 +2470,21 @@ class MainWindow(QMainWindow):
                 first_meet = self._accompany_stats.get_first_meet_date()
                 if first_meet:
                     days = self._accompany_stats.get_total_days_since_first_meet()
-                    print(f"[摸鱼] ✅ 相识日期: {first_meet}，已相伴 {days} 天")
+                    print(f"[摸鱼] [OK]相识日期: {first_meet}，已相伴 {days} 天")
                     parts.append(f"【相识纪念日】相识日期：{first_meet}，已相伴 {days} 天")
                 else:
-                    print(f"[摸鱼] ⚠️ 未设置相识日期")
+                    print(f"[摸鱼] [WARN]未设置相识日期")
             except Exception as e:
-                print(f"[摸鱼] ❌ 纪念日查询异常: {e}")
+                print(f"[摸鱼] [ERR]纪念日查询异常: {e}")
 
         elif action == "next_song":
             print(f"[摸鱼] 切歌，无需工具调用")
             if self.playlist:
                 current = self.playlist[self.current_track_index] if self.current_track_index < len(self.playlist) else ""
-                print(f"[摸鱼] ✅ 当前播放: {current}")
+                print(f"[摸鱼] [OK]当前播放: {current}")
                 parts.append(f"【当前播放】{current}")
             else:
-                print(f"[摸鱼] ⚠️ 播放列表为空")
+                print(f"[摸鱼] [WARN]播放列表为空")
 
         if not parts:
             return ""
@@ -3536,7 +3536,7 @@ class MainWindow(QMainWindow):
         self._heartbeat_time = time.monotonic()
         if self._heartbeat_frozen:
             self._heartbeat_frozen = False
-            print(f"[看门狗] ✅ 主线程已恢复")
+            print(f"[看门狗] 主线程已恢复")
 
     def _watchdog_loop(self):
         """后台线程：轮询心跳时间戳，卡顿时实时抓取主线程调用堆栈。"""
@@ -3560,9 +3560,9 @@ class MainWindow(QMainWindow):
                         frame = sys._current_frames().get(t.ident)
                         if frame:
                             stacks = "".join(traceback.format_stack(frame))
-                            print(f"[看门狗] ⚠️ 主线程已卡住 {elapsed:.1f} 秒！调用堆栈：\n{stacks}")
+                            print(f"[看门狗] WARN 主线程已卡住 {elapsed:.1f} 秒！调用堆栈：\n{stacks}")
                         else:
-                            print(f"[看门狗] ⚠️ 主线程已卡住 {elapsed:.1f} 秒（无法获取堆栈）")
+                            print(f"[看门狗] WARN 主线程已卡住 {elapsed:.1f} 秒（无法获取堆栈）")
                         break
             elif round(elapsed) % 30 == 0:
                 # 长时间卡顿，每 30 秒再抓一次堆栈看有没有变化
