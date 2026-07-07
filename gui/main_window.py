@@ -282,15 +282,44 @@ class MainWindow(QMainWindow):
         self._preload_tts()       # 后台预热 TTS 引擎
 
 
-        # ── 主动聊天定时器（每 5 分钟轮询一次）──────────────
-        self._proactive_timer = QTimer(self)
-        self._proactive_timer.timeout.connect(self._on_proactive_tick)
-        self._proactive_timer.start(5 * 60 * 1000)   # 5 分钟
- 
-        # ── 心跳自检定时器（对话结束后 N 分钟触发，回顾遗漏事项）──
-        self._heartbeat_check_timer = QTimer(self)
-        self._heartbeat_check_timer.setSingleShot(True)
-        self._heartbeat_check_timer.timeout.connect(self._on_heartbeat_check)
+        # ── ReminderManager（供 DutyScheduler 和 reminder_dialog 使用）
+        self.reminder_manager = ReminderManager()
+
+        # ── 统一后台职责调度器（替代 3 个独立 QTimer）─────────
+        from utils.duty_scheduler import (
+            DutyScheduler, ProactiveDuty, SlackDuty, HeartbeatDuty, SmartReminderDuty, register_duty
+        )
+        self._duty_scheduler = DutyScheduler(self)
+        self._duty_scheduler.setup(
+            proactive_scheduler=self._proactive_scheduler,
+            reminder_manager=self.reminder_manager,
+            global_settings=self._global_settings,
+            session_id_func=lambda: self._agent._session_id if hasattr(self, '_agent') and self._agent else 0,
+            history_manager_func=lambda: self._agent.get_history_manager() if hasattr(self, '_agent') and self._agent else None,
+            qq_bridge_func=lambda: self._qq_bridge if hasattr(self, '_qq_bridge') else None,
+            todo_manager=self._todo_manager,
+            agent=lambda: self._agent if hasattr(self, '_agent') else None,
+            chat_widget=self._chat_widget,
+            speak_func=self._speak,
+            is_shoulder_available=self._is_shoulder_available,
+            proactive_dialog=None,  # set later when proactive_dialog is created
+        )
+        register_duty(self._duty_scheduler, ProactiveDuty())
+        register_duty(self._duty_scheduler, SlackDuty())
+        register_duty(self._duty_scheduler, HeartbeatDuty())
+        register_duty(self._duty_scheduler, SmartReminderDuty())
+
+        self._duty_scheduler.proactive_response.connect(self._on_proactive_response)
+        self._duty_scheduler.proactive_error.connect(self._on_proactive_error)
+        self._duty_scheduler.proactive_observation_text.connect(self._on_observation_result)
+        self._duty_scheduler.proactive_observation_image.connect(self._on_observation_image)
+        self._duty_scheduler.slack_response.connect(self._on_slack_response)
+        self._duty_scheduler.slack_error.connect(self._on_slack_error)
+        self._duty_scheduler.heartbeat_response.connect(self._on_heartbeat_response)
+        self._duty_scheduler.heartbeat_silent.connect(self._on_heartbeat_finished_silent)
+        self._duty_scheduler.reminder_response.connect(self._do_reminder)
+        self._duty_scheduler.start()
+
         self._heartbeat_check_worker: HeartbeatWorker | None = None
 
         # ── 主线程心跳看门狗（后台线程实时监控，卡顿时立即抓堆栈）──
@@ -303,12 +332,6 @@ class MainWindow(QMainWindow):
         # 后台监控线程：不依赖 Qt 事件循环，卡顿时能实时捕获堆栈
         self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
         self._watchdog_thread.start()
-
-        # 在 __init__ 中：
-        self.reminder_manager = ReminderManager()
-        self.reminder_timer = QTimer(self)
-        self.reminder_timer.timeout.connect(self._check_reminders)
-        self.reminder_timer.start(60000)  # 每分钟检查一次
 
         # ── Galgame 模式 ─────────────────────────────────────
         self._galgame_visible = False
@@ -370,6 +393,7 @@ class MainWindow(QMainWindow):
         self._agent_worker.tool_result.connect(self._on_tool_result)
         self._agent_worker.observation_image.connect(self._on_observation_image)
         self._agent_worker.error_occurred.connect(self._on_error)
+        self._duty_scheduler.set_agent_busy(True)
         self._agent_worker.start()
         self._input_panel.show_interrupt_bar(self._agent_worker)
 
@@ -1073,6 +1097,7 @@ class MainWindow(QMainWindow):
         self._agent_worker.tool_result.connect(self._on_tool_result)
         self._agent_worker.observation_image.connect(self._on_observation_image)
         self._agent_worker.error_occurred.connect(self._on_error)
+        self._duty_scheduler.set_agent_busy(True)
         self._agent_worker.start()
         self._input_panel.show_interrupt_bar(self._agent_worker)
 
@@ -1099,6 +1124,7 @@ class MainWindow(QMainWindow):
 
     def _on_error(self, err: str):
         self._chat_widget.finalize_tool_groups()
+        self._duty_scheduler.set_agent_busy(False)
         self._input_panel.set_enabled(True)
         self._input_panel.hide_interrupt_bar()
         self._chat_widget.add_system_tip(f"错误：{err}")
@@ -1109,6 +1135,7 @@ class MainWindow(QMainWindow):
         get_task_tracker().clear()
         self._input_panel.hide_interrupt_bar()
         self._chat_widget.finalize_tool_groups()
+        self._duty_scheduler.set_agent_busy(False)
         # 先结束思考（如果是非待机模式，会播放放下手机动画；如果是待机模式，则什么都不做）
         if self._standby_state != "STANDBY":
             # 非待机模式，使用原有的思考结束逻辑（等待打字动画结束）
@@ -1674,7 +1701,7 @@ class MainWindow(QMainWindow):
             self._pomodoro_dialog.proactive_message.connect(self._on_pomodoro_message)
             self._pomodoro_dialog.finished.connect(self._on_pomodoro_finished)
         self._pomodoro_active = True
-        self._proactive_timer.stop()
+        self._duty_scheduler.pause()
     
         self._pomodoro_dialog.show()
         self._pomodoro_dialog.raise_()
@@ -1682,8 +1709,7 @@ class MainWindow(QMainWindow):
 
     def _on_pomodoro_finished(self):
         self._pomodoro_active = False
-        if self._proactive_scheduler.desktop_enabled or self._proactive_scheduler.qq_enabled:
-            self._proactive_timer.start(5 * 60 * 1000)
+        self._duty_scheduler.resume()
        
 
     def _on_pomodoro_message(self, text: str):
@@ -2040,54 +2066,43 @@ class MainWindow(QMainWindow):
                 }
             """)
 
-    def _on_proactive_tick(self):
-        """5 分钟轮询：先触发主动聊天，没触发则尝试摸鱼"""
-        if not self._proactive_scheduler.should_fire():
-            # 主动聊天没触发，检查摸鱼
-            if self._proactive_scheduler.should_slack_fire():
-                action = self._proactive_scheduler.should_slack()
-                if action:
-                    if self._slack_worker and self._slack_worker.isRunning():
-                        return
-                    self._launch_slack_message(action)
-            return
-
-        if self._proactive_worker is None:
-            return
-        if self._proactive_worker.isRunning():
-            return
-
-        self._proactive_worker.generate()
-
     def _on_proactive_debug(self):
-        if self._proactive_worker and self._proactive_worker.isRunning():
-            self._chat_widget.add_system_tip("主动消息正在生成中，请稍候…")
-            return
+        """调试触发主动聊天（通过 DutyScheduler）。"""
+        try:
+            statuses = self._duty_scheduler.get_all_statuses()
+            for s in statuses:
+                if s.name == "proactive" and s.is_running:
+                    self._chat_widget.add_system_tip("主动消息正在生成中，请稍候…")
+                    return
+        except Exception:
+            pass
         if not self._proactive_scheduler.debug_fire():
             self._chat_widget.add_system_tip("请先开启桌面或QQ主动聊天功能再使用调试。")
             return
-        self._launch_proactive_message()
+        self._duty_scheduler.manual_trigger("proactive")
 
     def _on_proactive_debug_observe(self, mode: str):
         """调试观察：强制走截图/摄像头/B站冲浪模式，或摸鱼调试。"""
         if mode.startswith("slack:"):
-            action = mode[6:]
-            self._launch_slack_message(action)
+            self._duty_scheduler.manual_trigger("slack", force_action=mode[6:])
             return
-        print(f"[B站冲浪] _on_proactive_debug_observe 收到 mode={mode}")
-        if self._proactive_worker and self._proactive_worker.isRunning():
-            self._chat_widget.add_system_tip("主动消息正在生成中，请稍候…")
-            return
+        try:
+            statuses = self._duty_scheduler.get_all_statuses()
+            for s in statuses:
+                if s.name == "proactive" and s.is_running:
+                    self._chat_widget.add_system_tip("主动消息正在生成中，请稍候…")
+                    return
+        except Exception:
+            pass
         if mode == "bilibili":
-            print("[B站冲浪] 进入 bilibili 分支，准备 launch")
             self._observation_tip = self._chat_widget.add_system_tip("莲心正在B站冲浪…")
-            self._launch_proactive_message(force_observe="bilibili")
+            self._duty_scheduler.manual_trigger("proactive", force_observe="bilibili")
             return
         if not self._proactive_scheduler.observe_enabled:
             self._chat_widget.add_system_tip("请先启用调皮观察功能再使用调试。")
             return
         self._observation_tip = self._chat_widget.add_system_tip(f"正在{mode}观察中…")
-        self._launch_proactive_message(force_observe=mode)
+        self._duty_scheduler.manual_trigger("proactive", force_observe=mode)
 
     def _launch_proactive_message(self, force_observe: str = ""):
         """生成一条主动消息。force_observe 为 "screenshot"/"camera"/"shoulder_explore" 时强制走对应观察模式。
@@ -2826,8 +2841,7 @@ class MainWindow(QMainWindow):
             play_sound("ButtonAll.mp3")
         
         self._proactive_scheduler.notify_user_active()
-
-        self._reset_heartbeat_timer()
+        self._duty_scheduler.on_user_message()
         self._set_thinking_state()
         
         from threading import Thread
@@ -2871,8 +2885,7 @@ class MainWindow(QMainWindow):
 
         # 以下是原有关闭逻辑（确认退出时执行）
         self._accompany_stats.end_session()
-        self._proactive_timer.stop()
-        self._heartbeat_check_timer.stop()
+        self._duty_scheduler.stop()
         self._alarm_timer.stop()
         if hasattr(self, '_auto_task_scheduler'):
             self._auto_task_scheduler.stop()
