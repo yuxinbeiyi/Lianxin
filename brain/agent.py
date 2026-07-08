@@ -112,13 +112,21 @@ class AgentCore:
             self._max_tokens = min(cfg["max_tokens"], 2048)
             self._api_base   = cfg.get("local_base_url", "http://localhost:11434/v1")
             self._api_key    = "ollama"
-        else:  # deepseek
+        else:  # deepseek / 自定义 OpenAI 兼容 API
             model = cfg["model"]
-            if "/" not in model:  # litellm 需要 provider 前缀
-                model = f"deepseek/{model}"
+            base_url = cfg.get("base_url", "https://api.deepseek.com")
+            # 判断是否为官方 DeepSeek：默认 URL 包含 deepseek.com
+            _is_official_deepseek = "deepseek.com" in base_url.lower()
+            if "/" not in model:
+                # 无斜杠 → 自动补官方前缀
+                model = f"deepseek/{model}" if _is_official_deepseek else f"openai/{model}"
+            elif not _is_official_deepseek and not model.startswith("openai/"):
+                # 有斜杠但指向第三方 API（如硅基流动）→ 强制 openai/ 前缀
+                model = f"openai/{model}"
+            # 若已是 "deepseek/xxx" 或 "openai/xxx" 则保持不动
             self._model      = model
             self._max_tokens = cfg["max_tokens"]
-            self._api_base   = cfg["base_url"]
+            self._api_base   = base_url
             self._api_key    = cfg["api_key"]
 
         self._disable_tools = disable_tools
