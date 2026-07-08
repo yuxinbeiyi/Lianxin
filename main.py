@@ -136,7 +136,7 @@ migrate_legacy_files()
 
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtGui import QFont
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 import qdarkstyle
 
 from gui.main_window import MainWindow
@@ -194,6 +194,17 @@ if _threading_excepthook is not None:
     threading.excepthook = _thread_exception_handler
 
 
+def _show_check_dialog(parent, report: str):
+    """非模态显示启动体检报告，不阻塞主窗口。"""
+    msg_box = QMessageBox(parent)
+    msg_box.setWindowTitle("莲心AI - 启动体检")
+    msg_box.setText(report)
+    msg_box.setIcon(QMessageBox.Information)
+    msg_box.setStandardButtons(QMessageBox.Ok)
+    msg_box.setModal(False)
+    msg_box.show()
+
+
 def main():
     autostart_mode = "--autostart" in sys.argv
 
@@ -225,19 +236,16 @@ def main():
     font = QFont("Microsoft YaHei UI", 10)
     app.setFont(font)
 
-    # ── 启动健康检查 ──────────────────────────────────────
+    # ── 启动健康检查（先跑完、存结果，窗口就绪后非模态显示）─────
+    _check_report = None
     if "--skip-check" not in sys.argv:
         try:
             from utils.startup_check import run_checks, has_warnings, format_report
             print("[启动体检] 正在检测关键依赖…", flush=True)
             results = run_checks()
             if has_warnings(results):
-                report = format_report(results)
-                print(report, flush=True)
-                if not autostart_mode:
-                    QMessageBox.information(
-                        None, "莲心AI - 启动体检", report
-                    )
+                _check_report = format_report(results)
+                print(_check_report, flush=True)
             else:
                 print("  全部通过 ✅", flush=True)
         except Exception as e:
@@ -269,12 +277,14 @@ def main():
     # ── QQ 桥接（由 MainWindow 管理，详见 main_window.py）─────
 
     # ── 第6条：自启动时最小化，不打扰用户 ────────────────────────
-    # 欢迎消息和 TTS 在后台运行，等网络就绪后自动触发；
-    # 用户可随时点击任务栏图标展开莲心窗口。
     if autostart_mode:
         window.showMinimized()
     else:
         window.show()
+
+    # ── 非模态体检报告（事件循环启动后出现，不阻塞窗口）────────
+    if _check_report and not autostart_mode:
+        QTimer.singleShot(300, lambda r=_check_report: _show_check_dialog(window, r))
 
     sys.exit(app.exec_())
 
