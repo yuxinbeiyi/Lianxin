@@ -1,1 +1,0 @@
-本页面已弃用，请参考 [Dify Agent 执行器](../agent-runners/dify.md)。
