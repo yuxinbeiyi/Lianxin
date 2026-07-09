@@ -28,6 +28,14 @@
 
 ---
 
+## ⚠️ 免责声明
+
+本项目仅供学习交流使用，**禁止用于任何违法违规用途**。
+
+使用本项目前请确保遵守相关法律法规及 DeepSeek、硅基流动等 API 服务商的使用条款。
+
+---
+
 ## ✨ 能力一览
 
 <table>
@@ -353,6 +361,20 @@ ReAct 第8轮 → "任务完成！已保存至 E:\Desktop\test\AI大模型最新
 | 操作系统 | Windows 10+ |
 | Python | 3.12（推荐 conda） |
 | GPU | NVIDIA 显卡（可选，加速 GPT-SoVITS / 本地模型） |
+
+### 🧩 可选依赖（按需获取）
+
+莲心设计为松耦合架构，以下功能依赖第三方项目，用户需自行获取：
+
+| 功能 | 项目 | 获取方式 | 路径 |
+|------|------|----------|------|
+| QQ 机器人接入 | [NapCatQQ](https://github.com/NapNeko/NapCatQQ) | 官方文档安装 | `NapCatQQ/` |
+| 微信公众号接入 | [Akasha-WeChat](https://github.com/ArkLightt/Akasha-WeChat-main) | `git clone` 到项目根目录 | `AstrBot/Akasha-WeChat-main/` |
+| GPT-SoVITS 语音克隆 | [GPT-SoVITS](https://github.com/RVC-Project/GPT-SoVITS) | `git clone` 到项目根目录 | `GPT-SoVITS-v2pro/` |
+| 端侧语音合成 | [ChatTTS](https://github.com/2noise/ChatTTS) | `git clone` 到项目根目录 | `ChatTTS/` |
+| 全双工语音云中继 | [OVRDOZE](https://github.com/luke23334/OVRDOZE) | `git clone` 到 `game/` | `game/OVRDOZE-main/` |
+
+> 💡 以上项目均遵循各自原项目的许可证，请遵守其使用条款。
 
 ### 安装
 
