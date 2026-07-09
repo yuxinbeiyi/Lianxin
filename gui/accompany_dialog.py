@@ -122,14 +122,14 @@ class AccompanyDialog(QDialog):
 
     def _update_content(self):
         """更新所有显示内容"""
-        # 加载表情包
-        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        png_path = os.path.join(base_path, "assets", "meme", "抱抱.png")
-        jpg_path = os.path.join(base_path, "assets", "meme", "抱抱.jpg")
-        meme_path = png_path if os.path.exists(png_path) else jpg_path
+        # 加载头像
+        from utils.resource_path import get_asset_path
+        png_path = get_asset_path("头像", "开玩笑.png")
+        jpg_path = get_asset_path("头像", "开玩笑.jpg")
+        meme_path = png_path if png_path.exists() else jpg_path
 
-        if os.path.exists(meme_path):
-            pixmap = QPixmap(meme_path)
+        if meme_path.exists():
+            pixmap = QPixmap(str(meme_path))
             scaled = pixmap.scaled(180, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self._image_label.setPixmap(scaled)
         else:

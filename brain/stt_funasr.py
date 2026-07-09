@@ -44,29 +44,36 @@ def _load_model():
         sys.stdout = _saved_stdout
 
     try:
-        logger.info("🔊 正在加载 FunASR SenseVoice-Small 模型…")
-        # 优先 GPU，失败自动回退 CPU
+        from config import resolve_device, get_device_preference
+        dev = resolve_device("funasr")
+        logger.info(f"🔊 正在加载 FunASR SenseVoice-Small 模型 ({dev})…")
         _model = AutoModel(
             model="iic/SenseVoiceSmall",
-            device="cuda:0",
+            device=dev,
             disable_pbar=True,
-            disable_update=True,        # 跳过每次启动的版本检查
+            disable_update=True,
+            trust_remote_code=True,
         )
-        logger.info("✅ FunASR 模型加载完成 (CUDA)")
+        logger.info(f"✅ FunASR 模型加载完成 ({dev})")
     except ImportError:
         logger.warning("⚠️ FunASR 未安装，跳过 (pip install funasr)")
-    except Exception:
-        try:
-            logger.warning("⚠️ CUDA 加载失败，重试 CPU…")
-            _model = AutoModel(
-                model="iic/SenseVoiceSmall",
-                device="cpu",
-                disable_pbar=True,
-                disable_update=True,
-            )
-            logger.info("✅ FunASR 模型加载完成 (CPU)")
-        except Exception as e:
-            logger.warning(f"⚠️ FunASR 模型加载失败 (CUDA/CPU 都失败): {e}")
+    except Exception as e:
+        # auto 模式下加载失败，尝试 CPU 回退
+        if get_device_preference("funasr") == "auto":
+            try:
+                logger.warning(f"⚠️ {dev} 加载失败，回退 CPU…")
+                _model = AutoModel(
+                    model="iic/SenseVoiceSmall",
+                    device="cpu",
+                    disable_pbar=True,
+                    disable_update=True,
+                    trust_remote_code=True,
+                )
+                logger.info("✅ FunASR 模型加载完成 (CPU 回退)")
+            except Exception as e2:
+                logger.warning(f"⚠️ FunASR CPU 回退也失败: {e2}")
+        else:
+            logger.warning(f"⚠️ FunASR 模型加载失败 ({dev}): {e}")
 
     return _model
 
