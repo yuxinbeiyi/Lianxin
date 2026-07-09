@@ -60,6 +60,15 @@ nul
 # GIF 压缩备份
 *.gif.bak
 assets/原始GIF/
+
+# assets 个人素材（本地保留，不提交）
+assets/头像/
+assets/music/**/*.mp3
+assets/sound/**/*.mp3
+assets/*.jpg
+assets/*.png
+assets/*.mp4
+assets/*.mp3
 claude-code-main/
 test_workspace/
 
