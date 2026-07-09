@@ -10,6 +10,8 @@
 [![PyQt5](https://img.shields.io/badge/GUI-PyQt5-41CD52?logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
 [![DeepSeek](https://img.shields.io/badge/AI-DeepSeek_V4-536DFE)](https://deepseek.com)
 [![LiteLLM](https://img.shields.io/badge/Gateway-LiteLLM-orange)](https://litellm.ai)
+[![WebRTC](https://img.shields.io/badge/Voice-WebRTC_VAD-4B8BBE)](https://webrtc.org)
+[![FunASR](https://img.shields.io/badge/STT-FunASR-FF6B35)](https://github.com/modelscope/FunASR)
 [![Platform](https://img.shields.io/badge/Platform-Windows_10+-0078D6?logo=windows&logoColor=white)]()
 
 </div>
@@ -41,7 +43,8 @@
 - 上下文压缩器：长对话智能摘要，告别记忆丢失
 
 ### 🎙️ 语音交互
-- **faster-whisper** 本地语音识别（中文优化）
+- **全双工语音**：WebRTC VAD 持续聆听，说话中实时打断
+- **FunASR** 本地语音识别（中文优化，Paraformer 模型）
 - **GPT-SoVITS** 声音克隆 —— 5 种情绪音色
 - **Edge-TTS** 自动回退，无需配置即可使用
 - 语音输入 → AI 思考 → 语音输出，完整闭环
@@ -57,7 +60,7 @@
 - MediaPipe Pose 人体姿态推理
 - 摄像头视觉事件：人脸出现/消失、微笑、挥手
 
-### 🤖 定时自动化（NEW）
+### 🤖 定时自动化
 - **自然语言 → 定时任务**："每天14:00清理回收站"
 - **ReAct Agent 执行**：运行时 LLM 自主决定工具调用，非静态计划
 - 5 种调度类型：一次性 · 间隔 · 每天 · 每周 · 每月
@@ -79,11 +82,44 @@
 
 | 模式 | 说明 |
 |------|------|
-| **Galgame 模式** | 透明角色立绘 + 半透明磨砂对话框，全边缘自由缩放，字体/加粗自定义，情绪立绘联动，`Ctrl+Alt+X` 全局热键切换 |
-| **待机模式** | 阿里云 NLS 实时语音识别，说"完毕"触发回复，无需鼠标键盘，适合休息时陪伴 |
-| **观察模式** | ESP32-CAM 肩载摄像头自动转动云台拍照，AI 分析画面内容，发现值得关注的事物并记录 |
-| **人体跟踪** | ESP32 实时推流 + MediaPipe Pose，舵机自动跟随人物移动 |
-| **摸鱼模式** | 用户空闲时自动找事做：翻看旧日记、浏览相册、逛逛 B 站、补写日记 |
+| **Galgame 模式** | 透明角色立绘 + 半透明磨砂对话框，全边缘自由缩放，字体/加粗自定义，情绪立绘联动，**Live2D 动画**支持，`Ctrl+Alt+X` 全局热键切换 |
+| **全双工语音** | WebRTC VAD 持续聆听，用户说话时实时打断 AI 思考，说"完毕"触发回复，无需鼠标键盘，适合休息时陪伴 |
+| **观察模式** | ESP32-CAM 肩载摄像头自动转动云台拍照，AI 分析画面内容，发现值得关注的事物并记录，含费用追踪和 QQ 限速 |
+| **人体跟踪** | ESP32 实时推流 + MediaPipe Pose，舵机自动跟随人物移动，支持扫描重锁定 |
+| **摸鱼模式** | 用户空闲时自动找事做：翻看旧日记、浏览相册、逛逛 B 站、补写日记、搜索旧话题、提醒待办 |
+
+### 🧠 记忆 RAG · 语义搜索
+
+莲心的记忆系统现已支持**语义向量检索**：
+- **sentence-transformers** 本地 embedding（BGE 中文模型，96MB）
+- **faiss-cpu** 向量索引，毫秒级语义搜索
+- 记忆搜索结果自动注入聊天气泡，让莲心"想起来"说过的话
+- 与五元组图记忆、分类事实记忆互补，构成三引擎记忆体系
+
+### 💻 代码智能
+
+- 基于 **jedi** 的 Python 代码理解：跳转定义、查找引用
+- 基于 **pyflakes** 的实时诊断：语法错误、未使用变量、未定义名称
+- 支持跨文件符号追踪，不依赖 LSP 服务器
+
+### 🛠️ 工具系统增强
+
+- **工具注册中心**：71 个工具分类管理 + 调用统计（次数、成功率、耗时）
+- **工具恢复链**：失败 → 指数退避重试 → 降级 → 通知用户
+- **工具调用可视化**：聊天气泡中可折叠的工具调用卡片，实时展示执行状态和耗时
+- **对话回顾提取**：对话结束后 LLM 自动提取待办事项，集成到 TodoManager
+
+### 🎨 主题 · 番茄钟 · 更多
+
+| 功能 | 说明 |
+|------|------|
+| **主题系统** | 4 套主题皮肤：暗夜粉、暗夜青、浅蓝、浅暖 |
+| **番茄钟** | 专注计时 + 统计，背景图可自定义 |
+| **后台职责中心** | 统一面板查看主动聊天、摸鱼、心跳、智能提醒的运行状态 |
+| **动画状态机** | 角色 GIF 动画按状态自动切换（正常/思考/说话/待机/抱胸） |
+| **频谱可视化** | 语音输入实时波形显示 |
+| **快捷启动** | 一键启动常用应用 |
+| **能力中心** | 所有功能模块总览入口 |
 
 ### 🔌 技能系统 · 插件式扩展
 
@@ -96,22 +132,27 @@
 | 📷 肩部外设控制 | ESP32-CAM 云台 + 观察 + 人体跟踪 | ✅ |
 | 📖 日记与备忘 | 日记读写 + 备忘本整理 | ✅ |
 | 🎵 音乐播放控制 | 音乐盒播放/暂停/切歌/音量 | ✅ |
-| 📺 B站视频摘要 | Bilibili 视频搜索 + 字幕提取 + AI 总结 | ✅ |
+| 📺 B站视频摘要 | Bilibili 视频搜索 + 字幕提取 + AI 总结 + 兴趣标签管理 | ✅ |
 | 💻 系统信息工具 | CPU/内存/磁盘/网络状态查询 | ❌ |
 | 📚 学习助手 | 学习方法与记忆力建议 | ❌ |
 
-> 渐进式披露架构：技能知识按需注入 System Prompt，12 个 `_prompt_guides` 模块按关键词触发，与全量注入相比大幅节省 Token。
+> 渐进式披露架构：技能知识按需注入 System Prompt，12 个 `_prompt_guides` 模块按关键词触发（搜索、浏览器、文件编辑、视觉OCR、B站、音乐、日记备忘、文档笔记、长内容、子代理、工具生态、语音），与全量注入相比大幅节省 Token。
 
-### 🧠 棱镜记忆系统 · 双引擎
+### 🧠 棱镜记忆系统 · 三引擎
 
 ```
 ┌──────────────────────────────────────────────────┐
-│               双记忆引擎架构                        │
+│               三记忆引擎架构                        │
 ├─────────────────────┬────────────────────────────┤
 │  五元组图记忆         │  分类事实记忆               │
 │  (主, 谓, 宾, 时, 源) │  6 大分类结构化存储          │
 │  SQLite 图结构        │  SQLite 全文索引             │
 │  多跳关系查询         │  关键词 + 语义搜索            │
+├─────────────────────┼────────────────────────────┤
+│  RAG 向量记忆         │  自动提取 + 注入             │
+│  BGE 中文 embedding   │  五元组提取器                │
+│  faiss 向量索引       │  checklist_extractor        │
+│  语义相似度搜索       │  对话回顾 → 待办提取          │
 ├─────────────────────┴────────────────────────────┤
 │  自动提取 · 每 N 轮触发 · 统一搜索接口              │
 │  跨会话持久化 · 滑动窗口 · 智能压缩                 │
@@ -179,6 +220,7 @@ web_search → fetch_webpage (HTTP 直连)
   ┌──────────────┐
   │ ReAct Agent  │  LLM 运行时自主决定工具调用
   │ (executor)   │  搜索 → 分析结果 → 写文档 → 通知
+  │              │  工具恢复链：失败自动重试+降级
   └──────────────┘
          │
          ▼
@@ -229,7 +271,8 @@ ReAct 第8轮 → "任务完成！已保存至 E:\Desktop\test\AI大模型最新
 │  │ MainWindow │ ChatWidget   │ InputPanel   │ CharacterWidget  │ │
 │  │ 主窗口      │ 聊天气泡      │ 输入面板      │ 角色动画/表情     │ │
 │  ├────────────┼──────────────┼──────────────┼──────────────────┤ │
-│  │ Galgame模式 │ 设置/配置面板 │ 工具对话框群  │ 自动化任务管理    │ │
+│  │ Galgame模式 │ 设置/配置面板 │ 工具调用卡片  │ 自动化任务管理    │ │
+│  │ Live2D     │ 后台职责中心  │ 频谱可视化    │ 能力中心         │ │
 │  └────────────┴──────────────┴──────────────┴──────────────────┘ │
 ├──────────────────────────────────────────────────────────────────┤
 │                    Intent Router (brain/intent_router.py)          │
@@ -245,8 +288,11 @@ ReAct 第8轮 → "任务完成！已保存至 E:\Desktop\test\AI大模型最新
 │  文件·系统·网络     │  自动发现→激活→工具注入→System Prompt注入       │
 │  视觉·记忆·音乐     │  渐进式披露 · 动态加载                        │
 │  闹钟·待办·外设     │                                              │
+├───────────────────┼──────────────────────────────────────────────┤
+│  Tool Recovery     │  Tool Registry                               │
+│  失败重试+降级      │  分类·调用统计·耗时追踪                        │
 ├───────────────────┴──────────────────────────────────────────────┤
-│                   Automated Task System (NEW)                      │
+│                   Automated Task System                            │
 │  ┌─────────────────────┐  ┌──────────────────────────────────┐   │
 │  │ auto_task_parser.py  │  │ auto_task_executor.py (ReAct)    │   │
 │  │ NL → 调度信息提取     │  │ LLM 运行时自主决定工具调用         │   │
@@ -264,6 +310,10 @@ ReAct 第8轮 → "任务完成！已保存至 E:\Desktop\test\AI大模型最新
 │  │ context_compressor.py│  │ memory_store.py                  │   │
 │  │ 长对话智能摘要        │  │ 分类事实存取 · 格式化              │   │
 │  └─────────────────────┘  └──────────────────────────────────┘   │
+│  ┌─────────────────────┐  ┌──────────────────────────────────┐   │
+│  │ memory_rag.py        │  │ quintuple_extractor.py           │   │
+│  │ BGE向量语义搜索       │  │ 对话→五元组自动提取               │   │
+│  └─────────────────────┘  └──────────────────────────────────┘   │
 ├──────────────────────────────────────────────────────────────────┤
 │                    MCP Bridge (brain/mcp/)                         │
 │     Registry → Client → Manager → 统一工具路由                    │
@@ -276,7 +326,8 @@ ReAct 第8轮 → "任务完成！已保存至 E:\Desktop\test\AI大模型最新
 │  AgentWorker │ VoiceWorker │ SpeakerWorker │ QQBridgeWorker       │
 │  WeChatBridgeWorker │ ProactiveWorker │ HeartbeatWorker           │
 │  StandbyWorker │ ObservationModeWorker │ TrackWorker              │
-│  ListeningWorker │ OCRWorker │ SlackWorker │ SmartReminderWorker   │
+│  TrackFrameReceiver │ TrackPoseDetector │ SlackWorker              │
+│  ListeningWorker │ OCRWorker │ SmartReminderWorker                │
 ├──────────────────────────────────────────────────────────────────┤
 │                  External APIs & Hardware                          │
 │  ┌─────────┬──────────┬──────────┬──────────┬──────────────────┐ │
@@ -284,7 +335,9 @@ ReAct 第8轮 → "任务完成！已保存至 E:\Desktop\test\AI大模型最新
 │  ├─────────┼──────────┼──────────┼──────────┼──────────────────┤ │
 │  │GPT-SoVITS│Edge-TTS │ESP32-CAM │ SG90 舵机│ NapCatQQ·AstrBot  │ │
 │  ├─────────┼──────────┼──────────┼──────────┼──────────────────┤ │
-│  │Playwright│Tesseract│faster-Whisper│MediaPipe│                │ │
+│  │Playwright│Tesseract│FunASR    │MediaPipe │火山引擎 STT       │ │
+│  ├─────────┼──────────┼──────────┼──────────┼──────────────────┤ │
+│  │WebRTC VAD│faiss    │jedi      │pyflakes  │WebSocket云中继    │ │
 │  └─────────┴──────────┴──────────┴──────────┴──────────────────┘ │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -324,6 +377,10 @@ python main.py
 
 首次启动后，点击主界面 **🔑 按钮** 配置 API 密钥。配置文件自动保存在 `~/.lianxin/user_config.json`，之后每次启动自动加载。
 
+> 💡 **全双工语音**：点击输入面板的麦克风按钮启动，莲心会持续聆听，你随时开口即可打断她的思考。FunASR 模型首次使用时会自动下载（约 200MB），请耐心等待。
+
+> 🎨 **主题切换**：在设置面板中选择 4 套主题之一，即时生效。
+
 ### 开机自启
 
 ```bash
@@ -346,6 +403,25 @@ python main.py --autostart
 | **Agnes AI** | 备选提供商，模型 `agnes-2.0-flash`，含图片/视频生成能力 |
 | **Ollama 本地模型** | 勾选"使用本地模型"一键切换，配置地址和模型名即可 |
 | **路由模型** | 独立配置意图分类用小模型（Ollama），留空则回退规则路由 |
+
+### 语音识别 (STT)
+
+| 配置项 | 说明 |
+|--------|------|
+| **FunASR** | 本地 Paraformer 模型，中文识别精度高，无需联网 |
+| **火山引擎 STT** | 云端高精度语音识别，适合嘈杂环境 |
+| **WebRTC VAD** | 实时语音活动检测，零模型文件，纯 pip 安装 |
+| **全双工模式** | 持续聆听 + 实时打断，说"完毕"触发回复 |
+
+### 记忆系统
+
+| 配置项 | 说明 |
+|--------|------|
+| **五元组图记忆** | 结构化知识图谱，多跳关系查询 |
+| **分类事实记忆** | 6 大分类 + 全文索引 + 关键词搜索 |
+| **RAG 向量记忆** | BGE 中文模型语义搜索，自动注入聊天气泡 |
+| **自动提取** | 每 N 轮对话自动提取五元组和分类事实 |
+| **对话压缩** | 长对话智能摘要，可配置触发阈值 |
 
 > ⚠️ Ollama 本地模型不支持 Function Calling，切换后自动使用纯聊天模式。
 
@@ -551,19 +627,27 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── intent_router.py     #   意图路由器：小模型分类 + 规则兜底
 │   ├── decision.py          #   规则路由（正则匹配）
 │   ├── skill_manager.py     #   技能系统：发现→激活→工具注入
+│   ├── tool_registry.py     #   工具注册中心：分类 + 调用统计
+│   ├── tool_recovery.py     #   工具恢复链：失败重试 + 降级
+│   ├── voice_duplex.py      #   全双工语音：VAD + STT 前端
+│   ├── vad_webrtc.py        #   WebRTC VAD 语音活动检测
+│   ├── stt_funasr.py        #   FunASR 语音识别（Paraformer）
+│   ├── stt_volcano.py       #   火山引擎云端STT备选
 │   ├── tts_engine.py        #   语音合成：GPT-SoVITS + Edge-TTS + 情绪匹配
 │   ├── tts_sovits_worker.py #   GPT-SoVITS 子进程工作线程
 │   ├── graph_memory.py      #   五元组图记忆 + 分类事实 (SQLite)
 │   ├── memory_store.py      #   记忆格式化与统一查询
+│   ├── memory_rag.py        #   记忆RAG：BGE向量语义搜索
 │   ├── context_compressor.py #  长对话智能压缩
-│   ├── code_intel.py        #   代码智能：跳转定义/找引用
+│   ├── quintuple_extractor.py # 五元组自动提取（对话→知识图谱）
+│   ├── checklist_extractor.py # 对话回顾提取待办
+│   ├── code_intel.py        #   代码智能：jedi跳转定义/引用 + pyflakes诊断
 │   ├── observation_engine.py #  观察探索引擎System Prompt
 │   ├── observation_mode.py  #   观察模式状态管理+费用追踪
 │   ├── observation_store.py #   观察记录持久化
 │   ├── observation.py       #   观察数据结构
-│   ├── quintuple_extractor.py # 五元组自动提取
 │   ├── human_tracking.py    #   人体跟踪状态管理
-│   ├── hardware_bridge.py   #   ESP32 WebSocket 云桥接
+│   ├── hardware_bridge.py   #   ESP32 WebSocket 云中继桥接
 │   ├── browser_controller.py #  Playwright 浏览器控制
 │   ├── heartbeat.py         #   心跳自检引擎
 │   ├── notebook.py          #   草稿本/代码执行
@@ -592,12 +676,15 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── chat_widget.py       #   聊天气泡列表
 │   ├── input_panel.py       #   输入面板：语音·文字·表情·工具
 │   ├── message_bubble.py    #   消息气泡渲染
+│   ├── tool_call_card.py    #   工具调用卡片（折叠态+展开态）
+│   ├── tool_call_group.py   #   工具调用分组组件
 │   ├── animation_state_machine.py # 动画状态机
 │   ├── spectrum_widget.py   #   频谱可视化
 │   ├── task_progress_bar.py #   任务进度条
 │   ├── api_config_dialog.py #   API配置面板
 │   ├── settings_dialog.py   #   全局设置
 │   ├── capability_center.py #   能力中心总览
+│   ├── duty_center.py       #   后台职责中心（主动聊天/摸鱼/心跳/提醒）
 │   ├── alarm_dialog.py      #   闹钟 + 倒计时 + 提醒 + 待办 + 自动化任务
 │   ├── diary_dialog.py      #   日记查看
 │   ├── todo_dialog.py       #   待办清单
@@ -611,7 +698,7 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── camera_dialog.py     #   摄像头预览
 │   ├── quick_launch_dialog.py # 快捷启动
 │   ├── qq_settings_dialog.py  # QQ桥接配置
-│   ├── wechat_settings_dialog.py # 微信桥接配置（NEW）
+│   ├── wechat_settings_dialog.py # 微信桥接配置
 │   ├── network_settings_dialog.py # 网络/代理配置
 │   ├── sound_settings_dialog.py   # 音效设置
 │   ├── memory_settings_dialog.py  # 棱镜记忆系统设置
@@ -628,11 +715,11 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── speaker_worker.py    #   语音合成线程
 │   ├── listening_worker.py  #   持续监听线程
 │   ├── qq_bridge_worker.py  #   QQ桥接WebSocket线程
-│   ├── wechat_bridge_worker.py # 微信桥接HTTP线程（NEW）
+│   ├── wechat_bridge_worker.py # 微信桥接HTTP线程
 │   ├── proactive_worker.py  #   主动聊天调度线程
 │   ├── heartbeat_worker.py  #   心跳检测线程
 │   ├── standby_worker.py    #   待机模式线程
-│   ├── slack_worker.py      #   摸鱼模式线程（NEW）
+│   ├── slack_worker.py      #   摸鱼模式线程
 │   ├── observation_mode_worker.py # 观察模式循环
 │   ├── track_worker.py      #   人体跟踪统一线程
 │   ├── track_frame_receiver.py   # 跟踪帧接收
@@ -641,7 +728,7 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   └── smart_reminder_worker.py  # 智能提醒
 │
 ├── voice/                   # 🎤 语音子系统
-│   ├── listener.py          #   录音+VAD+Whisper识别
+│   ├── listener.py          #   录音+VAD+FunASR识别
 │   └── speaker.py           #   音频播放
 │
 ├── vision/                  # 👁️ 视觉子系统
@@ -669,8 +756,8 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── balance.py           #   API余额查询
 │   ├── camera.py            #   摄像头工具
 │   ├── sound.py             #   音效播放
-│   ├── slack_utils.py       #   摸鱼模式数据收集（NEW）
-│   ├── bilibili_history.py  #   B站浏览历史与兴趣标签（NEW）
+│   ├── slack_utils.py       #   摸鱼模式数据收集
+│   ├── bilibili_history.py  #   B站浏览历史与兴趣标签
 │   └── autostart.py         #   开机自启管理
 │
 ├── skills/                  # 🔌 技能包（插件式）
@@ -679,15 +766,15 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── 肩部外设控制/        #   ESP32 云台
 │   ├── 日记与备忘/          #
 │   ├── 音乐播放控制/        #
-│   ├── B站视频摘要/         #   Bilibili API + 字幕提取（NEW）
+│   ├── B站视频摘要/         #   Bilibili API + 字幕提取
 │   ├── 系统信息工具/        #
 │   ├── 学习助手/            #
 │   └── _prompt_guides/      #   System Prompt 渐进式注入模块（12个）
 │
 ├── mcp_servers/             # 🔗 MCP服务
-│   ├── filesystem/          #   本地文件系统操作（NEW）
-│   ├── firecrawl/           #   网页爬虫与内容提取（NEW）
-│   ├── tavily_search/       #   AI 原生搜索引擎（NEW）
+│   ├── filesystem/          #   本地文件系统操作
+│   ├── firecrawl/           #   网页爬虫与内容提取
+│   ├── tavily_search/       #   AI 原生搜索引擎
 │   └── zhihu_search/        #   知乎搜索
 │
 ├── game/                    # 🎮 实验性功能
@@ -710,7 +797,11 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 ```
 用户输入 (文字/语音/QQ/微信)
     │
-    ▼
+    ├─── 语音输入 → VoiceDuplex (WebRTC VAD → FunASR/火山STT) → 文字
+    │                                                    │
+    │                                     实时打断(用户说话中)
+    │                                                    │
+    ▼                                                    ▼
 ┌──────────────┐    规则路由(兜底)
 │ IntentRouter ├────────────┐
 │ 小模型分类    │            │
@@ -721,7 +812,7 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │           AgentCore                  │
 │  System Prompt 组装                  │
 │  ├── 人格设定 (_BASE_PROMPT)         │
-│  ├── 记忆注入 (棱镜: 图记忆+分类记忆) │
+│  ├── 记忆注入 (棱镜: 图记忆+分类记忆+RAG向量) │
 │  ├── 情感状态 (涟漪: 5维需求+3层状态) │
 │  ├── 技能知识 (激活的技能SKILL.md)    │
 │  ├── 渐进式技能模块 (12个关键词触发)  │
@@ -729,6 +820,7 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │                                      │
 │  Function Calling 循环               │
 │  ├── LiteLLM → AI API                │
+│  ├── 工具恢复链 (重试+降级)           │
 │  ├── 工具并行执行 (ThreadPool)        │
 │  ├── 资源锁调度 (浏览器/硬件/DB)       │
 │  └── 结果回传                         │
@@ -738,8 +830,9 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 ┌─────────────────────────────────────┐
 │           后处理                      │
 │  情感分析 → 状态更新                  │
-│  记忆提取 → 五元组+分类事实            │
+│  记忆提取 → 五元组+分类事实+RAG向量    │
 │  对话压缩 → 上下文摘要(如需)           │
+│  待办提取 → checklist_extractor      │
 │  TTS合成 → 语音输出(如需)             │
 │  QQ/微信发送 → 消息推送(如需)          │
 │  历史记录 → SQLite持久化              │
