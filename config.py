@@ -1011,6 +1011,21 @@ def save_bilibili_config(config: dict):
     _save_full_config(full)
 
 
+# ── 待办确认配置 ──────────────────────────────────────────────
+# true: 莲心提取待办后弹窗询问用户确认
+# false: 自动添加，不再询问
+
+def get_todo_auto_confirm() -> bool:
+    full = _load_full_config()
+    return full.get("todo_auto_confirm", True)
+
+
+def save_todo_auto_confirm(auto_confirm: bool):
+    full = _load_full_config()
+    full["todo_auto_confirm"] = auto_confirm
+    _save_full_config(full)
+
+
 def get_bilibili_cookie() -> str:
     """获取完整的 B站 Cookie 字符串，用于请求头。"""
     cfg = get_bilibili_config()

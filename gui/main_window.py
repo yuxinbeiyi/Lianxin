@@ -392,6 +392,7 @@ class MainWindow(QMainWindow):
         self._agent_worker.tool_called.connect(self._on_tool_called)
         self._agent_worker.tool_result.connect(self._on_tool_result)
         self._agent_worker.observation_image.connect(self._on_observation_image)
+        self._agent_worker.checklist_proposed.connect(self._on_checklist_proposed)
         self._agent_worker.error_occurred.connect(self._on_error)
         self._duty_scheduler.set_agent_busy(True)
         self._agent_worker.start()
@@ -2281,6 +2282,33 @@ class MainWindow(QMainWindow):
             self._observation_tip.deleteLater()
             self._observation_tip = None
         self._chat_widget.add_system_tip(f"主动消息生成失败：{err}")
+
+    def _on_checklist_proposed(self, items: list):
+        """莲心从对话中提取到待办，弹窗确认。"""
+        from config import get_todo_auto_confirm, save_todo_auto_confirm
+        if not get_todo_auto_confirm():
+            # 自动模式：直接添加
+            for item in items:
+                self._todo_manager.add_todo(
+                    item["title"], item.get("due_time"),
+                    item.get("priority", "medium")
+                )
+            return
+
+        from gui.todo_confirm_dialog import TodoConfirmDialog
+        dlg = TodoConfirmDialog(items, self)
+        dlg.exec_()
+
+        if dlg.was_accepted():
+            for item in items:
+                self._todo_manager.add_todo(
+                    item["title"], item.get("due_time"),
+                    item.get("priority", "medium")
+                )
+
+        if dlg.is_auto_mode():
+            save_todo_auto_confirm(False)
+            self._chat_widget.add_system_tip("已开启待办自动添加，可在待办选项卡中恢复询问")
 
     # ── 摸鱼模块 ─────────────────────────────────────────────
 

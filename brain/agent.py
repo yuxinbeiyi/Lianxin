@@ -450,12 +450,14 @@ class AgentCore:
             from brain.checklist_extractor import run_checklist_async
             import brain.tools as _bt
             tm = getattr(_bt, '_todo_manager', None)
+            cb = getattr(self, '_checklist_callback', None)
             run_checklist_async(
                 conversation_text,
                 api_key=self._api_key,
                 api_base=self._api_base,
                 model=self._model,
                 todo_manager=tm,
+                callback=cb,
             )
         except Exception:
             pass

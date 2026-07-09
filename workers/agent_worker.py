@@ -32,6 +32,7 @@ class AgentWorker(QThread):
     tool_called    = pyqtSignal(str, str, int)                  # name, args_json, round_num
     tool_result    = pyqtSignal(str, str, bool, int, float)     # name, preview, is_error, round_num, elapsed_ms
     observation_image = pyqtSignal(str, str)  # 观察图片 (path, desc) 用于气泡显示
+    checklist_proposed = pyqtSignal(list)     # 后台提取的待办列表 [{"title":...,"due_time":...,"priority":...}]
     error_occurred = pyqtSignal(str)
 
     def __init__(self, agent: AgentCore, message: str, parent=None,
@@ -77,6 +78,15 @@ class AgentWorker(QThread):
             def on_round_start(round_num):
                 current_round[0] = round_num
                 self.tool_round_start.emit(round_num)
+
+            # 设置待办提取回调
+            def on_checklist_extracted(result):
+                items = []
+                for item in result.get("add", []):
+                    items.append({"title": item, "due_time": None, "priority": "medium"})
+                if items:
+                    self.checklist_proposed.emit(items)
+            self.agent._checklist_callback = on_checklist_extracted
 
             def on_tool_call(name, args):
                 args_json = _json.dumps(args, ensure_ascii=False) if args else "{}"

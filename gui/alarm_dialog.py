@@ -647,6 +647,16 @@ class AlarmDialog(QDialog):
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
+        # "自动添加时询问" 复选框（与确认弹窗双向同步）
+        from config import get_todo_auto_confirm, save_todo_auto_confirm
+        self._todo_confirm_check = QCheckBox("自动添加待办时询问我")
+        self._todo_confirm_check.setChecked(get_todo_auto_confirm())
+        self._todo_confirm_check.setStyleSheet("font-size: 12px; color: #888; margin-top: 4px;")
+        self._todo_confirm_check.toggled.connect(
+            lambda checked: save_todo_auto_confirm(checked)
+        )
+        layout.addWidget(self._todo_confirm_check)
+
         if self._todo_manager is None:
             empty_label = QLabel("待办功能不可用")
             empty_label.setAlignment(Qt.AlignCenter)

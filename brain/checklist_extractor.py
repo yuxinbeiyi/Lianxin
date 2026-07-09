@@ -129,12 +129,21 @@ def run_checklist_async(
     model: str,
     todo_manager,
     chat_widget=None,
+    callback=None,
 ):
-    """后台线程：提取+应用 checklist，不阻塞主对话。"""
+    """后台线程：提取+应用 checklist，不阻塞主对话。
+
+    如果提供了 callback(result)，则仅提取不自动 apply，
+    由 callback 负责后续处理（如弹窗确认）。
+    """
     def _run():
         try:
             result = extract_checklist(conversation_text, api_key, api_base, model)
-            if result:
+            if not result:
+                return
+            if callback:
+                callback(result)
+            else:
                 summary = apply_checklist(result, todo_manager, chat_widget)
                 if summary and chat_widget:
                     logger.info(f"Checklist: {summary}")
