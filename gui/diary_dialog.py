@@ -177,7 +177,8 @@ class DiaryDialog(QDialog):
 
         # ========== 设置背景图片 ==========
         from pathlib import Path
-        bg_path = Path(__file__).parent.parent / "assets" / "莲心日记本.jpg"
+        from utils.resource_path import get_asset_path
+        bg_path = get_asset_path("莲心日记本.jpg")
         if bg_path.exists():
             self.setStyleSheet(f"""
                 QDialog {{
@@ -374,7 +375,8 @@ class DiaryDialog(QDialog):
             # 确保 pygame.mixer 已初始化
             if not pygame.mixer.get_init():
                 pygame.mixer.init()
-            sound_dir = Path(__file__).parent.parent / "assets" / "sound"
+            from utils.resource_path import get_asset_path
+            sound_dir = get_asset_path("sound")
             page_files = ["page1.mp3", "page2.mp3"]
             selected = random.choice(page_files)
             sound_path = sound_dir / selected

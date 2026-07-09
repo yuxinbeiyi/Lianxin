@@ -1940,7 +1940,8 @@ class MainWindow(QMainWindow):
             try:
                 if not pygame.mixer.get_init():
                     pygame.mixer.init()
-                sound_path = Path(__file__).parent.parent / "assets" / "sound" / "write.mp3"
+                from utils.resource_path import get_asset_path
+                sound_path = get_asset_path("sound", "write.mp3")
                 if sound_path.exists():
                     pygame.mixer.Sound(str(sound_path)).play()
                 else:
@@ -1960,7 +1961,8 @@ class MainWindow(QMainWindow):
             # 确保 pygame.mixer 已初始化
             if not pygame.mixer.get_init():
                 pygame.mixer.init()
-            sound_dir = Path(__file__).parent.parent / "assets" / "sound"
+            from utils.resource_path import get_asset_path
+            sound_dir = get_asset_path("sound")
             page_files = ["page1.mp3", "page2.mp3"]
             selected = random.choice(page_files)
             sound_path = sound_dir / selected
@@ -3301,7 +3303,8 @@ class MainWindow(QMainWindow):
 
     def _load_music_playlist(self):
         """扫描 assets/music/ 目录下的 mp3 文件"""
-        music_dir = Path(__file__).parent.parent / "assets" / "music"
+        from utils.resource_path import get_asset_path
+        music_dir = get_asset_path("music")
         if music_dir.exists():
             self.playlist = sorted(music_dir.glob("*.mp3"))
         else:

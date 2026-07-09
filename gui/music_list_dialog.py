@@ -20,7 +20,8 @@ class MusicListDialog(QDialog):
         self.setWindowFlags(Qt.Window)
 
         # 设置背景图片
-        bg_path = Path(__file__).parent.parent / "assets" / "音乐列表.jpg"
+        from utils.resource_path import get_asset_path
+        bg_path = get_asset_path("音乐列表.jpg")
         if bg_path.exists():
             self.setStyleSheet(f"""
                 QDialog {{

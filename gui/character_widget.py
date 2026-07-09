@@ -36,7 +36,8 @@ class CharacterWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(400)
-        self._assets_dir = Path(__file__).parent.parent / "assets"
+        from utils.resource_path import get_base_dir
+        self._assets_dir = get_base_dir() / "assets"
         self._gif_dir = self._assets_dir / "GIF"
         self._current_state = STATE_NORMAL
         self._previous_mode = "normal"

@@ -2,8 +2,8 @@
 utils/sound.py - 音效播放工具
 """
 import pygame
-from pathlib import Path
-_SOUNDS_DIR = Path(__file__).parent.parent / "assets" / "sound"
+from utils.resource_path import get_asset_path
+_SOUNDS_DIR = get_asset_path("sound")
 def play_sound(filename: str):
     """播放指定名称的音效文件（位于 assets/sound/ 下），音量跟随系统设置"""
     try:
