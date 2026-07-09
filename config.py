@@ -1026,6 +1026,49 @@ def save_todo_auto_confirm(auto_confirm: bool):
     _save_full_config(full)
 
 
+# ── GPU/CPU 设备偏好配置 ───────────────────────────────────
+# 每个功能可独立选择："auto"（默认）、"cpu"、"cuda"
+
+def get_device_preference(feature: str) -> str:
+    """获取指定功能的设备偏好。
+
+    Args:
+        feature: "whisper" | "funasr" | "rag"
+    Returns:
+        "auto" | "cpu" | "cuda"
+    """
+    full = _load_full_config()
+    prefs = full.get("device_preferences", {})
+    return prefs.get(feature, "auto")
+
+
+def save_device_preference(feature: str, value: str):
+    """保存指定功能的设备偏好。"""
+    full = _load_full_config()
+    if "device_preferences" not in full:
+        full["device_preferences"] = {}
+    full["device_preferences"][feature] = value
+    _save_full_config(full)
+
+
+def resolve_device(feature: str) -> str:
+    """根据偏好解析实际设备字符串。
+
+    Returns:
+        "cuda:0" 或 "cpu"
+    """
+    pref = get_device_preference(feature)
+    if pref == "cpu":
+        return "cpu"
+    if pref == "cuda":
+        return "cuda:0"
+    try:
+        import torch
+        return "cuda:0" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        return "cpu"
+
+
 def get_bilibili_cookie() -> str:
     """获取完整的 B站 Cookie 字符串，用于请求头。"""
     cfg = get_bilibili_config()

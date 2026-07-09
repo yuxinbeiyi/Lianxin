@@ -377,6 +377,59 @@ class SettingsDialog(QDialog):
         ql_layout.addStretch()
         tab_widget.addTab(ql_tab, "⚡ 快捷启动")
 
+        # ── GPU/CPU 性能选项卡 ──
+        perf_tab = QWidget()
+        perf_layout = QVBoxLayout(perf_tab)
+        perf_layout.setSpacing(16)
+
+        from config import get_device_preference, save_device_preference
+        features = [
+            ("whisper", "语音识别 (Whisper)", "本地语音转文字，faster-whisper 模型"),
+            ("funasr", "语音识别 (FunASR)", "全双工语音识别，SenseVoice 模型"),
+            ("rag", "记忆搜索 (RAG)", "语义记忆搜索，BGE embedding 模型"),
+        ]
+        self._device_combos = {}
+
+        for key, label, desc in features:
+            row = QHBoxLayout()
+            lbl = QLabel(f"{label}")
+            lbl.setMinimumWidth(160)
+            row.addWidget(lbl)
+
+            combo = QComboBox()
+            combo.addItems(["自动", "CPU", "GPU"])
+            combo.setItemData(0, "auto")
+            combo.setItemData(1, "cpu")
+            combo.setItemData(2, "cuda")
+            current = get_device_preference(key)
+            idx = {"auto": 0, "cpu": 1, "cuda": 2}.get(current, 0)
+            combo.setCurrentIndex(idx)
+            combo.currentIndexChanged.connect(
+                lambda idx, k=key, c=combo: save_device_preference(k, c.itemData(idx))
+            )
+            self._device_combos[key] = combo
+            row.addWidget(combo)
+            row.addStretch()
+            perf_layout.addLayout(row)
+
+            desc_lbl = QLabel(desc)
+            desc_lbl.setStyleSheet("color: #888; font-size: 11px; margin-left: 164px;")
+            perf_layout.addWidget(desc_lbl)
+
+        perf_layout.addSpacing(12)
+
+        tip = QLabel(
+            "💡 自动：优先 GPU，不可用时自动切换 CPU\n"
+            "   CPU：始终使用 CPU（省显存，兼容性最好）\n"
+            "   GPU：始终使用 GPU（需 NVIDIA 显卡，失败则报错）\n"
+            "   修改后需重启莲心生效"
+        )
+        tip.setStyleSheet("color: #aaa; font-size: 11px;")
+        perf_layout.addWidget(tip)
+
+        perf_layout.addStretch()
+        tab_widget.addTab(perf_tab, "GPU/CPU 性能")
+
         layout.addWidget(tab_widget)
 
         # 底部按钮

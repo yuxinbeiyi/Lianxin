@@ -175,17 +175,16 @@ def _get_whisper_model(model_size: str = "medium"):
                     model_path = snap_dir
                     break
 
-    # GPU 优先
-    for dev, ct in [("cuda", "float16"), ("cpu", "int8")]:
-        try:
-            _whisper_model = WhisperModel(model_path, device=dev, compute_type=ct)
-            _whisper_device = dev
-            break
-        except Exception:
-            continue
-
-    if _whisper_model is None:
+    # 根据用户偏好选择设备
+    from config import resolve_device
+    dev = resolve_device("whisper")
+    ct = "float16" if dev == "cuda:0" else "int8"
+    try:
+        _whisper_model = WhisperModel(model_path, device=dev, compute_type=ct)
+        _whisper_device = dev
+    except Exception:
         _whisper_model = WhisperModel(model_path, device="cpu", compute_type="int8")
+        _whisper_device = "cpu"
     return _whisper_model
 
 

@@ -49,7 +49,8 @@ def _get_model():
         try:
             from sentence_transformers import SentenceTransformer
             logger.info(f"Loading embedding model: {_model_name}")
-            _model = SentenceTransformer(_model_name, device="cpu")
+            from config import resolve_device
+            _model = SentenceTransformer(_model_name, device=resolve_device("rag"))
             logger.info("Embedding model ready")
         except ImportError:
             logger.warning("sentence-transformers not installed, RAG disabled")
