@@ -5,39 +5,47 @@ sentence-transformers 本地 embedding → 语义搜索 → 注入聊天气泡
 
 import logging
 import threading
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 import os as _os
 _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
-# torch 2.5.1 移除了 torch.distributed.fsdp，sentence-transformers 依赖它
-# 创建兼容模块避免 import 失败
-import torch.distributed as _dist
-if not hasattr(_dist, "fsdp"):
-    import types as _types
-    _fsdp = _types.ModuleType("torch.distributed.fsdp")
-    _fsdp.FullyShardedDataParallel = type("FullyShardedDataParallel", (), {})
-    _fsdp.ShardingStrategy = type("ShardingStrategy", (), {
-        "FULL_SHARD": 1, "SHARD_GRAD_OP": 2, "NO_SHARD": 3, "HYBRID_SHARD": 4, "_HYBRID_SHARD_ZERO2": 5
-    })
-    _fsdp.StateDictType = type("StateDictType", (), {
-        "FULL_STATE_DICT": 1, "LOCAL_STATE_DICT": 2, "SHARDED_STATE_DICT": 3
-    })
-    _dist.fsdp = _fsdp
+
+def _ensure_torch_fsdp_compat():
+    """torch 2.5.1 移除了 torch.distributed.fsdp，sentence-transformers 依赖它。
+    仅在需要加载模型时才调用，避免未安装 sentence-transformers 时也拖慢启动。"""
+    import torch.distributed as _dist
+    if not hasattr(_dist, "fsdp"):
+        import types as _types
+        _fsdp = _types.ModuleType("torch.distributed.fsdp")
+        _fsdp.FullyShardedDataParallel = type("FullyShardedDataParallel", (), {})
+        _fsdp.ShardingStrategy = type("ShardingStrategy", (), {
+            "FULL_SHARD": 1, "SHARD_GRAD_OP": 2, "NO_SHARD": 3, "HYBRID_SHARD": 4, "_HYBRID_SHARD_ZERO2": 5
+        })
+        _fsdp.StateDictType = type("StateDictType", (), {
+            "FULL_STATE_DICT": 1, "LOCAL_STATE_DICT": 2, "SHARDED_STATE_DICT": 3
+        })
+        _dist.fsdp = _fsdp
 
 logger = logging.getLogger("MemoryRAG")
 
 # 全局单例
 _model: Optional["SentenceTransformer"] = None
 _model_name = "BAAI/bge-small-zh-v1.5"  # 96MB, 中文优化, 512维
+_load_attempted = False
 
 
 def _get_model():
     """懒加载 embedding 模型（首次调用约 5 秒下载）。"""
-    global _model
-    if _model is None:
+    global _model, _load_attempted
+    if _model is None and not _load_attempted:
+        _load_attempted = True
+        _ensure_torch_fsdp_compat()
         try:
             from sentence_transformers import SentenceTransformer
             logger.info(f"Loading embedding model: {_model_name}")
@@ -47,7 +55,6 @@ def _get_model():
             logger.warning("sentence-transformers not installed, RAG disabled")
         except Exception as e:
             logger.warning(f"Embedding model load failed: {e}")
-        _load_attempted = False  # 允许后续重试
         return None
     return _model
 
