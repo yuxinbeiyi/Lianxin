@@ -27,9 +27,11 @@ memory/*.db
 memory/*.db-*
 
 # 运行时状态文件
+memory/*.json
 memory/last_active_side.json
 memory/proactive_settings.json
 memory/qq_session_map.json
+memory/wechat_session_map.json
 
 # 用户运行时数据
 user_data/
