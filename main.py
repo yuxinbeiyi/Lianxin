@@ -240,14 +240,18 @@ def main():
     _check_report = None
     if "--skip-check" not in sys.argv:
         try:
-            from utils.startup_check import run_checks, has_warnings, format_report
-            print("[启动体检] 正在检测关键依赖…", flush=True)
-            results = run_checks()
-            if has_warnings(results):
-                _check_report = format_report(results)
-                print(_check_report, flush=True)
+            from utils.settings import get_settings as _get_gs
+            if _get_gs().startup_check_enabled:
+                from utils.startup_check import run_checks, has_warnings, format_report
+                print("[启动体检] 正在检测关键依赖…", flush=True)
+                results = run_checks()
+                if has_warnings(results):
+                    _check_report = format_report(results)
+                    print(_check_report, flush=True)
+                else:
+                    print("  全部通过 ✅", flush=True)
             else:
-                print("  全部通过 ✅", flush=True)
+                print("[启动体检] 已跳过（设置中关闭）", flush=True)
         except Exception as e:
             print(f"[启动体检] 检测过程异常: {e}", flush=True)
 

@@ -151,6 +151,15 @@ class SettingsDialog(QDialog):
         exit_layout.addWidget(self._exit_confirm_cb)
         scroll_layout.addWidget(exit_frame)
 
+        # 启动体检
+        check_frame = self._create_frame()
+        check_layout = QHBoxLayout(check_frame)
+        self._startup_check_cb = QCheckBox("启动时进行开机体检（取消勾选可加快启动速度）")
+        self._startup_check_cb.setFont(QFont("Microsoft YaHei UI", 9))
+        self._startup_check_cb.setCursor(Qt.PointingHandCursor)
+        check_layout.addWidget(self._startup_check_cb)
+        scroll_layout.addWidget(check_frame)
+
         # 字体大小
         font_frame = self._create_frame()
         font_layout = QVBoxLayout(font_frame)
@@ -445,6 +454,7 @@ class SettingsDialog(QDialog):
 
     def _load_from_settings(self):
         self._exit_confirm_cb.setChecked(self._settings.show_exit_confirmation)
+        self._startup_check_cb.setChecked(self._settings.startup_check_enabled)
         self._autostart_cb.setChecked(is_autostart_enabled())
         font_size = self._settings.font_size
         self._font_slider.setValue(font_size)
@@ -489,6 +499,7 @@ class SettingsDialog(QDialog):
 
     def _on_save(self):
         self._settings.show_exit_confirmation = self._exit_confirm_cb.isChecked()
+        self._settings.startup_check_enabled = self._startup_check_cb.isChecked()
         self._settings.font_size = self._font_slider.value()
         self.font_size_changed.emit(self._font_slider.value())
 

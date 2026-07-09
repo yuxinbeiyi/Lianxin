@@ -28,6 +28,7 @@ _DEFAULT_SETTINGS = {
     "music_position": 0.0,          # 新增：播放位置（秒）
     "emotion_probability": 0.6,   # 发表情包概率    默认 60%
     "user_name": "雨心",           # 用户称呼（莲心对用户的称呼）
+    "startup_check_enabled": True, # 启动时进行开机体检
 }
 
 
@@ -238,6 +239,16 @@ class SettingsManager:
         if val:
             self._settings["user_name"] = val
             self.save()
+
+    # ========== 启动体检 ==========
+    @property
+    def startup_check_enabled(self) -> bool:
+        return self._settings.get("startup_check_enabled", True)
+
+    @startup_check_enabled.setter
+    def startup_check_enabled(self, val: bool):
+        self._settings["startup_check_enabled"] = val
+        self.save()
 
 
 # 全局单例
