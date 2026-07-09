@@ -45,17 +45,28 @@ def _load_model():
 
     try:
         logger.info("🔊 正在加载 FunASR SenseVoice-Small 模型…")
+        # 优先 GPU，失败自动回退 CPU
         _model = AutoModel(
             model="iic/SenseVoiceSmall",
             device="cuda:0",
             disable_pbar=True,
             disable_update=True,        # 跳过每次启动的版本检查
         )
-        logger.info("✅ FunASR 模型加载完成")
+        logger.info("✅ FunASR 模型加载完成 (CUDA)")
     except ImportError:
         logger.warning("⚠️ FunASR 未安装，跳过 (pip install funasr)")
-    except Exception as e:
-        logger.warning(f"⚠️ FunASR 模型加载失败: {e}")
+    except Exception:
+        try:
+            logger.warning("⚠️ CUDA 加载失败，重试 CPU…")
+            _model = AutoModel(
+                model="iic/SenseVoiceSmall",
+                device="cpu",
+                disable_pbar=True,
+                disable_update=True,
+            )
+            logger.info("✅ FunASR 模型加载完成 (CPU)")
+        except Exception as e:
+            logger.warning(f"⚠️ FunASR 模型加载失败 (CUDA/CPU 都失败): {e}")
 
     return _model
 
