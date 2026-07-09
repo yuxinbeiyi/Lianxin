@@ -85,4 +85,23 @@ CLAUDE.md
 logs/
 game/
 powershell
-"ovrdoze_data/" 
+"ovrdoze_data/"
+
+# 个人文件（不提交）
+lianxin_req.txt
+*.docx
+
+# 第三方开源项目（用户自行获取）
+AstrBot/
+NapCatQQ/
+ChatTTS/
+GPT-SoVITS-v2pro/
+
+# 测试工作区
+test_workspace/
+
+# 阿里云语音 SDK（用户自行安装）
+alibabacloud-nls-python-sdk/
+
+# 个人文档/笔记
+docx_backup/
