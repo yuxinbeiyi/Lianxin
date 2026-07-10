@@ -172,6 +172,10 @@ class CapabilityCenter(QDialog):
         self._build_install_tab()
         self._tabs.addTab(self._install_tab, "➕ 安装插件")
 
+        self._log_tab = QWidget()
+        self._build_log_tab()
+        self._tabs.addTab(self._log_tab, "📋 日志")
+
         root.addWidget(self._tabs)
 
     def _make_scroll_area(self):
@@ -367,12 +371,14 @@ class CapabilityCenter(QDialog):
     # ── 刷新逻辑 ────────────────────────────────────────
 
     def _refresh_all(self):
+        self._global_log_msg("🔄 开始刷新...", "info")
         self._load_skills()
         self._load_mcp()
         self._load_tools()
         self._update_refresh_time()
         self._rebuild_stats()
         self._on_search("")
+        self._global_log_msg("✅ 刷新完成", "ok")
 
     def _on_refresh(self):
         self._refresh_btn.setText("⏳ 刷新中...")
@@ -561,6 +567,14 @@ class CapabilityCenter(QDialog):
                 toggle_btn.setStyleSheet("QPushButton{background:#C8E6C9;color:#2E7D32;border-radius:6px;border:1px solid #A5D6A7;}QPushButton:hover{background:#A5D6A7;}")
             toggle_btn.clicked.connect(lambda checked, n=sname: self._on_toggle_mcp(n))
             action_row.addWidget(toggle_btn)
+
+            test_btn = QPushButton("🔌 测试")
+            test_btn.setFixedSize(56, 26)
+            test_btn.setFont(QFont("Microsoft YaHei UI", 9))
+            test_btn.setCursor(Qt.PointingHandCursor)
+            test_btn.setStyleSheet("QPushButton{background:#E3F2FD;color:#1565C0;border-radius:6px;border:1px solid #90CAF9;}QPushButton:hover{background:#BBDEFB;}")
+            test_btn.clicked.connect(lambda checked, n=sname: self._on_test_mcp(n))
+            action_row.addWidget(test_btn)
 
             uninstall_btn = QPushButton("\U0001f5d1\ufe0f \u5378\u8f7d")
             uninstall_btn.setFixedSize(60, 26)
@@ -821,6 +835,47 @@ class CapabilityCenter(QDialog):
 
         self._pending_source = None
 
+    def _build_log_tab(self):
+        layout = QVBoxLayout(self._log_tab)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        header = QHBoxLayout()
+        title = QLabel("📋 调试日志")
+        title.setFont(QFont("Microsoft YaHei UI", 12, QFont.Bold))
+        header.addWidget(title)
+        header.addStretch()
+
+        clear_btn = QPushButton("🗑️ 清空")
+        clear_btn.setFixedSize(60, 24)
+        clear_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        clear_btn.setCursor(Qt.PointingHandCursor)
+        clear_btn.setStyleSheet("QPushButton{background:#EEE;color:#555;border-radius:4px;border:1px solid #CCC;}QPushButton:hover{background:#DDD;}")
+        clear_btn.clicked.connect(lambda: self._global_log.clear())
+        header.addWidget(clear_btn)
+        layout.addLayout(header)
+
+        self._global_log = QTextEdit()
+        self._global_log.setReadOnly(True)
+        self._global_log.setFont(QFont("Consolas", 9))
+        self._global_log.setStyleSheet("""
+            QTextEdit {
+                background: #1E1E2E; color: #CDD6F4;
+                border: 1px solid #313244; border-radius: 8px;
+                padding: 8px;
+            }
+        """)
+        self._global_log.setPlaceholderText("技能和 MCP 的加载日志将在此显示...")
+        layout.addWidget(self._global_log)
+
+    def _global_log_msg(self, msg, level="info"):
+        from datetime import datetime
+        ts = datetime.now().strftime("%H:%M:%S")
+        colors = {"info": "#CDD6F4", "ok": "#A6E3A1", "warn": "#F9E2AF", "err": "#F38BA8"}
+        color = colors.get(level, "#CDD6F4")
+        if hasattr(self, "_global_log"):
+            self._global_log.append(f'<span style="color:#89B4FA;">[{ts}]</span> <span style="color:{color};">{msg}</span>')
+
     def _on_browse_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "选择插件文件夹")
         if folder:
@@ -885,21 +940,23 @@ class CapabilityCenter(QDialog):
             self._detect_card.setVisible(False)
             self._install_path.clear()
             self._pending_source = None
+            self._global_log_msg("⚡ 热加载完成，无需重启莲心即可使用新插件", "ok")
             self._refresh_all()
 
-    def _log(self, msg):
+    def _log(self, msg, level="info"):
         from datetime import datetime
         ts = datetime.now().strftime("%H:%M:%S")
         self._install_log.append(f"[{ts}] {msg}")
+        self._global_log_msg(msg, level)
 
     def _on_toggle_skill(self, name):
         from brain.skill_manager import _active_skills, activate_skill, deactivate_skill
         if name in _active_skills:
             deactivate_skill(name)
-            self._log(f"技能「{name}」已停用")
+            self._log(f"⏸ 技能「{name}」已停用", "warn")
         else:
             activate_skill(name)
-            self._log(f"技能「{name}」已启用")
+            self._log(f"▶ 技能「{name}」已启用", "ok")
         self._refresh_all()
 
     def _on_uninstall_skill(self, name):
@@ -928,10 +985,32 @@ class CapabilityCenter(QDialog):
         from brain.mcp.mcp_registry import toggle_mcp_enabled
         new_state = toggle_mcp_enabled(name)
         if new_state:
-            self._log(f"▶ MCP「{name}」已启用")
+            self._log(f"▶ MCP「{name}」已启用", "ok")
         else:
-            self._log(f"⏸ MCP「{name}」已停用")
+            self._log(f"⏸ MCP「{name}」已停用，工具定义不再注入 API", "warn")
         self._refresh_all()
+
+    def _on_test_mcp(self, name):
+        from brain.mcp.mcp_registry import MCP_REGISTRY
+        self._log(f"🔌 正在测试 MCP「{name}」...", "info")
+        agent = MCP_REGISTRY.get(name)
+        if not agent:
+            self._log(f"❌ MCP「{name}」未在注册表中找到", "err")
+            return
+        try:
+            if hasattr(agent, "list_tools"):
+                tools = agent.list_tools()
+                tool_count = len(tools) if isinstance(tools, list) else len(list(tools))
+                self._log(f"✅ MCP「{name}」连接正常，提供 {tool_count} 个工具", "ok")
+            elif hasattr(agent, "get_tool_definitions_openai"):
+                tools = agent.get_tool_definitions_openai()
+                self._log(f"✅ MCP「{name}」连接正常，提供 {len(tools)} 个工具定义", "ok")
+            elif hasattr(agent, "_tools"):
+                self._log(f"✅ MCP「{name}」已加载，{len(agent._tools)} 个工具就绪", "ok")
+            else:
+                self._log(f"⚠️ MCP「{name}」已加载但无法获取工具列表", "warn")
+        except Exception as e:
+            self._log(f"❌ MCP「{name}」测试失败: {e}", "err")
 
     def _on_search(self, text):
         kw = text.strip().lower()
