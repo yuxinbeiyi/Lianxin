@@ -87,6 +87,28 @@ def deactivate_skill(name: str) -> str:
     return f"技能「{name}」已停用。"
 
 
+def uninstall_skill(name: str):
+    """卸载技能：停用 + 从注册表删除 + 删除目录"""
+    skill = _skill_registry.get(name)
+    if not skill:
+        return False, f"未找到技能「{name}」"
+
+    skill_dir = skill["path"]
+
+    if name in _active_skills:
+        deactivate_skill(name)
+
+    del _skill_registry[name]
+
+    import shutil
+    try:
+        shutil.rmtree(skill_dir)
+    except Exception as e:
+        return False, f"删除目录失败: {e}"
+
+    return True, f"技能「{name}」已卸载。"
+
+
 def get_skill_list() -> str:
     """返回格式化的技能列表（含激活状态）。"""
     if not _skill_registry:
@@ -214,6 +236,7 @@ def _parse_skill(skill_dir: Path) -> Optional[dict]:
     description = ""
     version = "1.0"
     auto_activate = True  # 默认自动激活
+    license = ""
 
     lines = content.splitlines()
     if len(lines) >= 2 and lines[0].strip() == "---":
@@ -227,6 +250,7 @@ def _parse_skill(skill_dir: Path) -> Optional[dict]:
             name = meta.get("name", name)
             description = meta.get("description", "")
             version = meta.get("version", "1.0")
+            license = meta.get("license", "")
             auto_activate_str = meta.get("auto_activate", "true")
             auto_activate = auto_activate_str.lower() in ("true", "yes", "1")
             knowledge_lines = lines[end + 1:]
@@ -248,6 +272,7 @@ def _parse_skill(skill_dir: Path) -> Optional[dict]:
         "name": name,
         "description": description,
         "version": version,
+        "license": license,
         "path": skill_dir,
         "knowledge": knowledge,
         "tool_definitions": [],

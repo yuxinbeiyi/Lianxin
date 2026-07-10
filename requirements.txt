@@ -233,3 +233,5 @@ xinference-client==2.11.0
 xmltodict==1.0.4
 yarl==1.23.0
 zipp==4.1.0
+zhdate==0.1
+chinese-calendar==1.17.0

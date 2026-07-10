@@ -15,6 +15,7 @@ logger = logging.getLogger("MCPRegistry")
 MCP_REGISTRY: Dict[str, Any] = {}
 MANIFEST_CACHE: Dict[str, Dict] = {}
 _all_mcp_tool_defs: list = []
+_disabled_mcp: set = set()
 
 _MCP_DIR = Path(__file__).resolve().parent.parent.parent / "mcp_servers"
 
@@ -178,7 +179,9 @@ def _create_agent(manifest: Dict, service_dir: Path) -> Optional[Any]:
 def _rebuild_tool_cache():
     global _all_mcp_tool_defs
     _all_mcp_tool_defs = []
-    for _name, agent in MCP_REGISTRY.items():
+    for name, agent in MCP_REGISTRY.items():
+        if name in _disabled_mcp:
+            continue
         if hasattr(agent, "get_tool_definitions_openai"):
             _all_mcp_tool_defs.extend(agent.get_tool_definitions_openai())
 
@@ -209,3 +212,28 @@ def unload_all():
     MCP_REGISTRY.clear()
     MANIFEST_CACHE.clear()
     _all_mcp_tool_defs.clear()
+    _disabled_mcp.clear()
+
+
+def toggle_mcp_enabled(name: str) -> bool:
+    """切换 MCP 启用状态，返回 True=已启用 False=已停用"""
+    if name in _disabled_mcp:
+        _disabled_mcp.discard(name)
+        _rebuild_tool_cache()
+        return True
+    else:
+        _disabled_mcp.add(name)
+        _rebuild_tool_cache()
+        return False
+
+
+def is_mcp_enabled(name: str) -> bool:
+    return name not in _disabled_mcp
+
+
+def get_enabled_mcp_names() -> list:
+    return [n for n in MCP_REGISTRY if n not in _disabled_mcp]
+
+
+def get_disabled_mcp_names() -> list:
+    return list(_disabled_mcp)

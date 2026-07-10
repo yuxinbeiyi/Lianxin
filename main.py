@@ -91,8 +91,12 @@ if sys.platform == "win32":
                 if text is None:
                     break
                 try:
-                    self._real.write(text)
-                    self._real.flush()
+                    try:
+                        self._real.write(text)
+                        self._real.flush()
+                    except UnicodeEncodeError:
+                        self._real.write(text.encode("gbk", errors="replace").decode("gbk"))
+                        self._real.flush()
                 except Exception:
                     pass
 

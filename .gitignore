@@ -115,4 +115,6 @@ test_workspace/
 alibabacloud-nls-python-sdk/
 
 # 涓汉鏂囨。/绗旇
-docx_backup/
+docx_backup/"skills/算法艺术/" 
+"skills/前端设计/" 
+"skills/MCP构建器/" 

@@ -4,8 +4,9 @@
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
-    QLabel, QPushButton, QScrollArea, QFrame, QLineEdit,
+    QLabel, QPushButton, QScrollArea, QFrame, QLineEdit, QTextEdit,
     QCheckBox, QGridLayout, QSizePolicy, QComboBox, QMessageBox,
+    QFileDialog,
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
@@ -167,6 +168,10 @@ class CapabilityCenter(QDialog):
         tool_wrapper.addWidget(self._tool_scroll)
         self._tabs.addTab(self._tool_tab, "🛠️ 内置工具")
 
+        self._install_tab = QWidget()
+        self._build_install_tab()
+        self._tabs.addTab(self._install_tab, "➕ 安装插件")
+
         root.addWidget(self._tabs)
 
     def _make_scroll_area(self):
@@ -182,23 +187,37 @@ class CapabilityCenter(QDialog):
     # ── 统计卡片 ────────────────────────────────────────
 
     def _build_stats(self, skill_count, active_count, mcp_count, mcp_connected, tool_count):
+        # 清空旧布局
+        old_layout = self._stats_widget.layout()
+        if old_layout:
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            del old_layout
+
         layout = QGridLayout(self._stats_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
+        self._stat_labels = {}
+        self._stat_cards = {}
+
         cards = [
-            (f"{skill_count}", "📦 Skills", "#6C7BFF"),
-            (f"{active_count}", "✅ 已激活", "#27AE60"),
-            (f"{mcp_count}", "⚡ MCP", "#E67E22"),
-            (f"{tool_count}", "🔧 工具", "#8E44AD"),
+            ("skill", f"{active_count}/{skill_count}", "📦 Skills", "#6C7BFF",
+             "已激活", "未激活"),
+            ("mcp",   f"{mcp_connected}/{mcp_count}", "⚡ MCP", "#E67E22",
+             "已连接", "未连接"),
+            ("tool",  f"{tool_count}", "🔧 工具", "#8E44AD",
+             "", ""),
         ]
-        for i, (num, label, color) in enumerate(cards):
+        for i, (key, num, label, color, on_label, off_label) in enumerate(cards):
             card = QFrame()
-            card.setStyleSheet(f"""
-                QFrame {{
+            card.setStyleSheet("""
+                QFrame {
                     background: #FFF8DC; border: 1px solid #E0D0A0;
                     border-radius: 10px;
-                }}
+                }
             """)
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(14, 10, 14, 10)
@@ -214,6 +233,9 @@ class CapabilityCenter(QDialog):
             lbl.setAlignment(Qt.AlignCenter)
             card_layout.addWidget(lbl)
             layout.addWidget(card, 0, i)
+
+            self._stat_labels[key] = num_lbl
+            self._stat_cards[key] = {"card": card, "on_label": on_label, "off_label": off_label}
 
     # ── 卡片组件 ────────────────────────────────────────
 
@@ -349,6 +371,7 @@ class CapabilityCenter(QDialog):
         self._load_mcp()
         self._load_tools()
         self._update_refresh_time()
+        self._rebuild_stats()
         self._on_search("")
 
     def _on_refresh(self):
@@ -412,13 +435,41 @@ class CapabilityCenter(QDialog):
                     "parameters": fn.get("parameters", {}).get("properties", {}),
                 })
 
+            license_text = skill.get("license", "")
+            extra = f"📜 {license_text}" if license_text else ""
             card, badge = self._make_card(
                 icon, name, skill.get("description", ""),
                 skill.get("version", ""), status_text, status_color,
                 tool_count, tool_infos,
+                extra_label=extra, extra_color="#888",
             )
             card.setProperty("skill_name", name)
             card.setProperty("card_type", "skill")
+
+            # 操作按钮行
+            action_row = QHBoxLayout()
+            action_row.setSpacing(8)
+            toggle_btn = QPushButton("\u23f8 \u505c\u7528" if active else "\u25b6 \u542f\u7528")
+            toggle_btn.setFixedSize(72, 26)
+            toggle_btn.setFont(QFont("Microsoft YaHei UI", 9))
+            toggle_btn.setCursor(Qt.PointingHandCursor)
+            if active:
+                toggle_btn.setStyleSheet("QPushButton{background:#FFE0B2;color:#E65100;border-radius:6px;border:1px solid #FFB74D;}QPushButton:hover{background:#FFCC80;}")
+            else:
+                toggle_btn.setStyleSheet("QPushButton{background:#C8E6C9;color:#2E7D32;border-radius:6px;border:1px solid #A5D6A7;}QPushButton:hover{background:#A5D6A7;}")
+            toggle_btn.clicked.connect(lambda checked, n=name: self._on_toggle_skill(n))
+            action_row.addWidget(toggle_btn)
+
+            uninstall_btn = QPushButton("\U0001f5d1\ufe0f \u5378\u8f7d")
+            uninstall_btn.setFixedSize(60, 26)
+            uninstall_btn.setFont(QFont("Microsoft YaHei UI", 9))
+            uninstall_btn.setCursor(Qt.PointingHandCursor)
+            uninstall_btn.setStyleSheet("QPushButton{background:#FFCDD2;color:#C62828;border-radius:6px;border:1px solid #EF9A9A;}QPushButton:hover{background:#EF9A9A;}")
+            uninstall_btn.clicked.connect(lambda checked, n=name: self._on_uninstall_skill(n))
+            action_row.addWidget(uninstall_btn)
+            action_row.addStretch()
+            card.layout().addLayout(action_row)
+
             layout.insertWidget(layout.count() - 1, card)
 
         if not skills:
@@ -494,6 +545,33 @@ class CapabilityCenter(QDialog):
             )
             card.setProperty("mcp_name", sname)
             card.setProperty("card_type", "mcp")
+
+            # 操作按钮
+            action_row = QHBoxLayout()
+            action_row.setSpacing(8)
+            from brain.mcp.mcp_registry import is_mcp_enabled
+            enabled = is_mcp_enabled(sname)
+            toggle_btn = QPushButton("⏸ 停用" if enabled else "▶ 启用")
+            toggle_btn.setFixedSize(72, 26)
+            toggle_btn.setFont(QFont("Microsoft YaHei UI", 9))
+            toggle_btn.setCursor(Qt.PointingHandCursor)
+            if enabled:
+                toggle_btn.setStyleSheet("QPushButton{background:#FFE0B2;color:#E65100;border-radius:6px;border:1px solid #FFB74D;}QPushButton:hover{background:#FFCC80;}")
+            else:
+                toggle_btn.setStyleSheet("QPushButton{background:#C8E6C9;color:#2E7D32;border-radius:6px;border:1px solid #A5D6A7;}QPushButton:hover{background:#A5D6A7;}")
+            toggle_btn.clicked.connect(lambda checked, n=sname: self._on_toggle_mcp(n))
+            action_row.addWidget(toggle_btn)
+
+            uninstall_btn = QPushButton("\U0001f5d1\ufe0f \u5378\u8f7d")
+            uninstall_btn.setFixedSize(60, 26)
+            uninstall_btn.setFont(QFont("Microsoft YaHei UI", 9))
+            uninstall_btn.setCursor(Qt.PointingHandCursor)
+            uninstall_btn.setStyleSheet("QPushButton{background:#FFCDD2;color:#C62828;border-radius:6px;border:1px solid #EF9A9A;}QPushButton:hover{background:#EF9A9A;}")
+            uninstall_btn.clicked.connect(lambda checked, n=sname: self._on_uninstall_mcp(n))
+            action_row.addWidget(uninstall_btn)
+            action_row.addStretch()
+            card.layout().addLayout(action_row)
+
             layout.insertWidget(layout.count() - 1, card)
 
         if not MCP_REGISTRY:
@@ -501,11 +579,6 @@ class CapabilityCenter(QDialog):
             empty.setAlignment(Qt.AlignCenter)
             empty.setStyleSheet("color: #AAA; padding: 40px;")
             layout.insertWidget(layout.count() - 1, empty)
-
-        # 更新统计
-        active_count = sum(1 for a in MCP_REGISTRY.values()
-                          if getattr(a, "_connected", True))
-        self._rebuild_stats(active_count)
 
     # ── 内置工具加载 ─────────────────────────────────────
 
@@ -602,18 +675,263 @@ class CapabilityCenter(QDialog):
 
     def _rebuild_stats(self, mcp_connected=0):
         from brain.skill_manager import _skill_registry, _active_skills
-        from brain.mcp.mcp_registry import MCP_REGISTRY
+        from brain.mcp.mcp_registry import MCP_REGISTRY, is_mcp_enabled
 
         skill_count = len(_skill_registry)
         active_count = len(_active_skills)
         mcp_count = len(MCP_REGISTRY)
+        mcp_enabled_count = sum(1 for n in MCP_REGISTRY if is_mcp_enabled(n))
+
         tool_count = sum(len(getattr(a, "_tools", [])) for a in MCP_REGISTRY.values())
         for s in _skill_registry.values():
             tool_count += len(s.get("tool_definitions", []))
 
-        self._build_stats(skill_count, active_count, mcp_count, mcp_connected, tool_count)
+        if not hasattr(self, "_stat_labels") or not self._stat_labels:
+            self._build_stats(skill_count, active_count, mcp_count, mcp_enabled_count, tool_count)
+            return
+
+        self._stat_labels["skill"].setText(f"{active_count}/{skill_count}")
+        self._stat_labels["mcp"].setText(f"{mcp_enabled_count}/{mcp_count}")
+        self._stat_labels["tool"].setText(f"{tool_count}")
+
+        active_names = [n for n in _active_skills]
+        inactive_names = [n for n in _skill_registry if n not in _active_skills]
+        active_str = "、".join(active_names) if active_names else "(无)"
+        inactive_str = "、".join(inactive_names) if inactive_names else "(无)"
+        self._stat_cards["skill"]["card"].setToolTip(
+            f"━━ 已激活 ({active_count}/{skill_count}) ━━\n{active_str}\n\n"
+            f"━━ 未激活 ({skill_count - active_count}/{skill_count}) ━━\n{inactive_str}"
+        )
+
+        mcp_on = [n for n in MCP_REGISTRY if is_mcp_enabled(n)]
+        mcp_off = [n for n in MCP_REGISTRY if not is_mcp_enabled(n)]
+        mcp_on_str = "、".join(mcp_on) if mcp_on else "(无)"
+        mcp_off_str = "、".join(mcp_off) if mcp_off else "(无)"
+        self._stat_cards["mcp"]["card"].setToolTip(
+            f"━━ 已连接 ({mcp_enabled_count}/{mcp_count}) ━━\n{mcp_on_str}\n\n"
+            f"━━ 未连接 ({mcp_count - mcp_enabled_count}/{mcp_count}) ━━\n{mcp_off_str}"
+        )
 
     # ── 搜索过滤 ────────────────────────────────────────
+
+    # ── 安装插件选项卡 ────────────────────────────────
+
+    def _build_install_tab(self):
+        layout = QVBoxLayout(self._install_tab)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(12)
+
+        # 说明文字
+        hint = QLabel("将社区 Skills 或 MCP 服务文件夹拖入下方，或点击浏览选择文件夹，系统将自动识别并安装。")
+        hint.setFont(QFont("Microsoft YaHei UI", 9))
+        hint.setStyleSheet("color: #555; padding: 4px 0;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        # 路径选择行
+        path_row = QHBoxLayout()
+        path_row.setSpacing(8)
+        self._install_path = QLineEdit()
+        self._install_path.setPlaceholderText("选择要安装的插件文件夹...")
+        self._install_path.setFont(QFont("Microsoft YaHei UI", 10))
+        self._install_path.setStyleSheet("""
+            QLineEdit {
+                border: 2px dashed #D0D0E0; border-radius: 8px;
+                padding: 10px 14px; background: #FFF8DC; color: #2C2C2C;
+            }
+            QLineEdit:focus { border-color: #6C7BFF; }
+        """)
+        self._install_path.textChanged.connect(self._on_install_path_changed)
+        path_row.addWidget(self._install_path)
+
+        browse_btn = QPushButton("📂 浏览")
+        browse_btn.setFixedSize(80, 40)
+        browse_btn.setFont(QFont("Microsoft YaHei UI", 10))
+        browse_btn.setCursor(Qt.PointingHandCursor)
+        browse_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6C7BFF; color: #FFF;
+                border-radius: 8px; border: none;
+            }
+            QPushButton:hover { background-color: #5A6AE0; }
+        """)
+        browse_btn.clicked.connect(self._on_browse_folder)
+        path_row.addWidget(browse_btn)
+        layout.addLayout(path_row)
+
+        # 检测结果卡片
+        self._detect_card = QFrame()
+        self._detect_card.setStyleSheet("""
+            QFrame {
+                background: #F8F8FF; border: 1px solid #E0E0F0;
+                border-radius: 10px;
+            }
+        """)
+        self._detect_card.setVisible(False)
+        detect_layout = QVBoxLayout(self._detect_card)
+        detect_layout.setContentsMargins(16, 12, 16, 12)
+        detect_layout.setSpacing(6)
+
+        self._detect_type = QLabel()
+        self._detect_type.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
+        detect_layout.addWidget(self._detect_type)
+
+        self._detect_name = QLabel()
+        self._detect_name.setFont(QFont("Microsoft YaHei UI", 10))
+        detect_layout.addWidget(self._detect_name)
+
+        self._detect_desc = QLabel()
+        self._detect_desc.setFont(QFont("Microsoft YaHei UI", 9))
+        self._detect_desc.setStyleSheet("color: #555;")
+        self._detect_desc.setWordWrap(True)
+        detect_layout.addWidget(self._detect_desc)
+
+        self._install_btn = QPushButton("⬇️ 一键安装")
+        self._install_btn.setFixedHeight(36)
+        self._install_btn.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
+        self._install_btn.setCursor(Qt.PointingHandCursor)
+        self._install_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27AE60; color: #FFF;
+                border-radius: 8px; border: none;
+            }
+            QPushButton:hover { background-color: #219A52; }
+            QPushButton:disabled { background-color: #CCC; }
+        """)
+        self._install_btn.clicked.connect(self._on_install)
+        detect_layout.addWidget(self._install_btn)
+
+        layout.addWidget(self._detect_card)
+
+        # 状态日志
+        self._install_log = QTextEdit()
+        self._install_log.setReadOnly(True)
+        self._install_log.setFont(QFont("Consolas", 9))
+        self._install_log.setMaximumHeight(120)
+        self._install_log.setStyleSheet("""
+            QTextEdit {
+                background: #FFF8DC; border: 1px solid #E0D0A0;
+                border-radius: 8px; padding: 8px; color: #2C2C2C;
+            }
+        """)
+        self._install_log.setPlaceholderText("安装日志将在此显示...")
+        layout.addWidget(self._install_log)
+
+        layout.addStretch()
+
+        self._pending_source = None
+
+    def _on_browse_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "选择插件文件夹")
+        if folder:
+            self._install_path.setText(folder)
+
+    def _on_install_path_changed(self, text):
+        self._detect_card.setVisible(False)
+        self._pending_source = None
+        if not text.strip():
+            return
+
+        try:
+            from brain.plugin_installer import get_plugin_info
+            info = get_plugin_info(text.strip())
+        except Exception as e:
+            self._log(f"❌ 检测失败: {e}")
+            return
+
+        ptype = info.get("type", "unknown")
+        if ptype == "unknown":
+            self._detect_type.setText("❌ 无法识别")
+            self._detect_type.setStyleSheet("color: #E74C3C;")
+            self._detect_name.setText("未找到 SKILL.md 或 mcp-manifest.json")
+            self._detect_desc.setText("")
+            self._install_btn.setEnabled(False)
+            self._detect_card.setVisible(True)
+            return
+
+        if ptype == "skill":
+            self._detect_type.setText("📦 检测到技能")
+            self._detect_type.setStyleSheet("color: #6C7BFF;")
+        else:
+            self._detect_type.setText("⚡ 检测到 MCP 服务")
+            self._detect_type.setStyleSheet("color: #E67E22;")
+
+        self._detect_name.setText(f"名称: {info.get('name', '?')}")
+        desc = info.get("description", "")
+        ver = info.get("version", "")
+        self._detect_desc.setText(f"{desc}\n版本: {ver}" if ver else desc)
+        self._install_btn.setEnabled(True)
+        self._detect_card.setVisible(True)
+        self._pending_source = info.get("_source_path", text.strip())
+
+    def _on_install(self):
+        if not self._pending_source:
+            return
+
+        self._install_btn.setEnabled(False)
+        self._install_btn.setText("⏳ 安装中...")
+
+        try:
+            from brain.plugin_installer import install_plugin
+            success, msg = install_plugin(self._pending_source)
+        except Exception as e:
+            success, msg = False, f"安装异常: {e}"
+
+        self._log(msg)
+        self._install_btn.setText("⬇️ 一键安装")
+        self._install_btn.setEnabled(True) if not success else None
+
+        if success:
+            self._detect_card.setVisible(False)
+            self._install_path.clear()
+            self._pending_source = None
+            self._refresh_all()
+
+    def _log(self, msg):
+        from datetime import datetime
+        ts = datetime.now().strftime("%H:%M:%S")
+        self._install_log.append(f"[{ts}] {msg}")
+
+    def _on_toggle_skill(self, name):
+        from brain.skill_manager import _active_skills, activate_skill, deactivate_skill
+        if name in _active_skills:
+            deactivate_skill(name)
+            self._log(f"技能「{name}」已停用")
+        else:
+            activate_skill(name)
+            self._log(f"技能「{name}」已启用")
+        self._refresh_all()
+
+    def _on_uninstall_skill(self, name):
+        reply = QMessageBox.question(self, "确认卸载",
+            f"确定要卸载技能「{name}」吗？\n\n这将永久删除技能目录，不可恢复。",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        from brain.skill_manager import uninstall_skill
+        success, msg = uninstall_skill(name)
+        self._log(msg)
+        self._refresh_all()
+
+    def _on_uninstall_mcp(self, name):
+        reply = QMessageBox.question(self, "确认卸载",
+            f"确定要卸载 MCP 服务「{name}」吗？\n\n这将永久删除服务目录，不可恢复。",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        from brain.plugin_installer import uninstall_plugin
+        success, msg = uninstall_plugin(name, "mcp")
+        self._log(msg)
+        self._refresh_all()
+
+    def _on_toggle_mcp(self, name):
+        from brain.mcp.mcp_registry import toggle_mcp_enabled
+        new_state = toggle_mcp_enabled(name)
+        if new_state:
+            self._log(f"▶ MCP「{name}」已启用")
+        else:
+            self._log(f"⏸ MCP「{name}」已停用")
+        self._refresh_all()
 
     def _on_search(self, text):
         kw = text.strip().lower()

@@ -1276,12 +1276,22 @@ class AgentCore:
                     break
             if last_user_msg:
                 try:
-                    from skills._prompt_guides import get_matching_modules
+                    from skills._提示词指南 import get_matching_modules
                     modules = get_matching_modules(last_user_msg)
                     if modules:
                         messages.append({"role": "system", "content": modules})
                 except Exception:
                     pass
+
+        # ── 技能知识注入：已激活技能的 SKILL.md 内容 ──
+        try:
+            from brain.skill_manager import get_active_knowledge
+            knowledge_items = get_active_knowledge()
+            if knowledge_items:
+                knowledge_text = "\n\n---\n\n".join(knowledge_items)
+                messages.append({"role": "system", "content": knowledge_text})
+        except Exception:
+            pass
 
         # ── 记忆 RAG 注入：向量检索相关长期记忆 ──
         if not self._use_local:
