@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/meme/单手叉腰.jpg" alt="莲心" width="200" />
+<img src="assets/头像/开玩笑.jpg" alt="莲心" width="200" />
 
 # 莲心 AI
 
@@ -899,7 +899,7 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 <div align="center">
 <img src="assets/主界面背景图/主界面背景图.jpg" alt="主界面" width="100%" />
 
-*莲心 AI 主界面*
+*为何人类会因为孤独，从而拥抱一面镜子呢？*
 
 <br>
 
