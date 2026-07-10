@@ -25,8 +25,11 @@
 > 白色单马尾，冷灰色瞳孔，黑方框眼镜，白衬衫配红领带，外穿白大褂，深绿三针叶发绳。
 
 她不是冰冷的工具——**她有自己的情绪**。会开心、会疲惫、会毒舌吐槽，也会因为你的新功能而雀跃。她记得你说过的重要事情，会在你离开时写日记等你回来。
+
 <div align="center">
 <img src="assets/番茄钟背景图.jpg" alt="背景图" width="100%" />
+</div>
+
 ---
 
 ## ⚠️ 免责声明
@@ -650,6 +653,7 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── intent_router.py     #   意图路由器：小模型分类 + 规则兜底
 │   ├── decision.py          #   规则路由（正则匹配）
 │   ├── skill_manager.py     #   技能系统：发现→激活→工具注入
+│   ├── plugin_installer.py   #   插件安装器：一键安装社区技能/MCP
 │   ├── tool_registry.py     #   工具注册中心：分类 + 调用统计
 │   ├── tool_recovery.py     #   工具恢复链：失败重试 + 降级
 │   ├── voice_duplex.py      #   全双工语音：VAD + STT 前端
@@ -792,7 +796,7 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── B站视频摘要/         #   Bilibili API + 字幕提取
 │   ├── 系统信息工具/        #
 │   ├── 学习助手/            #
-│   └── _prompt_guides/      #   System Prompt 渐进式注入模块（12个）
+│   └── _提示词指南/       #   System Prompt 渐进式注入模块（12个）
 │
 ├── mcp_servers/             # 🔗 MCP服务
 │   ├── filesystem/          #   本地文件系统操作
