@@ -1238,38 +1238,10 @@ class AgentCore:
             if cross_ctx:
                 messages.append({"role": "system", "content": cross_ctx})
 
-        # ── 对话历史：云端模式滑动窗口 + 摘要压缩 ──────
-        if self._use_local:
-            messages.extend(self.history[-20:])
-        else:
-            summary_text, recent_history = self._apply_history_window()
-            if summary_text:
-                messages.append({"role": "system", "content": summary_text})
-            messages.extend(recent_history)
-
-        # 合并核心工具 + 已激活技能的自定义工具（本地模式跳过）
-        if self._use_local:
-            all_tools = []
-        else:
-            skill_tools = get_active_tool_definitions()
-            mcp_tools = get_all_mcp_tool_definitions()
-            all_tools = TOOL_DEFINITIONS + skill_tools + mcp_tools
-
-            # 串联过滤：按用户内置工具配置过滤禁用的工具
-            from config import get_builtin_tool_config
-            builtin_cfg = get_builtin_tool_config()
-            disabled_tool_names = {name for name, enabled in builtin_cfg.items() if not enabled}
-            if disabled_tool_names:
-                all_tools = [
-                    t for t in all_tools
-                    if t.get("function", {}).get("name", "") not in disabled_tool_names
-                ]
-
-
         # ── 注入 System Prompt 技能模块（渐进式披露） ──
+        # 必须在对话历史之前注入，避免 AI 误认为用户消息附带了技能说明书
+        last_user_msg = ""
         if not self._use_local:
-            # 从历史中提取最新用户消息
-            last_user_msg = ""
             for msg in reversed(self.history):
                 if msg.get("role") == "user":
                     last_user_msg = msg.get("content", "")
@@ -1307,36 +1279,36 @@ class AgentCore:
             except Exception:
                 pass
 
-        # ── 禁用工具模式：直接纯文本对话，不走工具循环 ──────
-        if disable_tools:
-            for retry in range(2):
-                try:
-                    stream = litellm.completion(
-                        model=self._model,
-                        max_tokens=self._max_tokens,
-                        messages=messages,
-                        api_key=self._api_key,
-                        api_base=self._api_base,
-                        stream=True,
-                        stream_options={"include_usage": True},
-                        timeout=120,
-                    )
-                    content, reasoning, _, finish = self._collect_stream(stream)
-                    if finish == "error" and retry < 1:
-                        import time as _time
-                        _time.sleep(1.5)
-                        continue
-                    self._last_reasoning = reasoning if reasoning else None
-                    return content or "（莲心没有说话）"
-                except Exception as e:
-                    if retry < 1:
-                        import time as _time
-                        _time.sleep(1.5)
-                        continue
-                    return f"（API 调用失败：{e}）"
+        # ── 对话历史：云端模式滑动窗口 + 摘要压缩 ──────
+        # 必须在所有 system 注入之后，确保用户消息是最后一条非 system 消息
+        if self._use_local:
+            messages.extend(self.history[-20:])
+        else:
+            summary_text, recent_history = self._apply_history_window()
+            if summary_text:
+                messages.append({"role": "system", "content": summary_text})
+            messages.extend(recent_history)
+
+        # 合并核心工具 + 已激活技能的自定义工具（本地模式跳过）
+        if self._use_local:
+            all_tools = []
+        else:
+            skill_tools = get_active_tool_definitions()
+            mcp_tools = get_all_mcp_tool_definitions()
+            all_tools = TOOL_DEFINITIONS + skill_tools + mcp_tools
+
+            # 串联过滤：按用户内置工具配置过滤禁用的工具
+            from config import get_builtin_tool_config
+            builtin_cfg = get_builtin_tool_config()
+            disabled_tool_names = {name for name, enabled in builtin_cfg.items() if not enabled}
+            if disabled_tool_names:
+                all_tools = [
+                    t for t in all_tools
+                    if t.get("function", {}).get("name", "") not in disabled_tool_names
+                ]
 
 
-        # ── 长期记忆说明（仅在走工具路径时注入） ────────────
+        # ── 长期记忆说明（必须在对话历史之前注入） ────────────
         messages.append({
             "role": "system",
             "content": (
@@ -1369,6 +1341,34 @@ class AgentCore:
 
             )
         })
+
+        # ── 禁用工具模式：直接纯文本对话，不走工具循环 ──────
+        if disable_tools:
+            for retry in range(2):
+                try:
+                    stream = litellm.completion(
+                        model=self._model,
+                        max_tokens=self._max_tokens,
+                        messages=messages,
+                        api_key=self._api_key,
+                        api_base=self._api_base,
+                        stream=True,
+                        stream_options={"include_usage": True},
+                        timeout=120,
+                    )
+                    content, reasoning, _, finish = self._collect_stream(stream)
+                    if finish == "error" and retry < 1:
+                        import time as _time
+                        _time.sleep(1.5)
+                        continue
+                    self._last_reasoning = reasoning if reasoning else None
+                    return content or "（莲心没有说话）"
+                except Exception as e:
+                    if retry < 1:
+                        import time as _time
+                        _time.sleep(1.5)
+                        continue
+                    return f"（API 调用失败：{e}）"
 
 
         MAX_ITERATIONS = 50          # 安全网，正常不会触发

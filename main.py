@@ -36,12 +36,29 @@ warnings.simplefilter("ignore", ResourceWarning)
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 os.chdir(_PROJECT_ROOT)
 
-# 每次启动清空旧日志（避免日积月累）
+# 启动时轮转日志（超过 5MB 备份，避免日积月累；crash.log 不强制清空以保留崩溃记录）
 _LOG_DIR = os.path.join(_PROJECT_ROOT, "logs")
 os.makedirs(_LOG_DIR, exist_ok=True)
-for _p in ("debug.log", "crash.log"):
+for _p in ("debug.log",):
     try:
-        open(os.path.join(_LOG_DIR, _p), "w").close()
+        _fp = os.path.join(_LOG_DIR, _p)
+        if os.path.exists(_fp) and os.path.getsize(_fp) > 5 * 1024 * 1024:
+            _backup = _fp + ".old"
+            if os.path.exists(_backup):
+                os.remove(_backup)
+            os.rename(_fp, _backup)
+        open(_fp, "w").close()
+    except Exception:
+        pass
+# crash.log 不清空，保留上次崩溃记录供诊断
+_crash_path = os.path.join(_LOG_DIR, "crash.log")
+if os.path.exists(_crash_path):
+    try:
+        if os.path.getsize(_crash_path) > 5 * 1024 * 1024:
+            _backup = _crash_path + ".old"
+            if os.path.exists(_backup):
+                os.remove(_backup)
+            os.rename(_crash_path, _backup)
     except Exception:
         pass
 

@@ -19,6 +19,49 @@ _disabled_mcp: set = set()
 
 _MCP_DIR = Path(__file__).resolve().parent.parent.parent / "mcp_servers"
 
+# ── 持久化配置 ─────────────────────────────────────────
+_CONFIG_DIR = None
+_MCP_CONFIG_FILE = None
+
+def _get_config_dir() -> Path:
+    global _CONFIG_DIR
+    if _CONFIG_DIR is None:
+        from utils.paths import get_user_data_dir
+        _CONFIG_DIR = get_user_data_dir()
+    return _CONFIG_DIR
+
+def _get_config_path() -> Path:
+    global _MCP_CONFIG_FILE
+    if _MCP_CONFIG_FILE is None:
+        _MCP_CONFIG_FILE = _get_config_dir() / "skill_config.json"
+    return _MCP_CONFIG_FILE
+
+def _load_mcp_config():
+    """从文件加载禁用的 MCP 列表"""
+    global _disabled_mcp
+    try:
+        cfg_path = _get_config_path()
+        if cfg_path.exists():
+            data = json.loads(cfg_path.read_text(encoding="utf-8"))
+            _disabled_mcp = set(data.get("disabled_mcp", []))
+    except Exception:
+        _disabled_mcp = set()
+
+def save_mcp_config():
+    """保存当前 MCP 禁用列表到文件（与技能共用 skill_config.json）"""
+    try:
+        cfg_path = _get_config_path()
+        existing = {}
+        if cfg_path.exists():
+            try:
+                existing = json.loads(cfg_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        existing["disabled_mcp"] = sorted(_disabled_mcp)
+        cfg_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning("保存 MCP 配置失败: %s", e)
+
 
 def scan_mcp_services(mcp_dir: str = None) -> List[str]:
     """扫描 mcp_servers/ 目录，加载所有 mcp-manifest.json
@@ -27,6 +70,7 @@ def scan_mcp_services(mcp_dir: str = None) -> List[str]:
         成功注册的 service_name 列表
     """
     global _all_mcp_tool_defs
+    _load_mcp_config()
     d = Path(mcp_dir) if mcp_dir else _MCP_DIR
 
     if not d.exists():
@@ -220,10 +264,12 @@ def toggle_mcp_enabled(name: str) -> bool:
     if name in _disabled_mcp:
         _disabled_mcp.discard(name)
         _rebuild_tool_cache()
+        save_mcp_config()
         return True
     else:
         _disabled_mcp.add(name)
         _rebuild_tool_cache()
+        save_mcp_config()
         return False
 
 

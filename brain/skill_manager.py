@@ -19,6 +19,50 @@ import logging
 
 logger = logging.getLogger("SkillManager")
 
+# ── 持久化配置 ─────────────────────────────────────────
+_CONFIG_PATH = Path(__file__).resolve().parent.parent / "utils" / "paths.py"
+_CONFIG_DIR = None  # 延迟初始化
+_SKILL_CONFIG_FILE = None
+
+def _get_config_dir() -> Path:
+    global _CONFIG_DIR
+    if _CONFIG_DIR is None:
+        from utils.paths import get_user_data_dir
+        _CONFIG_DIR = get_user_data_dir()
+    return _CONFIG_DIR
+
+def _get_config_path() -> Path:
+    global _SKILL_CONFIG_FILE
+    if _SKILL_CONFIG_FILE is None:
+        _SKILL_CONFIG_FILE = _get_config_dir() / "skill_config.json"
+    return _SKILL_CONFIG_FILE
+
+# 内存中的禁用列表（启动时从文件加载，运行时由 UI 同步）
+_disabled_skills: set[str] = set()
+
+def _load_skill_config():
+    """从文件加载禁用的技能列表"""
+    global _disabled_skills
+    try:
+        cfg_path = _get_config_path()
+        if cfg_path.exists():
+            data = json.loads(cfg_path.read_text(encoding="utf-8"))
+            _disabled_skills = set(data.get("disabled_skills", []))
+    except Exception:
+        _disabled_skills = set()
+
+def save_skill_config():
+    """保存当前禁用技能列表到文件"""
+    try:
+        cfg_path = _get_config_path()
+        data = {"disabled_skills": sorted(_disabled_skills)}
+        cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning("保存技能配置失败: %s", e)
+
+def get_disabled_skills() -> set[str]:
+    return _disabled_skills.copy()
+
 # ── 技能注册表 ─────────────────────────────────────────
 # _skill_registry[name] = {
 #     "name": str,
@@ -71,6 +115,7 @@ def activate_skill(name: str) -> str:
             return err
 
     _active_skills.add(name)
+    _disabled_skills.discard(name)  # 手动激活时移出禁用列表
     return f"技能「{name}」已激活。"
 
 
@@ -84,6 +129,7 @@ def deactivate_skill(name: str) -> str:
         _unload_skill_tools(name)
 
     _active_skills.discard(name)
+    _disabled_skills.add(name)
     return f"技能「{name}」已停用。"
 
 
@@ -149,11 +195,16 @@ def get_tool_definitions_by_skills(skill_names: list[str]) -> list[dict]:
 
 
 def activate_all_skills():
-    """激活所有标记为 auto_activate 的技能。"""
+    """激活所有标记为 auto_activate 的技能（跳过用户手动禁用的）。"""
+    _load_skill_config()
     activated = 0
     failed = 0
+    skipped = 0
     for name, info in _skill_registry.items():
         if not info.get("auto_activate", True):
+            continue
+        if name in _disabled_skills:
+            skipped += 1
             continue
         if name in _active_skills:
             if not info.get("tool_definitions"):
@@ -173,8 +224,8 @@ def activate_all_skills():
         _active_skills.add(name)
         activated += 1
 
-    if activated:
-        logger.info("已自动激活 %d 个技能（失败 %d 个）", activated, failed)
+    if activated or skipped:
+        logger.info("已自动激活 %d 个技能（失败 %d 个，跳过 %d 个）", activated, failed, skipped)
         # 技能变更后清除意图路由器的工具列表缓存
         try:
             from brain.intent_router import invalidate_tool_cache

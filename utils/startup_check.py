@@ -365,8 +365,13 @@ def _check_hardware() -> CheckResult:
     # 扬声器
     try:
         import pygame
-        pygame.mixer.init()
-        pygame.mixer.quit()
+        ok = False
+        try:
+            pygame.mixer.init()
+            ok = True
+        finally:
+            if ok:
+                pygame.mixer.quit()
         parts.append("扬声器: 可用")
     except Exception:
         parts.append("扬声器: 初始化失败")

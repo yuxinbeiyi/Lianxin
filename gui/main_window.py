@@ -250,8 +250,12 @@ class MainWindow(QMainWindow):
         )
 
         # 初始化 pygame 混音器（用于音乐播放）
+        # 首次启动时音频驱动可能未就绪，静默降级避免崩溃
         if not pygame.mixer.get_init():
-            pygame.mixer.init()
+            try:
+                pygame.mixer.init()
+            except Exception:
+                pass
         # 初始化日记数据库
         init_diary_db()
 

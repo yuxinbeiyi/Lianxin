@@ -76,6 +76,20 @@ class CapabilityCenter(QDialog):
         self._build_ui()
         self._refresh_all()
 
+    def closeEvent(self, event):
+        """关闭窗口时自动保存技能和 MCP 配置"""
+        try:
+            from brain.skill_manager import save_skill_config
+            save_skill_config()
+        except Exception:
+            pass
+        try:
+            from brain.mcp.mcp_registry import save_mcp_config
+            save_mcp_config()
+        except Exception:
+            pass
+        super().closeEvent(event)
+
     # ── UI 构建 ─────────────────────────────────────────
 
     def _build_ui(self):
@@ -950,13 +964,14 @@ class CapabilityCenter(QDialog):
         self._global_log_msg(msg, level)
 
     def _on_toggle_skill(self, name):
-        from brain.skill_manager import _active_skills, activate_skill, deactivate_skill
+        from brain.skill_manager import _active_skills, activate_skill, deactivate_skill, save_skill_config
         if name in _active_skills:
             deactivate_skill(name)
             self._log(f"⏸ 技能「{name}」已停用", "warn")
         else:
             activate_skill(name)
             self._log(f"▶ 技能「{name}」已启用", "ok")
+        save_skill_config()
         self._refresh_all()
 
     def _on_uninstall_skill(self, name):
