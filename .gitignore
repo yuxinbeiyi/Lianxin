@@ -28,6 +28,9 @@ memory/*.db-*
 
 # 运行时状态文件
 memory/*.json
+
+# Everything 文件搜索（第三方闭源软件，不可提交）
+es.exe
 memory/last_active_side.json
 memory/proactive_settings.json
 memory/qq_session_map.json
@@ -115,6 +118,6 @@ test_workspace/
 alibabacloud-nls-python-sdk/
 
 # 个人文档/笔记
-docx_backup/"skills/�㷨����/" 
-"skills/ǰ�����/" 
-"skills/MCP������/" 
+docx_backup/"skills/�㷨����/" 
+"skills/ǰ�����/" 
+"skills/MCP������/"

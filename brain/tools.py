@@ -26,7 +26,7 @@ from brain.code_intel import goto_definition, find_references, get_diagnostics
 _SUBAGENT_ALLOWED_TOOLS = {
     "read_file", "read_file_lines", "read_file_chunk",
     "grep_file", "search_code", "glob_files", "search_files",
-    "list_directory", "edit_file", "code_structure",
+    "search_files_everything", "list_directory", "edit_file", "code_structure",
     "run_shell", "run_python_code", "diff_files", "git_status",
 }
 
@@ -232,7 +232,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "search_files",
-            "description": "在指定目录中搜索包含关键词的文件名。",
+            "description": "在指定目录中搜索包含关键词的文件名。如需全盘搜索或按时间/扩展名过滤，请优先使用 search_files_everything。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -246,6 +246,60 @@ TOOL_DEFINITIONS = [
                     }
                 },
                 "required": ["directory", "keyword"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_files_everything",
+            "description": (
+                "【推荐优先使用】毫秒级全盘文件搜索，比 search_files 快 100 倍以上。"
+                "支持按扩展名、最近修改天数过滤。"
+                "调用示例：search_files_everything(keyword='简历', ext='docx;pdf', recent_days=2)"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "文件名关键词，如 '简历'"
+                    },
+                    "ext": {
+                        "type": "string",
+                        "description": "扩展名过滤，分号分隔，如 'pdf;docx'。不填则不过滤"
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": "限定搜索目录，如 'C:\\Users\\me\\Desktop'。不填则全盘搜索"
+                    },
+                    "recent_days": {
+                        "type": "integer",
+                        "description": "限定最近 N 天修改的文件，如 1 表示今天，2 表示昨天至今。0 表示不限制"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "最多返回条数，默认 20"
+                    }
+                },
+                "required": ["keyword"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_file_info_everything",
+            "description": "获取文件的元数据：大小、修改时间、创建时间。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "文件的完整路径"
+                    }
+                },
+                "required": ["filepath"]
             }
         }
     },
@@ -2196,6 +2250,107 @@ def search_files(directory: str, keyword: str) -> str:
         return f"找到 {len(matches)} 个匹配文件:\n" + "\n".join(matches[:50])
     except Exception as e:
         return f"搜索文件出错: {e}"
+
+
+# ── Everything 毫秒级文件搜索 ──────────────────────────
+
+_EVERYTHING_ES_PATH: str | None = None
+
+
+def _find_everything_es() -> str | None:
+    """自动检测 es.exe 位置"""
+    global _EVERYTHING_ES_PATH
+    if _EVERYTHING_ES_PATH is not None:
+        return _EVERYTHING_ES_PATH
+
+    import shutil
+    candidates = [
+        r"D:\Everything-1.5.0.1416b x64\Everything\es.exe",
+        r"D:\Everything-1.5.0.1416b.x64\es.exe",
+        r"C:\Program Files\Everything\es.exe",
+        r"C:\Program Files (x86)\Everything\es.exe",
+        r"C:\Tools\Everything\es.exe",
+    ]
+    for p in candidates:
+        if Path(p).exists():
+            _EVERYTHING_ES_PATH = p
+            return p
+
+    found = shutil.which("es.exe")
+    if found:
+        _EVERYTHING_ES_PATH = found
+        return found
+
+    return None
+
+
+def search_files_everything(keyword: str, ext: str = "",
+                            folder: str = "", recent_days: int = 0,
+                            max_results: int = 20) -> str:
+    """
+    【推荐】毫秒级全盘文件搜索（依赖 Everything + es.exe）。
+    比 search_files 快 100 倍以上，支持按扩展名、最近修改天数过滤。
+
+    调用示例：
+      search_files_everything(keyword="简历", ext="docx;pdf", recent_days=2)
+      → 找到最近 2 天修改的、文件名含"简历"的 docx/pdf 文件
+
+    参数:
+        keyword:     文件名关键词，如 "简历"
+        ext:         扩展名过滤，分号分隔，如 "pdf;docx"
+        folder:      限定目录，不填则全盘搜索，如 "C:\\Users\\me\\Desktop"
+        recent_days: 限定最近 N 天修改的文件，0 表示不限制
+        max_results: 最多返回条数，默认 20
+    """
+    es = _find_everything_es()
+    if not es:
+        return "⚠️ 未检测到 Everything。请从 https://www.voidtools.com 下载安装，可获得毫秒级全盘文件搜索。"
+
+    # 构建 Everything 搜索语法
+    parts = [keyword]
+    if ext:
+        parts.append(f"ext:{ext}")
+    if recent_days > 0:
+        parts.append(f"dm:last{recent_days}days")
+
+    query = " ".join(parts)
+    cmd = [es]
+    if folder:
+        cmd += ["-path", folder]
+    cmd += ["-n", str(max_results), "-s", query]
+
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+        lines = [l.strip() for l in r.stdout.strip().split("\n") if l.strip()]
+        if not lines:
+            return f"未找到匹配「{keyword}」的文件"
+        return f"找到 {len(lines)} 个文件:\n" + "\n".join(lines)
+    except FileNotFoundError:
+        return "⚠️ 未找到 es.exe，请检查 Everything 是否已安装"
+    except subprocess.TimeoutExpired:
+        return "⚠️ 搜索超时"
+
+
+def get_file_info_everything(filepath: str) -> str:
+    """
+    获取文件元数据：大小、修改时间、创建时间（依赖 Everything）。
+    """
+    import os as _os
+    es = _find_everything_es()
+    if not es:
+        return "⚠️ 未检测到 Everything"
+
+    try:
+        name = Path(filepath).name
+        parent = str(Path(filepath).parent)
+        r = subprocess.run(
+            [es, "-name-part", name, "-path", parent,
+             "-size", "-date-modified", "-date-created", "-n", "1"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10
+        )
+        return r.stdout.strip() or f"未找到文件: {filepath}"
+    except Exception as e:
+        return f"查询失败: {e}"
 
 
 def open_app(name: str) -> str:
@@ -4524,6 +4679,14 @@ TOOL_EXECUTORS = {
     "write_file":      lambda inp: write_file(inp["path"], inp["content"]),
     "list_directory": lambda inp: list_directory(inp.get("path", "")),
     "search_files":   lambda inp: search_files(inp["directory"], inp["keyword"]),
+    "search_files_everything": lambda inp: search_files_everything(
+        inp["keyword"],
+        inp.get("ext", ""),
+        inp.get("folder", ""),
+        inp.get("recent_days", 0),
+        inp.get("max_results", 20),
+    ),
+    "get_file_info_everything": lambda inp: get_file_info_everything(inp["filepath"]),
     "run_command":    lambda inp: run_command(inp["command"]),
     "save_memory":    lambda inp: save_memory(inp["fact"], inp.get("category")),
     "open_app":       lambda inp: open_app(inp["name"]),

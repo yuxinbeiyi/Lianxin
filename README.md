@@ -496,6 +496,7 @@ python main.py --autostart
 | [NapCatQQ](https://github.com/NapNeko/NapCatQQ) | QQ 消息收发 | ✅ |
 | [AstrBot](https://github.com/Soulter/AstrBot) + weixin_oc | 微信消息收发 | ✅ |
 | [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) | 图片文字识别 | ✅ |
+| [Everything](https://www.voidtools.com/) | 毫秒级全盘文件搜索 | ❌ |
 | [Ollama](https://ollama.com) | 本地模型运行 / 意图路由 | ❌ |
 | [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) | 高质量声音克隆 | ❌ |
 | [Playwright](https://playwright.dev) | 浏览器自动化引擎 | ❌ |
@@ -513,7 +514,7 @@ python main.py --autostart
 |------|------|
 | `read_file` / `read_file_lines` / `read_file_chunk` | 读取文件（自动编码检测 + 分块） |
 | `write_file` / `edit_file` | 写入/覆盖 + 精确字符串替换 |
-| `list_directory` / `search_files` / `glob_files` | 目录浏览 + 文件搜索 |
+| `list_directory` / `search_files` / `search_files_everything` / `glob_files` | 目录浏览 + 文件搜索（Everything 毫秒级全盘搜索） |
 | `grep_file` / `search_code` | 文件/代码库正则搜索 |
 | `diff_files` | 文件差异比较 |
 | `code_structure` / `goto_definition` / `find_references` / `code_diagnostics` | 代码智能 |
