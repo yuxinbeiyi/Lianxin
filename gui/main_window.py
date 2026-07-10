@@ -281,6 +281,11 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        # AgentWorker 看门狗：超过 3 分钟无响应则强制终止
+        self._agent_watchdog = QTimer(self)
+        self._agent_watchdog.setSingleShot(True)
+        self._agent_watchdog.timeout.connect(self._on_agent_watchdog_timeout)
+
         self._show_greeting()
         self._preload_whisper()   # 后台预载 Whisper 模型
         self._preload_tts()       # 后台预热 TTS 引擎
@@ -400,6 +405,7 @@ class MainWindow(QMainWindow):
         self._agent_worker.error_occurred.connect(self._on_error)
         self._duty_scheduler.set_agent_busy(True)
         self._agent_worker.start()
+        self._agent_watchdog.start(180_000)  # 3 分钟看门狗
         self._input_panel.show_interrupt_bar(self._agent_worker)
 
     def _handle_music_info(self, query_type: str) -> str:
@@ -1085,6 +1091,7 @@ class MainWindow(QMainWindow):
             self._agent_worker.observation_image.connect(self._on_observation_image)
             self._agent_worker.error_occurred.connect(self._on_error)
             self._agent_worker.start()
+            self._agent_watchdog.start(180_000)  # 3 分钟看门狗
             self._input_panel.show_interrupt_bar(self._agent_worker)
 
 
@@ -1133,6 +1140,7 @@ class MainWindow(QMainWindow):
         self._agent_worker.error_occurred.connect(self._on_error)
         self._duty_scheduler.set_agent_busy(True)
         self._agent_worker.start()
+        self._agent_watchdog.start(180_000)  # 3 分钟看门狗
         self._input_panel.show_interrupt_bar(self._agent_worker)
 
     def _on_tool_called(self, tool_name: str, args_json: str, round_num: int):
@@ -1157,14 +1165,17 @@ class MainWindow(QMainWindow):
 
 
     def _on_error(self, err: str):
+        self._agent_watchdog.stop()
         self._chat_widget.finalize_tool_groups()
         self._duty_scheduler.set_agent_busy(False)
-        self._input_panel.set_enabled(True)
         self._input_panel.hide_interrupt_bar()
+        self._char_widget.stop_thinking()
+        self._set_idle_state()
         self._chat_widget.add_system_tip(f"错误：{err}")
 
 
     def _on_ai_response(self, text: str):
+        self._agent_watchdog.stop()
         from brain.task_tracker import get_task_tracker
         get_task_tracker().clear()
         self._input_panel.hide_interrupt_bar()
@@ -1487,6 +1498,7 @@ class MainWindow(QMainWindow):
 
     def _on_resend(self):
         """打断思考，回填上一条用户消息到输入框。"""
+        self._agent_watchdog.stop()
         if self._agent_worker and self._agent_worker.isRunning():
             self._agent_worker.terminate()
             self._agent_worker = None
@@ -1752,6 +1764,8 @@ class MainWindow(QMainWindow):
         from gui.emotional_debug_dialog import EmotionalDebugDialog
         if self._emotion_debug_dialog is None:
             self._emotion_debug_dialog = EmotionalDebugDialog(self)
+            self._emotion_debug_dialog.destroyed.connect(
+                lambda: setattr(self, '_emotion_debug_dialog', None))
         self._emotion_debug_dialog.show()
         self._emotion_debug_dialog.raise_()
         self._emotion_debug_dialog.activateWindow()
@@ -2570,6 +2584,17 @@ class MainWindow(QMainWindow):
             _get_emotion_mgr().update_decay_only()
         except Exception:
             pass
+
+    def _on_agent_watchdog_timeout(self):
+        """AgentWorker 看门狗超时：强制终止卡死的 Worker 线程。"""
+        if self._agent_worker and self._agent_worker.isRunning():
+            print("[看门狗] AgentWorker 超过 3 分钟无响应，强制终止", flush=True)
+            self._agent_worker.terminate()
+            self._agent_worker = None
+        self._input_panel.hide_interrupt_bar()
+        self._char_widget.stop_thinking()
+        self._set_idle_state()
+        self._chat_widget.add_system_tip("⚠️ 莲心响应超时（3分钟），已自动终止。请重试或检查网络。")
 
     def _on_heartbeat_check(self):
         """心跳自检触发：检查活跃时段后启动 Worker。"""

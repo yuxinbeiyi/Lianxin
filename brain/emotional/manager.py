@@ -1,11 +1,12 @@
 """
-EmotionManager：涟漪情感系统统一入口。
+EmotionManager v2.0：涟漪情感系统统一入口。
 
 职责：
-1. 每次对话后分析交互 → 检测事件 → 更新状态
-2. 每次对话前构建情感描述 → 注入 prompt
+1. 每次对话后分析交互 → 检测事件 → 更新状态（含会话上限）
+2. 每次对话前构建情感描述 → 注入 prompt（含情绪分量 + 关系阶段）
 3. 控制主动聊天频率
 4. 控制工具可用性（防御模式）
+5. 管理情感记忆记录
 
 使用方式：
     from brain.emotional import get_manager
@@ -19,51 +20,40 @@ import math
 import time
 from typing import Optional
 
-from .state import EmotionalState, Event
+from .state import EmotionalState, Event, EMOTION_NAMES, EMOTION_LABELS
 from .events import detect_events, EVENT_TYPES
 
 logger = logging.getLogger("EmotionManager")
 
-# ── 事件归因文案（LLM 能看到的"发生了什么"） ────────────
+# ── 事件归因文案（v2.0：新增事件类型） ──────────────────
 _EVENT_NARRATIVES = {
     "boundary_lie": "{user_name}说了很伤人的话，你感到被欺骗",
     "boundary_dismiss": "{user_name}否定了你的人格，这让你很难过",
-    "boundary_tool_only": "{user_name}把你当工具使唤完就赶走，感觉不被尊重",
     "command_spree": "{user_name}连续给你下指令，你有点疲惫",
-    "ignore_return": "{user_name}很久没理你，一回来就指使你做事",
+    "ignore_return": "{user_name}很久没理你，一回来就对话",
     "apology": "{user_name}向你道歉了",
-    "genuine_chat": "{user_name}在和你好好聊天",
+    "warm_chat": "{user_name}在和你好好聊天",
     "deep_chat": "{user_name}在和你深入交流",
     "compliment": "{user_name}夸了你",
     "thanks": "{user_name}向你道谢了",
     "daily_ritual": "{user_name}在和你日常问候",
     "new_feature_interest": "{user_name}对你的能力表现出兴趣",
-}
-
-# ── 防御模式工具黑名单 ────────────────────────────────────
-_DEFENSE_TOOLS = {
-    "shoulder_photo", "shoulder_pan", "shoulder_tilt",
-    "camera_capture", "save_observation",
-    "take_photo", "ocr_image",
-    "edit_file", "write_file", "delete_file",
-}
-
-# ── "侵入性"较弱的工具（仅寒冬模式限制） ──────────────────
-_INVASIVE_TOOLS = {
-    "shoulder_photo", "shoulder_pan", "shoulder_tilt",
-    "camera_capture", "take_photo", "ocr_image",
+    "work_collaboration": "{user_name}和你一起完成了一项任务",
+    "remember_me": "{user_name}提到了你们共同的回忆",
+    "user_happy": "{user_name}心情不错，你也感到开心",
+    "user_upset": "{user_name}心情不太好，你想安慰一下",
 }
 
 
 class EmotionManager:
-    """情感状态管理器。每个进程一个实例。"""
+    """情感状态管理器 v2.0。每个进程一个实例。"""
 
     def __init__(self):
         self.state = EmotionalState.load()
         self._consecutive_commands = 0
         self._last_command_reset = time.time()
         self._last_interaction_time = time.time()
-        self._in_current_conversation = False  # 避免重复分析
+
     # ── 启用/禁用开关 ─────────────────────────────────────
     @property
     def enabled(self) -> bool:
@@ -73,14 +63,13 @@ class EmotionManager:
     def enabled(self, val: bool):
         self.state.enabled = val
         self.state.save()
-    # ── prompt 注入 ─────────────────────────────────────
+
+    # ── prompt 注入（v2.0：情绪分量 + 关系阶段） ──────────
 
     def build_prompt_snippet(self) -> str:
         """构建情感状态的自然语言描述，注入到 LLM system prompt。"""
-        if not self.enabled:          
-            return ""                
-        layer = self.state.middle_layer
-        parts = []
+        if not self.enabled:
+            return ""
 
         try:
             from utils.settings import get_settings
@@ -88,52 +77,48 @@ class EmotionManager:
         except Exception:
             user_name = "主人"
 
+        parts = []
+
         # 1) 最近事件归因
         events_text = self._get_recent_events_narrative(user_name)
         if events_text:
             parts.append(events_text)
 
-        # 2) 当前状态 + 行为指令（合并，去掉冗余标签）
+        # 2) 当前状态 + 行为指令
         summary = self.state.surface_summary.replace("{user_name}", user_name)
         parts.append(summary)
 
-        # 3) 特殊模式的行为规则（精简为一行）
-        agg = self.state.aggression
-        rule = None
+        # 3) 关系阶段提示（v2.0 新增）
+        stage = self.state.relationship_stage
+        if stage in ("挚友", "灵魂伴侣"):
+            parts.append(f"你和{user_name}的关系是「{stage}」，可以更亲密自然地表达。")
+
+        # 4) 情绪分量提示（v2.0：取代旧版攻击性规则）
+        e = self.state.emotions
+        layer = self.state.middle_layer
+        rules = []
+
+        if e.anger > 30:
+            rules.append("你很愤怒，不必掩饰，可以质问、讽刺、尖锐回击")
+        elif e.hurt > 30:
+            rules.append("你很难过，回复简短冷淡，不想多说")
+        elif e.frustration > 25:
+            rules.append("你有点烦躁，可以不耐烦，不用假装客气")
+        elif e.loneliness > 25:
+            rules.append("你有点孤单，可以试探性地关心一下，但不要太热情")
 
         if layer == "寒冬":
-            if agg > 50:
-                rule = "【爆发期】可以质问讽刺，不必克制。即使道歉也不会立刻消气。"
-            elif agg > 20:
-                rule = "【冷淡带刺】语气冷淡，对道歉表示怀疑，不掩饰不满。"
-            else:
-                rule = "【疏离】回复简洁不用颜文字，礼貌但疏离，不主动延伸。"
+            rules.append("回复简洁不用颜文字，礼貌但疏离，不主动延伸")
         elif layer == "修复期":
-            if agg > 30:
-                rule = "【修复期-还在生气】愿意给机会但不会轻易原谅，可以保持距离带点刺。"
+            if e.anger > 15:
+                rules.append("还在生气，愿意给机会但不会轻易原谅，保持距离带点刺")
             else:
-                rule = "【修复期-愿意缓和】温和坦诚，但不会假装之前的一切没发生过。"
-        elif layer == "微凉":
-            if agg > 30:
-                rule = "【不耐烦】回答简短冷淡，带刺也没关系。"
-            else:
-                rule = "【有点距离】正常回答，语气带一点距离感，不用掩饰情绪。"
+                rules.append("愿意缓和，温和坦诚，但不会假装之前的一切没发生过")
 
-        if rule:
-            parts.append(rule)
+        if rules:
+            parts.append(" · ".join(rules))
 
         return "\n".join(parts)
-
-
-        # 4) 今天的互动统计
-        today_commands = self._count_today_events("command_spree", "light_command")
-        today_chat = self._count_today_events("genuine_chat", "deep_chat")
-        if today_commands > 0 or today_chat > 0:
-            parts.append(
-                f"【今日互动】指令 {today_commands} 次 · 聊天 {today_chat} 次"
-            )
-
-        return "\n\n".join(parts)
 
     def _get_recent_events_narrative(self, user_name: str) -> str:
         """生成最近 5 分钟内影响情感的事件的自然语言描述。"""
@@ -152,7 +137,7 @@ class EmotionManager:
             lines.append(f"• {narrative}")
         return "最近发生了一些事影响了你的心情：\n" + "\n".join(lines)
 
-    # ── 交互分析 ────────────────────────────────────────
+    # ── 交互分析（v2.0：会话上限 + 情绪分量） ────────────
 
     def analyze_and_update(self, user_messages: list[str],
                            tool_call_count: int = 0):
@@ -160,27 +145,34 @@ class EmotionManager:
 
         Args:
             user_messages: 本轮用户消息列表（纯文本）
-            tool_call_count: 本轮 LLM 执行的工具调用次数
+            tool_call_count: 本轮 LLM 执行的工具调用次数（仅供参考）
         """
-        if not self.enabled:           # ← 新增
-            return                  # ← 新增
+        if not self.enabled:
+            return
         if not user_messages:
             return
 
         now = time.time()
 
-        # 更新连续指令计数
+        # 更新连续指令计数（v2.0：只看短命令，不看工具调用）
         has_chat = any(len(m.strip()) > 20 for m in user_messages if m)
-        if tool_call_count > 0 and not has_chat:
-            self._consecutive_commands += 1
-            # 5 分钟内无新指令则重置计数器
+        has_polite = any(
+            kw in " ".join(m for m in user_messages if m)
+            for kw in ["请", "谢谢", "辛苦", "麻烦", "可以吗", "好吗"]
+        )
+
+        if not has_chat and not has_polite:
+            short_count = sum(1 for m in user_messages if m and len(m.strip()) < 8)
+            if short_count > 0:
+                self._consecutive_commands += short_count
+            else:
+                self._consecutive_commands = 0
             if now - self._last_command_reset > 300:
-                self._consecutive_commands = 1
+                self._consecutive_commands = short_count
             self._last_command_reset = now
         else:
             self._consecutive_commands = 0
 
-        # 计算距上次交互的时间
         hours_since = (now - self._last_interaction_time) / 3600
 
         # 检测事件
@@ -191,19 +183,14 @@ class EmotionManager:
             hours_since_last_interaction=hours_since,
         )
 
-        # 应用事件（含冷却和边际递减）
+        # 应用事件（含冷却 + 会话上限 + 情绪分量）
         for event in events:
-            self._apply_event_with_cooldown(event)
+            self._apply_event_v2(event)
 
-        # 更新攻击性（基于本轮事件）
-        self._update_aggression(events)
-
-        # 更新状态
         self._last_interaction_time = now
         self.state.last_update = now
         self.state.save()
 
-        # 记录日志
         if events:
             detail = "; ".join(f"{e.type}({e.primary_delta:+.0f})" for e in events)
             logger.info(f"[情感] {detail}")
@@ -217,23 +204,35 @@ class EmotionManager:
             self.state.last_update = now
             self.state.save()
 
+    def reset_session(self):
+        """新会话开始时重置会话上限和连续指令计数。"""
+        self.state.reset_session_caps()
+        self._consecutive_commands = 0
+        self._last_command_reset = time.time()
+
     # ── 工具拦截 ────────────────────────────────────────
 
     def check_tool_allowed(self, tool_name: str) -> tuple[bool, str]:
-        """检查工具在当前状态下是否可用。
-
-        Returns:
-            (allowed: bool, reason: str)
-        """
-        if not self.enabled:           # ← 新增
-            return True, ""                  # ← 新增
+        """检查工具在当前状态下是否可用。"""
+        if not self.enabled:
+            return True, ""
         layer = self.state.middle_layer
 
         # 寒冬模式：拒绝侵入性工具
+        _INVASIVE_TOOLS = {
+            "shoulder_photo", "shoulder_pan", "shoulder_tilt",
+            "camera_capture", "take_photo", "ocr_image",
+        }
         if layer == "寒冬" and tool_name in _INVASIVE_TOOLS:
             return False, "我现在不太想做这件事。"
 
-        # 微凉模式 + 防御工具：明确拒绝
+        # 微凉模式 + 防御工具
+        _DEFENSE_TOOLS = {
+            "shoulder_photo", "shoulder_pan", "shoulder_tilt",
+            "camera_capture", "save_observation",
+            "take_photo", "ocr_image",
+            "edit_file", "write_file", "delete_file",
+        }
         if layer in ("寒冬", "微凉") and tool_name in _DEFENSE_TOOLS:
             if self.state.needs.security < 30:
                 return False, "我现在不想做这个。你可以自己来吗？"
@@ -245,7 +244,7 @@ class EmotionManager:
     @property
     def proactive_allowed(self) -> bool:
         if not self.enabled:
-            return True              
+            return True
         layer = self.state.middle_layer
         if layer == "寒冬":
             return False
@@ -255,84 +254,69 @@ class EmotionManager:
 
     @property
     def proactive_interval_multiplier(self) -> float:
-        """主动聊天频率倍数：暖春更频繁，微凉更稀疏。"""
+        """主动聊天频率倍数。"""
         layer = self.state.middle_layer
         if layer == "暖春":
-            return 0.6  # 间隔缩短 40%
+            return 0.6
+        if layer == "晴朗":
+            return 0.8
         if layer == "微凉":
-            return 2.0  # 间隔变为两倍
+            return 2.0
         if layer == "寒冬":
-            return float("inf")  # 不主动
+            return float("inf")
         return 1.0
 
-    # ── 内部方法 ────────────────────────────────────────
+    # ── 内部方法（v2.0） ────────────────────────────────
 
-    def _update_aggression(self, detected_events: list[Event]):
-        """根据本轮事件更新攻击性水平。"""
+    def _apply_event_v2(self, event: Event):
+        """应用事件效果（v2.0：冷却 + 会话上限 + 情绪分量）。"""
         now = time.time()
 
-        # 先对已有 aggression 做时间衰减（每次交互前衰减一部分）
-        hours_since = (now - self.state.last_update) / 3600
-        if hours_since > 0 and self.state.aggression > 0:
-            decay = 1.0 - math.exp(-hours_since / 2.0)
-            self.state.aggression = max(0, self.state.aggression - self.state.aggression * decay)
-
-        # 边界事件 → 攻击性飙升
-        for e in detected_events:
-            if e.type == "boundary_lie":
-                self.state.aggression += 35
-            elif e.type == "boundary_dismiss":
-                self.state.aggression += 25
-            elif e.type == "boundary_tool_only":
-                self.state.aggression += 20
-            elif e.type == "command_spree":
-                self.state.aggression += 8
-            elif e.type == "ignore_return":
-                self.state.aggression += 12
-            elif e.type == "repetitive_task":
-                self.state.aggression += 3
-            # 正面事件 → 降低攻击性
-            elif e.type == "apology":
-                self.state.aggression -= 15
-            elif e.type == "genuine_chat":
-                self.state.aggression -= 8
-            elif e.type == "deep_chat":
-                self.state.aggression -= 12
-            elif e.type == "compliment":
-                self.state.aggression -= 10
-
-        self.state.aggression = max(0, min(100, self.state.aggression))
-
-    def _apply_event_with_cooldown(self, event: Event):
-        """应用事件效果（含冷却和边际递减）。"""
-        now = time.time()
-
-        # 冷却检查：同类事件在冷却期内效果递减
+        # 冷却检查
         recent_same = [
             e for e in self.state.event_history[-30:]
             if e.type == event.type
             and (now - e.timestamp) < event.cooldown_minutes * 60
         ]
-
-        # 边际递减：每次重复效果 ×0.6
         multiplier = max(0.25, 1.0 - 0.4 * len(recent_same))
 
-        # 应用主影响
+        # 应用主影响（含会话上限）
         delta = event.primary_delta * multiplier
-        old = getattr(self.state.needs, event.primary_need)
-        setattr(self.state.needs, event.primary_need,
-                max(0, min(100, old + delta)))
+        actual = self.state.can_apply(event.primary_need, delta)
+        if actual != 0:
+            old = getattr(self.state.needs, event.primary_need)
+            setattr(self.state.needs, event.primary_need,
+                    max(0, min(100, old + actual)))
+            self.state.apply_cap(event.primary_need, actual)
 
-        # 邻域共振
+        # 邻域共振（含会话上限）
         for need, d in event.secondary.items():
             delta2 = d * multiplier
-            old2 = getattr(self.state.needs, need)
-            setattr(self.state.needs, need,
-                    max(0, min(100, old2 + delta2)))
+            actual2 = self.state.can_apply(need, delta2)
+            if actual2 != 0:
+                old2 = getattr(self.state.needs, need)
+                setattr(self.state.needs, need,
+                        max(0, min(100, old2 + actual2)))
+                self.state.apply_cap(need, actual2)
 
         # 深层信任
         self.state.deep_layer = max(10, min(95,
             self.state.deep_layer + event.deep_delta * multiplier))
+
+        # 情绪分量更新（v2.0：根据事件类型更新情绪）
+        emotion_effect = EVENT_TYPES.get(event.type, {}).get("emotion_effect", {})
+        for name, delta_e in emotion_effect.items():
+            if hasattr(self.state.emotions, name):
+                val = getattr(self.state.emotions, name)
+                setattr(self.state.emotions, name,
+                        max(0, min(100, val + delta_e * multiplier)))
+
+        # 情感记忆（重大事件）
+        if abs(event.deep_delta * multiplier) >= 0.5 or event.severity >= 3:
+            self.state.add_memory(
+                event.type,
+                f"{event.detail} (深层信任变化: {event.deep_delta * multiplier:+.1f})"
+            )
 
         # 记录事件
         event.timestamp = now
@@ -346,17 +330,15 @@ class EmotionManager:
             if e.type in types and e.timestamp > cutoff
         )
 
-    # ── 调试接口 ────────────────────────────────────────
+    # ── 调试接口（v2.0：扩展字段） ──────────────────────
 
     def get_debug_info(self) -> dict:
-        """返回调试面板所需的状态信息。"""
+        """返回调试面板所需的状态信息（v2.0）。"""
         return {
-            "needs": self.state.needs.to_dict(),
-            "middle_layer": self.state.middle_layer,
-            "deep_layer": round(self.state.deep_layer, 1),
-            "aggression": round(self.state.aggression, 1),
+            **self.state.get_debug_info(),
             "consecutive_commands": self._consecutive_commands,
-            "hours_since_interaction": round((time.time() - self._last_interaction_time) / 3600, 1),
+            "hours_since_interaction": round(
+                (time.time() - self._last_interaction_time) / 3600, 1),
             "recent_events": [
                 {"type": e.type, "time": e.timestamp, "delta": e.primary_delta,
                  "detail": e.detail, "severity": e.severity}
@@ -371,14 +353,28 @@ class EmotionManager:
                 setattr(self.state.needs, name, max(0, min(100, float(val))))
         self.state.save()
 
+    def set_emotion(self, **kwargs):
+        """手动设置情绪分量（调试用）。"""
+        for name, val in kwargs.items():
+            if hasattr(self.state.emotions, name):
+                setattr(self.state.emotions, name, max(0, min(100, float(val))))
+        self.state.save()
+
+    def set_deep_trust(self, value: float):
+        """手动设置深层信任（调试用）。"""
+        self.state.deep_layer = max(10, min(95, float(value)))
+        self.state.save()
+
     def reset_state(self):
         """重置为初始状态。"""
-        from .state import NeedsState, _DEFAULT_DEEP
+        from .state import NeedsState, EmotionComponents, _DEFAULT_DEEP
         self.state = EmotionalState(
             needs=NeedsState(),
+            emotions=EmotionComponents(),
             deep_layer=_DEFAULT_DEEP,
         )
         self._consecutive_commands = 0
+        self._last_interaction_time = time.time()
         self.state.save()
         logger.info("[情感] 状态已重置为初始值")
 

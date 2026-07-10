@@ -939,13 +939,24 @@ class AgentCore:
                 pool_groups[grp] = items
 
         max_workers = min(8, len(parsed)) if len(parsed) > 0 else 1
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=max_workers)
+        futures = []
+        try:
             # 无锁工具 → 线程池并发
             for item in lock_free:
-                pool.submit(_run_one, item)
+                futures.append(pool.submit(_run_one, item))
             # 池兼容组（如 db_write）→ 线程池内组间并行、组内串行
             for grp, items in pool_groups.items():
-                pool.submit(_run_group, grp, items)
+                futures.append(pool.submit(_run_group, grp, items))
+
+            TOOL_TIMEOUT = 120  # 单个工具最长执行 2 分钟
+            for f in futures:
+                try:
+                    f.result(timeout=TOOL_TIMEOUT)
+                except Exception as e:
+                    print(f"[工具超时] {e}", flush=True)
+        finally:
+            pool.shutdown(wait=False)
         # 线程亲和组 → 调用线程上逐组串行（池已关闭，调用线程空闲）
         for grp in _THREAD_AFFINE_GROUPS:
             items = groups.get(grp)
@@ -961,6 +972,7 @@ class AgentCore:
                     "tool_call_id": item["tc"].id,
                     "content": result,
                 })
+
     def _collect_stream(self, response, on_chunk=None, max_retries=2):
         """收集 litellm 流式响应，拼接成完整 message 对象。
 
@@ -1398,6 +1410,11 @@ class AgentCore:
 
         while iteration < MAX_ITERATIONS:
             iteration += 1
+
+            if self._cancel_event.is_set():
+                print("  [循环终止] 收到取消信号", flush=True)
+                return "（任务已被取消）"
+
             if on_round_start:
                 on_round_start(iteration)
 
