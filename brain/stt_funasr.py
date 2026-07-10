@@ -88,7 +88,10 @@ def transcribe(wav_bytes: bytes, language: str = "zh") -> str:
     Returns:
         识别文本，失败返回空字符串
     """
+    import time as _time
+    _t0 = _time.time()
     model = _load_model()
+    _t1 = _time.time()
     if model is None:
         return ""
 
@@ -97,6 +100,7 @@ def transcribe(wav_bytes: bytes, language: str = "zh") -> str:
     try:
         tmp.write(wav_bytes)
         tmp.close()
+        _t2 = _time.time()
 
         result = model.generate(
             input=tmp.name,
@@ -104,6 +108,8 @@ def transcribe(wav_bytes: bytes, language: str = "zh") -> str:
             use_itn=True,            # 逆文本正则化（数字/日期等）
             ban_emo_unk=True,        # 过滤未知情绪标签
         )
+        _t3 = _time.time()
+        logger.info(f"⏱ FunASR 耗时: 加载={_t1-_t0:.1f}s, 写入={_t2-_t1:.2f}s, 推理={_t3-_t2:.1f}s, 总计={_t3-_t0:.1f}s")
         if result and len(result) > 0:
             text = result[0].get("text", "").strip()
             # 去掉所有 SenseVoice 标签: <|HAPPY|>, <|NEUTRAL|>, <|Speech|>, <|withitn|> 等

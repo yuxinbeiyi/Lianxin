@@ -174,6 +174,48 @@ def get_active_knowledge() -> list[str]:
     return [_skill_registry[n]["knowledge"] for n in _active_skills if _skill_registry[n]["knowledge"]]
 
 
+def get_active_skill_summary() -> str:
+    """获取所有已激活技能的紧凑摘要（名称+一句话描述，每轮对话都注入）。
+    格式：🔧 技能名 — 一句话描述
+    """
+    lines = []
+    for name in sorted(_active_skills):
+        info = _skill_registry.get(name)
+        if not info:
+            continue
+        desc = info.get("description", "")
+        # 截断过长描述
+        if len(desc) > 80:
+            desc = desc[:77] + "..."
+        lines.append(f"🔧 {name} — {desc}")
+    return "\n".join(lines) if lines else ""
+
+
+def get_matching_knowledge(user_message: str) -> str:
+    """根据用户消息关键词匹配，返回相关技能的完整 SKILL.md 知识。
+    只返回匹配到的技能，不匹配则返回空字符串。
+    """
+    if not user_message:
+        return ""
+    msg_lower = user_message.lower()
+    parts = []
+    for name in sorted(_active_skills):
+        info = _skill_registry.get(name)
+        if not info or not info.get("knowledge"):
+            continue
+        # 提取技能关键词：名称 + 描述中的有效词
+        keywords = {name.lower()}
+        desc = info.get("description", "")
+        for word in desc.replace("、", " ").replace("，", " ").replace(",", " ").split():
+            word = word.strip().lower()
+            if len(word) >= 2:
+                keywords.add(word)
+        # 任一关键词命中即匹配
+        if any(kw in msg_lower for kw in keywords):
+            parts.append(info["knowledge"])
+    return "\n\n---\n\n".join(parts) if parts else ""
+
+
 def get_active_tool_definitions() -> list[dict]:
     """获取所有已激活技能的自定义工具定义列表。"""
     result = []

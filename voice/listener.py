@@ -30,11 +30,14 @@ class VoiceListener:
 
     def record(self,
                silence_threshold: float = 0.015,
-               silence_seconds:   float = 1.5,
+               silence_seconds:   float = 1.0,
                max_seconds:       float = 30.0) -> np.ndarray:
         """
         从麦克风录音，检测到持续静音后自动停止。
         返回 float32 numpy 数组（16kHz 单声道）。
+
+        静音阈值自动适配：先用前 0.5 秒采样环境底噪，
+        阈值 = max(底噪×3, silence_threshold)，避免环境噪声导致无法停止。
         """
         self._stop_flag = False
         chunks: list[np.ndarray] = []
@@ -43,6 +46,8 @@ class VoiceListener:
 
         silence_limit = int(silence_seconds * self.SAMPLE_RATE / self.CHUNK_SIZE)
         max_chunks    = int(max_seconds     * self.SAMPLE_RATE / self.CHUNK_SIZE)
+        # 自适应：用前 0.5 秒采样环境底噪
+        noise_sample_chunks = int(0.5 * self.SAMPLE_RATE / self.CHUNK_SIZE)
 
         with sd.InputStream(
             samplerate=self.SAMPLE_RATE,
@@ -50,11 +55,20 @@ class VoiceListener:
             blocksize=self.CHUNK_SIZE,
             dtype="float32",
         ) as stream:
+            # 第一阶段：采样环境底噪（不保存到 chunks）
+            noise_rms_list = []
+            for _ in range(noise_sample_chunks):
+                chunk, _ = stream.read(self.CHUNK_SIZE)
+                noise_rms_list.append(float(np.sqrt(np.mean(chunk ** 2))))
+            noise_rms = np.mean(noise_rms_list) if noise_rms_list else 0.0
+            adaptive_threshold = max(silence_threshold, noise_rms * 3.0)
+            print(f"[VAD] 环境底噪 RMS={noise_rms:.4f}, 自适应阈值={adaptive_threshold:.4f}", flush=True)
+
             while len(chunks) < max_chunks and not self._stop_flag:
                 chunk, _ = stream.read(self.CHUNK_SIZE)
                 rms = float(np.sqrt(np.mean(chunk ** 2)))
 
-                if rms > silence_threshold:
+                if rms > adaptive_threshold:
                     active = True
                     silent_chunks = 0
                     chunks.append(chunk.copy())

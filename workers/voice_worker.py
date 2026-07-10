@@ -38,15 +38,21 @@ class VoiceWorker(QThread):
 
     def run(self):
         try:
+            import time as _time
             self.recording_started.emit()
+            _t0 = _time.time()
             audio = self._listener.record()
+            _t1 = _time.time()
             self.recording_stopped.emit()       # 录音结束，开始识别
+            print(f"[语音] 录音耗时 {_t1-_t0:.1f}s, 音频长度 {len(audio)/16000:.1f}s", flush=True)
 
             if len(audio) == 0:
                 self.error_occurred.emit("未检测到声音，请靠近麦克风再试")
                 return
 
             text = self._listener.transcribe(audio)
+            _t2 = _time.time()
+            print(f"[语音] 识别耗时 {_t2-_t1:.1f}s, 总计 {_t2-_t0:.1f}s", flush=True)
             if text:
                 self.text_ready.emit(text)
             else:

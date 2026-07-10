@@ -1396,7 +1396,7 @@ class MainWindow(QMainWindow):
             return
 
         self._input_panel.set_text(text)
-        self._chat_widget.add_system_tip("已识别，1.5秒后自动发送…")
+        self._chat_widget.add_system_tip("已识别，0.8秒后自动发送…")
         self._is_recording = False
         self._input_panel.set_voice_idle()
 
@@ -1404,11 +1404,11 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_voice_auto_send_timer') and self._voice_auto_send_timer:
             self._voice_auto_send_timer.stop()
 
-        # 1.5 秒后自动发送
+        # 0.8 秒后自动发送
         self._voice_auto_send_timer = QTimer(self)
         self._voice_auto_send_timer.setSingleShot(True)
         self._voice_auto_send_timer.timeout.connect(self._on_mic_auto_send)
-        self._voice_auto_send_timer.start(1500)
+        self._voice_auto_send_timer.start(800)
 
     def _on_voice_error(self, err: str):
         self._is_recording = False

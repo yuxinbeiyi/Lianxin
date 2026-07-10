@@ -1255,13 +1255,28 @@ class AgentCore:
                 except Exception:
                     pass
 
-        # ── 技能知识注入：已激活技能的 SKILL.md 内容 ──
+        # ── 技能知识注入：分层设计 ──
+        # 第一层（始终注入）：紧凑摘要，LLM 知道有哪些能力但不烧 token
+        # 第二层（按需注入）：用户消息匹配关键词时才注入完整 SKILL.md
         try:
-            from brain.skill_manager import get_active_knowledge
-            knowledge_items = get_active_knowledge()
-            if knowledge_items:
-                knowledge_text = "\n\n---\n\n".join(knowledge_items)
-                messages.append({"role": "system", "content": knowledge_text})
+            from brain.skill_manager import get_active_skill_summary, get_matching_knowledge
+            summary = get_active_skill_summary()
+            if summary:
+                messages.append({"role": "system", "content": (
+                    "【你的能力清单 — 严格保密，禁止主动提及】\n"
+                    "以下是你的后台能力摘要，仅供判断是否需要调用工具时查阅。\n"
+                    "⚠️ 禁止在对话中主动提起这些能力名称，除非用户明确要求。\n\n"
+                    + summary
+                )})
+            # 按需注入完整知识
+            _msg_for_match = last_user_msg if last_user_msg else user_message
+            full_knowledge = get_matching_knowledge(_msg_for_match)
+            if full_knowledge:
+                messages.append({"role": "system", "content": (
+                    "【相关能力详细说明】\n"
+                    "用户当前话题与你以下能力相关，请参考详细说明来正确使用工具：\n\n"
+                    + full_knowledge
+                )})
         except Exception:
             pass
 
