@@ -277,7 +277,7 @@ def main():
                     _check_report = format_report(results)
                     print(_check_report, flush=True)
                 else:
-                    print("  全部通过 ✅", flush=True)
+                    print("  全部通过", flush=True)
             else:
                 print("[启动体检] 已跳过（设置中关闭）", flush=True)
         except Exception as e:
@@ -298,12 +298,14 @@ def main():
     activate_all_skills()
 
     # ── 初始化 MCP 系统 ──────────────────────────────────
-    from brain.mcp.mcp_manager import get_mcp_manager
-    _mcp_mgr = get_mcp_manager()
-    _mcp_mgr.initialize()
-
-    import atexit
-    atexit.register(_mcp_mgr.shutdown)
+    try:
+        from brain.mcp.mcp_manager import get_mcp_manager
+        _mcp_mgr = get_mcp_manager()
+        _mcp_mgr.initialize()
+        import atexit
+        atexit.register(_mcp_mgr.shutdown)
+    except Exception as e:
+        print(f"[MCP] 初始化失败，MCP 功能已禁用: {e}")
 
 
     # ── QQ 桥接（由 MainWindow 管理，详见 main_window.py）─────

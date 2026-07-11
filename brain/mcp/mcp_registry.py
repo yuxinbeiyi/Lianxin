@@ -95,7 +95,12 @@ def scan_mcp_services(mcp_dir: str = None) -> List[str]:
 
             MANIFEST_CACHE[service_name] = manifest
 
-            agent = _create_agent(manifest, manifest_file.parent)
+            try:
+                agent = _create_agent(manifest, manifest_file.parent)
+            except Exception as e:
+                logger.error(f"[MCP] 创建 Agent 失败: {service_name} → {e}")
+                continue
+
             if agent:
                 MCP_REGISTRY[service_name] = agent
                 registered.append(service_name)

@@ -74,7 +74,7 @@ def _extract_json(raw: str) -> str:
         # 重新计算
         open_count = raw.count("{") - raw.count("}")
         raw += "}" * max(open_count, 0)
-        print(f"   🔧 [AutoTaskParser] JSON 截断，自动补全 {max(open_count, 0)} 个括号")
+        print(f"   [AutoTaskParser] JSON 截断，自动补全 {max(open_count, 0)} 个括号")
     return raw
 
 
@@ -101,9 +101,9 @@ def _call_llm_for_parse(user_text: str, model: str, api_cfg: dict, system_text: 
         if content:
             print(f"   [AutoTaskParser] litellm 返回 {len(content)} 字")
             return content
-        print(f"   ⚠️ [AutoTaskParser] litellm 返回空内容，降级 requests...")
+        print(f"   [AutoTaskParser] litellm 返回空内容，降级 requests...")
     except Exception as e:
-        print(f"   ⚠️ [AutoTaskParser] litellm 调用失败: {e}，降级 requests...")
+        print(f"   [AutoTaskParser] litellm 调用失败: {e}，降级 requests...")
 
     # 方案 B：requests 直调 DeepSeek API
     try:
@@ -132,14 +132,14 @@ def _call_llm_for_parse(user_text: str, model: str, api_cfg: dict, system_text: 
                 if content:
                     print(f"   [AutoTaskParser] requests 返回 {len(content)} 字")
                     return content
-                print(f"   ❌ [AutoTaskParser] content 为空字符串")
+                print(f"   [AutoTaskParser] content 为空字符串")
             except (KeyError, IndexError, TypeError) as e:
-                print(f"   ❌ [AutoTaskParser] 响应结构异常: {e}")
+                print(f"   [AutoTaskParser] 响应结构异常: {e}")
                 print(f"   📦 完整响应(前500字): {resp.text[:500]}")
         else:
-            print(f"   ❌ [AutoTaskParser] requests 失败: {resp.status_code} {resp.text[:200]}")
+            print(f"   [AutoTaskParser] requests 失败: {resp.status_code} {resp.text[:200]}")
     except Exception as e:
-        print(f"   ❌ [AutoTaskParser] requests 异常: {e}")
+        print(f"   [AutoTaskParser] requests 异常: {e}")
 
     return ""
 # ── LLM 常用工具名 → 实际工具名映射 ──
@@ -199,17 +199,17 @@ def _parse_to_task(user_text: str) -> dict:
             return json.loads(json_str)
         except json.JSONDecodeError as e:
             logger.warning(f"LLM 返回非 JSON (尝试 {attempt+1}/2): {raw[:200]}")
-            print(f"   ⚠️ [AutoTaskParser] 第{attempt+1}次 JSON 解析失败: {e}")
+            print(f"   [AutoTaskParser] 第{attempt+1}次 JSON 解析失败: {e}")
             if attempt == 0:
                 # 重试时加强提示
                 system_text += "\n\n⚠️ 重要：你上次输出不是合法 JSON。这次请只输出纯 JSON，不要任何 markdown 标记、注释或额外文字。"
         except Exception as e:
             logger.error(f"LLM 解析失败: {e}")
-            print(f"   ❌ [AutoTaskParser] LLM 调用异常: {e}")
+            print(f"   [AutoTaskParser] LLM 调用异常: {e}")
             raise
 
     # 降级：规则兜底
-    print(f"   🔧 [AutoTaskParser] LLM 两次均失败，启用规则降级...")
+    print(f"   [AutoTaskParser] LLM 两次均失败，启用规则降级...")
     return _fallback_parse(user_text)
 
 
@@ -274,7 +274,7 @@ def _fallback_parse(user_text: str) -> dict:
 
     动作由执行时的 ReAct Agent 根据 description 自主决定。
     """
-    print(f"   🔧 [AutoTaskParser] 规则降级中（仅提取调度信息）...")
+    print(f"   [AutoTaskParser] 规则降级中（仅提取调度信息）...")
 
     # 提取时间
     schedule_type = "once"
@@ -286,7 +286,7 @@ def _fallback_parse(user_text: str) -> dict:
     if advance_seconds > 0:
         target = datetime.now() + timedelta(seconds=advance_seconds)
         schedule_time = target.strftime("%H:%M")
-        print(f"   ⏱ [AutoTaskParser] 延迟 {advance_seconds}s → 目标时间 {schedule_time}")
+        print(f"   [AutoTaskParser] 延迟 {advance_seconds}s -> 目标时间 {schedule_time}")
 
     # 匹配周期
     if re.search(r'每天|每日', user_text):
@@ -312,7 +312,7 @@ def _fallback_parse(user_text: str) -> dict:
         "missed_action": "ask",
         "actions": [],  # ReAct Agent 在运行时动态决定
     }
-    print(f"   ✅ [AutoTaskParser] 降级结果: {json.dumps(result, ensure_ascii=False)[:200]}")
+    print(f"   [AutoTaskParser] 降级结果: {json.dumps(result, ensure_ascii=False)[:200]}")
     return result
 
 
@@ -322,11 +322,11 @@ def parse_auto_task(user_text: str) -> AutoTask:
     只提取调度信息（时间、频率、名称、描述）。
     工具执行由运行时的 ReAct Agent 根据 task.description 动态决定。
     """
-    print(f"\n🧠 [AutoTaskParser] 开始解析自然语言指令...")
+    print(f"\n[AutoTaskParser] 开始解析自然语言指令...")
     print(f"   用户输入: {user_text[:120]}")
     parsed = _parse_to_task(user_text)
 
-    print(f"📋 [AutoTaskParser] 解析结果:")
+    print(f"[AutoTaskParser] 解析结果:")
     print(f"   任务名称: {parsed.get('name', '未命名')}")
     print(f"   调度类型: {parsed.get('schedule_type', 'once')}")
     print(f"   调度时间: {parsed.get('schedule_time', 'N/A')}")
@@ -344,7 +344,7 @@ def parse_auto_task(user_text: str) -> AutoTask:
         if advance_seconds > 0:
             target = datetime.now() + timedelta(seconds=advance_seconds)
             schedule_time = target.strftime("%H:%M")
-            print(f"   ⏱ [AutoTaskParser] LLM 未给时间，从文本提取: +{advance_seconds}s → {schedule_time}")
+            print(f"   [AutoTaskParser] LLM 未给时间，从文本提取: +{advance_seconds}s -> {schedule_time}")
         else:
             # 默认 1 分钟后
             target = datetime.now() + timedelta(seconds=60)
@@ -367,7 +367,7 @@ def parse_auto_task(user_text: str) -> AutoTask:
     )
 
     task.next_run = task.compute_next_run()
-    print(f"✅ [AutoTaskParser] 任务对象已创建，下次执行: {task.next_run}\n")
+    print(f"[AutoTaskParser] 任务对象已创建，下次执行: {task.next_run}\n")
     return task
 
 

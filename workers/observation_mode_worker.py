@@ -126,7 +126,7 @@ class ObservationModeWorker(QThread):
             # 拍照失败：记录循环次数防止忙等，连续超阈值则退出
             self._consecutive_failures += 1
             self._cycle_limiter.record_cycle()
-            print(f"[观察模式] ⚠ 拍照失败 ({self._consecutive_failures}/{self._max_consecutive_failures})")
+            print(f"[观察模式] 拍照失败 ({self._consecutive_failures}/{self._max_consecutive_failures})")
             if self._consecutive_failures >= self._max_consecutive_failures:
                 self._safe_exit(
                     "连续多次拍照失败，请检查肩载设备状态，退出【观察模式】"
@@ -314,7 +314,7 @@ class ObservationModeWorker(QThread):
             model = cfg["model"]
 
         if not api_key:
-            print("[观察模式] ⚠ 无 API Key，使用原始描述")
+            print("[观察模式] 无 API Key，使用原始描述")
             return _truncate(description)
 
         try:
@@ -349,11 +349,11 @@ class ObservationModeWorker(QThread):
                 return msg
 
             # LLM 返回了空内容 → 降级
-            print("[观察模式] ⚠ LLM 返回空，降级使用原始描述")
+            print("[观察模式] LLM 返回空，降级使用原始描述")
             # 给原始描述加个简短的前缀，让它看起来不像是"直接输出"
             return f"我看到啦——{_truncate(description)}"
         except Exception as e:
-            print(f"[观察模式] ⚠ LLM 生成失败 ({e})，降级使用原始描述")
+            print(f"[观察模式] LLM 生成失败 ({e})，降级使用原始描述")
             return f"我看到啦——{_truncate(description)}"
 
     def _send_observation(self, photo_path: str, message: str):
@@ -365,7 +365,7 @@ class ObservationModeWorker(QThread):
         # 限速等待（每分钟 2 张图）
         wait = self._rate_limiter.wait_time()
         if wait > 0:
-            print(f"[观察模式] ⏳ 图片限速等待 {wait:.0f} 秒")
+            print(f"[观察模式] 图片限速等待 {wait:.0f} 秒")
             self._interruptible_sleep(wait)
 
         if not self._state.is_active:
@@ -398,7 +398,7 @@ class ObservationModeWorker(QThread):
             if status and isinstance(status, dict):
                 heap = status.get("free_heap", 99999)
                 if heap < 20000:
-                    print(f"[观察模式] ⚠ ESP32 内存不足: {heap} bytes")
+                    print(f"[观察模式] ESP32 内存不足: {heap} bytes")
                     return False
             return True
         except Exception as e:

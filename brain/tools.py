@@ -238,14 +238,14 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "directory": {
                         "type": "string",
-                        "description": "搜索的目录路径"
+                        "description": "搜索的目录路径，默认用户主目录"
                     },
                     "keyword": {
                         "type": "string",
                         "description": "要搜索的关键词（文件名模糊匹配）"
                     }
                 },
-                "required": ["directory", "keyword"]
+                "required": ["keyword"]
             }
         }
     },
@@ -878,7 +878,7 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "directory": {
                         "type": "string",
-                        "description": "要搜索的根目录路径"
+                        "description": "要搜索的根目录路径，默认用户主目录"
                     },
                     "pattern": {
                         "type": "string",
@@ -889,7 +889,7 @@ TOOL_DEFINITIONS = [
                         "description": "最多返回的结果数量，默认 50"
                     }
                 },
-                "required": ["directory", "pattern"]
+                "required": ["pattern"]
             }
         }
     },
@@ -3109,13 +3109,16 @@ finally:
     print(output, end='')
 """
     try:
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
         result = subprocess.run(
             [sys.executable, "-c", sandbox_script],
             capture_output=True,
             text=True,
             timeout=timeout,
             encoding="utf-8",
-            errors="replace"
+            errors="replace",
+            env=env
         )
         out = result.stdout.strip()
         err = result.stderr.strip()
@@ -4678,7 +4681,7 @@ TOOL_EXECUTORS = {
     "read_file_chunk": lambda inp: read_file_chunk(inp["path"], int(inp["chunk_index"])),
     "write_file":      lambda inp: write_file(inp["path"], inp["content"]),
     "list_directory": lambda inp: list_directory(inp.get("path", "")),
-    "search_files":   lambda inp: search_files(inp["directory"], inp["keyword"]),
+    "search_files":   lambda inp: search_files(inp.get("directory", os.path.expanduser("~")), inp["keyword"]),
     "search_files_everything": lambda inp: search_files_everything(
         inp["keyword"],
         inp.get("ext", ""),
@@ -4710,7 +4713,7 @@ TOOL_EXECUTORS = {
     "edit_file":       lambda inp: edit_file(inp["path"], inp["old_string"], inp["new_string"], inp.get("replace_all", False)),
     "grep_file":       lambda inp: grep_file(inp["path"], inp["keyword"], inp.get("context_lines", 2)),
     "read_file_lines": lambda inp: read_file_lines(inp["path"], int(inp["start_line"]), int(inp["end_line"]) if inp.get("end_line") is not None else None),
-    "glob_files":      lambda inp: glob_files(inp["directory"], inp["pattern"], inp.get("max_results", 50)),
+    "glob_files":      lambda inp: glob_files(inp.get("directory", os.path.expanduser("~")), inp["pattern"], inp.get("max_results", 50)),
     "ocr_image": lambda inp: ocr_image(inp["image_path"], inp.get("language", "chi_sim+eng")),
     "ocr_batch": lambda inp: ocr_batch(inp["folder_path"], inp.get("language", "chi_sim+eng")),
     "describe_image": lambda inp: describe_image(inp["image_path"], inp.get("prompt", "")),
@@ -4930,15 +4933,27 @@ def execute_tool(name: str, tool_input: dict) -> str:
             ex = TOOL_EXECUTORS.get(name_to_run)
             if not ex:
                 return f"未知工具: {name_to_run}"
-            return ex(args_to_run)
+            try:
+                return ex(args_to_run)
+            except KeyError as ke:
+                return f"参数错误：缺少必需参数 '{ke.args[0]}'，请检查工具定义后重新调用"
+            except TypeError as te:
+                return f"参数错误：{te}，请检查参数名和类型是否正确"
 
-        if should_recover(name):
-            result, retries, log = execute_with_recovery(name, tool_input, _exec)
-            if log:
-                pass  # 恢复日志由 AgentCore._execute_tool_calls_parallel 中的 print 输出
-            return result
-        else:
-            return executor(tool_input)
+        try:
+            if should_recover(name):
+                result, retries, log = execute_with_recovery(name, tool_input, _exec)
+                if log:
+                    pass
+                return result
+            else:
+                return executor(tool_input)
+        except KeyError as ke:
+            success = False
+            return f"参数错误：缺少必需参数 '{ke.args[0]}'，请检查工具定义后重新调用"
+        except TypeError as te:
+            success = False
+            return f"参数错误：{te}，请检查参数名和类型是否正确"
     except Exception:
         success = False
         raise

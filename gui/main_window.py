@@ -3637,7 +3637,7 @@ class MainWindow(QMainWindow):
                         frame = sys._current_frames().get(t.ident)
                         if frame:
                             stacks = "".join(traceback.format_stack(frame))
-                            print(f"[看门狗] 🔴 仍在卡顿中 ({elapsed:.0f}s) 堆栈：\n{stacks}")
+                            print(f"[看门狗] 仍在卡顿中 ({elapsed:.0f}s) 堆栈：\n{stacks}")
                         break
 
     def _check_reminders(self):

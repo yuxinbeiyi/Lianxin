@@ -239,48 +239,51 @@ def filter_builtin_tools(all_tools: List[dict], user_message: str) -> List[dict]
 
 def build_tool_catalog(loaded_categories: Set[str],
                        skill_tool_names: list = None,
-                       mcp_tool_names: list = None) -> str:
+                       mcp_tool_names: list = None,
+                       disabled_tool_names: set = None,
+                       skill_mcp_active: bool = False) -> str:
     """构建工具目录 system 消息。
 
-    目录始终列出所有工具，但用 ✅/📋 区分已加载和未加载。
+    ✅ = 已加载完整定义，可直接调用
+    📋 = 仅目录可见，需在回复中说出工具名才会激活
+    skill_mcp_active=True 时技能/MCP 也标为 ✅（重试全量注入模式）
     """
+    disabled = disabled_tool_names or set()
+    skill_names = skill_tool_names or []
+    mcp_names = mcp_tool_names or []
+
     lines = [
-        "【你的工具目录】",
-        "你拥有以下工具能力。标有 ✅ 的工具当前已加载完整参数，可直接调用。",
-        "标有 📋 的工具仅目录可见——如需使用，请在回复中说明，我会立即激活对应工具。",
-        "",
+        "【工具目录】✅=已加载 📋=说出工具名即可激活",
     ]
 
     # 核心工具
     core_names = sorted(CORE_TOOLS)
-    core_desc = "、".join(
-        f"{n}({TOOL_DESCRIPTIONS.get(n, '')})" for n in core_names
-    )
-    lines.append(f"✅ 核心工具（始终可用）：{core_desc}")
-    lines.append("")
+    lines.append(f"✅ 核心({len(core_names)}): {', '.join(core_names)}")
 
     # 领域工具
     for cat in CATEGORY_ORDER:
         tools = sorted(CATEGORY_TOOLS[cat])
+        tools = [t for t in tools if t not in disabled]
+        if not tools:
+            continue
         count = len(tools)
         name = CATEGORY_NAMES[cat]
         prefix = "✅" if cat in loaded_categories else "📋"
-        tool_list = "、".join(
-            f"{t}({TOOL_DESCRIPTIONS.get(t, '')})" for t in tools
-        )
-        lines.append(f"{prefix} {name}（{count}个）：{tool_list}")
+        lines.append(f"{prefix} {name}({count}): {', '.join(tools)}")
 
-    # 技能工具（用户激活的服务，始终可用）
-    if skill_tool_names:
-        lines.append("")
-        lines.append(f"✅ 技能服务（{len(skill_tool_names)}个，始终可用）："
-                     + "、".join(skill_tool_names))
+    # 技能工具
+    if skill_names:
+        skill_names = [n for n in skill_names if n not in disabled]
+        if skill_names:
+            prefix = "✅" if skill_mcp_active else "📋"
+            lines.append(f"{prefix} 技能({len(skill_names)}): {', '.join(skill_names)}")
 
-    # MCP 工具（用户激活的外部服务，始终可用）
-    if mcp_tool_names:
-        lines.append("")
-        lines.append(f"✅ MCP服务（{len(mcp_tool_names)}个，始终可用）："
-                     + "、".join(mcp_tool_names))
+    # MCP 工具
+    if mcp_names:
+        mcp_names = [n for n in mcp_names if n not in disabled]
+        if mcp_names:
+            prefix = "✅" if skill_mcp_active else "📋"
+            lines.append(f"{prefix} MCP({len(mcp_names)}): {', '.join(mcp_names)}")
 
     return "\n".join(lines)
 
@@ -288,19 +291,41 @@ def build_tool_catalog(loaded_categories: Set[str],
 def detect_tool_request(response_text: str) -> bool:
     """检测模型回复是否暗示需要未激活的工具。
 
-    如果模型说"我没有这个工具"、"需要...工具"等，返回 True。
+    触发条件：
+    1. 模型明确说"我没有这个工具"、"需要...工具"等
+    2. 模型表达了使用意图但工具未激活（如"让我搜索一下"）
     """
     if not response_text:
         return False
 
-    patterns = [
+    import re
+
+    # 明确表达缺少工具
+    missing_patterns = [
         "我没有这个工具", "我没有对应的工具", "没有这个功能",
         "需要.*工具", "缺少.*工具", "无法调用",
         "没有.*权限", "没有.*能力",
         "请激活", "需要激活",
+        "我无法", "我不能", "我没法",
+        "暂时没有", "目前没有",
     ]
-    import re
-    for p in patterns:
+    for p in missing_patterns:
         if re.search(p, response_text):
             return True
+
+    # 表达了工具使用意图（但可能因为工具未激活而无法调用）
+    intent_keywords = [
+        "让我搜索", "我来搜索", "帮你搜索", "搜一下",
+        "让我查", "我来查", "帮你查", "查一下",
+        "让我打开", "我来打开", "帮你打开",
+        "让我看看", "我看一下", "让我拍",
+        "让我读取", "我来读取", "读取文件",
+        "让我写", "我来写", "写入文件",
+        "浏览器", "打开网页", "截图",
+        "执行命令", "运行代码",
+    ]
+    for kw in intent_keywords:
+        if kw in response_text:
+            return True
+
     return False

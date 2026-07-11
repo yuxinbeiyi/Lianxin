@@ -1383,8 +1383,8 @@ class AgentCore:
 
             # 筛选内置工具：核心 + 命中领域
             filtered_builtin = filter_builtin_tools(TOOL_DEFINITIONS, _msg_for_match)
-            # 技能/MCP 工具始终注入（用户自行激活的服务，不参与按需过滤）
-            all_tools = filtered_builtin + skill_tools + mcp_tools
+            # 技能/MCP 工具按需注入（不默认加载，模型主动点名后才注入）
+            all_tools = filtered_builtin
 
             # 用户禁用的工具过滤
             from config import get_builtin_tool_config
@@ -1396,13 +1396,14 @@ class AgentCore:
                     if t.get("function", {}).get("name", "") not in disabled_tool_names
                 ]
 
-            # 注入工具目录（让模型知道全部工具，✅/📋 区分已加载/未加载）
+            # 注入工具目录（技能/MCP 标为 📋，模型主动点名后才注入）
             _skill_names = [t.get("function", {}).get("name", "?") for t in skill_tools]
             _mcp_names = [t.get("function", {}).get("name", "?") for t in mcp_tools]
             catalog_text = build_tool_catalog(
                 loaded_categories,
                 skill_tool_names=_skill_names if _skill_names else None,
                 mcp_tool_names=_mcp_names if _mcp_names else None,
+                disabled_tool_names=disabled_tool_names,
             )
             messages.append({"role": "system", "content": catalog_text})
 
@@ -1470,12 +1471,18 @@ class AgentCore:
                     return f"（API 调用失败：{e}）"
 
 
-        MAX_ITERATIONS = 50          # 安全网，正常不会触发
+        MAX_ITERATIONS = 20          # 绝对安全上限，正常不会触发
+        SOFT_LIMIT = 8               # 第N轮：让模型自评估进度
+        URGENT_LIMIT = 15            # 第N轮：强制收尾提示（必须在3轮内完成）
         TODO_CHECK_INTERVAL = 6      # 每N轮检查一次进度
         DEAD_LOOP_THRESHOLD = 3      # 连续相同结果N次判定为死循环
 
         iteration = 0
         last_round_summaries: list[str] = []   # 最近N轮工具结果摘要
+        last_round_fingerprints: list[str] = []  # 最近N轮工具调用指纹（只对比调用，不受结果变化干扰）
+        _full_tools_injected = False           # 防止工具激活无限重试
+        _soft_limit_triggered = False          # 自评估提示只发一次
+        _urgent_limit_triggered = False        # 收尾提示只发一次
 
         # ── 复杂度判断：用户消息超过80字视为复杂任务 ──
         is_complex = len(self.history[-1]["content"]) > 80 if self.history else False
@@ -1502,8 +1509,33 @@ class AgentCore:
                     ),
                 })
 
-            # ── 接近安全网上限时才软提示 ──
-            if iteration >= MAX_ITERATIONS - 3:
+            # ── 分层收尾提示（动态评估，不硬截断） ──
+            # 第8轮：让模型自评估是否需要继续
+            if iteration >= SOFT_LIMIT and not _soft_limit_triggered:
+                _soft_limit_triggered = True
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "【进度评估 — 第{iteration}轮】\n"
+                        "你已经执行了{iteration}轮工具调用。请判断：\n"
+                        "- 当前任务还需要几轮才能完成？如果接近完成，请直接给出最终回答。\n"
+                        "- 如果确实还需要更多轮次，请继续调用工具，但尽量高效推进。"
+                    ).format(iteration=iteration),
+                })
+            # 第15轮：强制收尾
+            if iteration >= URGENT_LIMIT and not _urgent_limit_triggered:
+                _urgent_limit_triggered = True
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "【收尾提示 — 第{iteration}轮】\n"
+                        "已接近最大工具调用次数({max_iter}轮)。\n"
+                        "请必须在3轮内完成当前任务，基于已有信息给出最终回答。\n"
+                        "不要再调用非必需工具，用最精炼的方式总结即可。"
+                    ).format(iteration=iteration, max_iter=MAX_ITERATIONS),
+                })
+            # 最后3轮：强制收尾（与旧逻辑兼容）
+            elif iteration >= MAX_ITERATIONS - 3 and not _urgent_limit_triggered:
                 messages.append({
                     "role": "system",
                     "content": (
@@ -1576,23 +1608,26 @@ class AgentCore:
                 self._last_reasoning = reasoning
 
             if finish == "stop" or finish == "length":
-                # 工具激活重试：模型暗示需要未加载的工具
-                if (not self._use_local and loaded_categories
+                # 工具激活重试：模型暗示需要未加载的工具（仅触发一次）
+                if (not self._use_local and not _full_tools_injected
                         and detect_tool_request(content or "")):
+                    _full_tools_injected = True
                     print("[工具激活] 检测到模型需要未激活工具，全量注入重试", flush=True)
                     loaded_categories = set(CATEGORY_ORDER)  # 全部激活
                     all_tools = TOOL_DEFINITIONS + skill_tools + mcp_tools
                     if disabled_tool_names:
                         all_tools = [t for t in all_tools
                                      if t.get("function", {}).get("name", "") not in disabled_tool_names]
-                    # 替换最后一条目录消息为全量激活版
+                    # 替换最后一条目录消息为全量激活版（技能/MCP 也标 ✅）
                     catalog_text = build_tool_catalog(
                         loaded_categories,
                         skill_tool_names=_skill_names if _skill_names else None,
                         mcp_tool_names=_mcp_names if _mcp_names else None,
+                        disabled_tool_names=disabled_tool_names,
+                        skill_mcp_active=True,
                     )
                     for i in range(len(messages) - 1, -1, -1):
-                        if messages[i].get("content", "").startswith("【你的工具目录】"):
+                        if messages[i].get("content", "").startswith("【工具目录】"):
                             messages[i] = {"role": "system", "content": catalog_text}
                             break
                     continue
@@ -1643,9 +1678,7 @@ class AgentCore:
                 if forced_tool:
                     forced_tool = None
 
-                # ── 死循环检测 ────────────────────────────
-
-                # ── 死循环检测 ────────────────────────────
+                # ── 死循环检测（结果对比） ────────────
                 prev_msg_count = len(messages) - len(fake_tool_calls)
 
                 new_summaries = []
@@ -1658,17 +1691,38 @@ class AgentCore:
                     if len(last_round_summaries) > DEAD_LOOP_THRESHOLD:
                         last_round_summaries.pop(0)
 
-                if len(last_round_summaries) >= DEAD_LOOP_THRESHOLD and last_round_summaries[0]:
-                    if len(set(last_round_summaries)) == 1:
-                        print(f"  [死循环检测] 连续{DEAD_LOOP_THRESHOLD}轮相同结果，强制终止",
-                              flush=True)
-                        messages.append({
-                            "role": "system",
-                            "content": (
-                                "⚠️ 检测到连续多轮返回相同结果，可能陷入循环。"
-                                "请停止调用工具，基于已有信息直接给出最终回答。"
-                            ),
-                        })
+                # ── 死循环检测（调用指纹对比） ──────────
+                # 对比工具调用指纹而非结果文本，避免 get_current_time 等时间变化工具干扰
+                _round_fingerprint = "|".join(sorted(
+                    f"{tc.function.name}({tc.function.arguments})"
+                    for tc in fake_tool_calls
+                ))
+                last_round_fingerprints.append(_round_fingerprint)
+                if len(last_round_fingerprints) > DEAD_LOOP_THRESHOLD:
+                    last_round_fingerprints.pop(0)
+
+                _dead_loop_by_result = (
+                    len(last_round_summaries) >= DEAD_LOOP_THRESHOLD
+                    and last_round_summaries[0]
+                    and len(set(last_round_summaries)) == 1
+                )
+                _dead_loop_by_fingerprint = (
+                    len(last_round_fingerprints) >= DEAD_LOOP_THRESHOLD
+                    and _round_fingerprint
+                    and len(set(last_round_fingerprints)) == 1
+                )
+
+                if _dead_loop_by_result or _dead_loop_by_fingerprint:
+                    _reason = "连续相同结果" if _dead_loop_by_result else "连续相同工具调用"
+                    print(f"  [死循环检测] {_reason}，连续{DEAD_LOOP_THRESHOLD}轮，强制终止",
+                          flush=True)
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "⚠️ 检测到连续多轮返回相同结果，可能陷入循环。"
+                            "请停止调用工具，基于已有信息直接给出最终回答。"
+                        ),
+                    })
 
                 # ── 进度检查（复杂任务每N轮确认一次） ──────
                 if is_complex and iteration % TODO_CHECK_INTERVAL == 0 and iteration > 1:

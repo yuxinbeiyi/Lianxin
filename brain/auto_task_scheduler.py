@@ -30,7 +30,7 @@ class AutoTaskScheduler(QThread):
     def run(self):
         self._running = True
         logger.info("[AutoTaskScheduler] 调度线程已启动，检查间隔: 30s")
-        print("⏰ [AutoTaskScheduler] 调度线程已启动，检查间隔: 30s")
+        print("[AutoTaskScheduler] 调度线程已启动，检查间隔: 30s")
 
         self._cleanup_check_count = 0
 
@@ -46,14 +46,14 @@ class AutoTaskScheduler(QThread):
                         self.status_changed.emit()
             except Exception as e:
                 logger.error(f"[AutoTaskScheduler] 检查异常: {e}")
-                print(f"❌ [AutoTaskScheduler] 检查异常: {e}")
+                print(f"[AutoTaskScheduler] 检查异常: {e}")
 
             self.msleep(self._check_interval_ms)
 
     def stop(self):
         self._running = False
         logger.info("[AutoTaskScheduler] 调度线程已停止")
-        print("⏹ [AutoTaskScheduler] 调度线程已停止")
+        print("[AutoTaskScheduler] 调度线程已停止")
 
     def _check_due_tasks(self):
         from brain.auto_task_executor import _running_tasks as _exec_running
@@ -61,10 +61,10 @@ class AutoTaskScheduler(QThread):
         # 过滤掉正在执行中的任务，避免日志轰炸
         due = [t for t in due if t.task_id not in _exec_running]
         if due:
-            print(f"📋 [AutoTaskScheduler] 本轮检查发现 {len(due)} 个到期任务")
+            print(f"[AutoTaskScheduler] 本轮检查发现 {len(due)} 个到期任务")
         for task in due:
             logger.info(f"[AutoTaskScheduler] 任务到期: {task.name} (ID: {task.task_id})")
-            print(f"🔔 [AutoTaskScheduler] 任务到期 → {task.name} (ID:{task.task_id})")
+            print(f"[AutoTaskScheduler] 任务到期 -> {task.name} (ID:{task.task_id})")
             self.task_due.emit(task)
 
     def _check_missed_tasks(self):
@@ -74,9 +74,9 @@ class AutoTaskScheduler(QThread):
             return
         missed = self._manager.get_missed_tasks()
         if missed:
-            print(f"⚠️ [AutoTaskScheduler] 发现 {len(missed)} 个错过任务")
+            print(f"[AutoTaskScheduler] 发现 {len(missed)} 个错过任务")
         for task in missed:
             self._manager.mark_asked(task.task_id)
             logger.info(f"[AutoTaskScheduler] 错过任务: {task.name} (ID: {task.task_id})")
-            print(f"⏳ [AutoTaskScheduler] 错过任务 → {task.name} (ID:{task.task_id})，将询问用户")
+            print(f"[AutoTaskScheduler] 错过任务 -> {task.name} (ID:{task.task_id})，将询问用户")
             self.task_missed.emit(task)

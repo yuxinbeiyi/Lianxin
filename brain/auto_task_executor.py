@@ -67,7 +67,7 @@ def cancel_task(task_id: str) -> bool:
         if task_id in _running_tasks:
             _cancel_flags[task_id] = True
             logger.info(f"任务 {task_id} 已标记取消")
-            print(f"🛑 [AutoTaskExecutor] 任务 {task_id} 已标记取消")
+            print(f"[AutoTaskExecutor] 任务 {task_id} 已标记取消")
             return True
         return False
 
@@ -187,13 +187,13 @@ def _run_react_agent(task: AutoTask,
         {"role": "user", "content": f"请执行以下任务：\n\n{task.description}"},
     ]
 
-    print(f"🧠 [ReAct] 开始执行，可用工具 {len(all_tools)} 个，模型 {model}")
+    print(f"[ReAct] 开始执行，可用工具 {len(all_tools)} 个，模型 {model}")
     print(f"   任务: {task.description[:120]}")
 
     for iteration in range(_REACT_MAX_ITERATIONS):
         # ── 取消检查 ──
         if cancel_check():
-            print(f"🛑 [ReAct] 第{iteration+1}轮前检测到取消")
+            print(f"[ReAct] 第{iteration+1}轮前检测到取消")
             return "[CANCELLED] 用户取消"
 
         # ── 调用 LLM ──
@@ -218,7 +218,7 @@ def _run_react_agent(task: AutoTask,
                 llm_error = str(e)
                 if retry < 2 and _is_network_error(e):
                     delay = 1.5 * (retry + 1)
-                    print(f"   ⚠️ [ReAct] LLM 网络错误 (尝试{retry+1}/3)，{delay}s 后重试: {e}")
+                    print(f"   [ReAct] LLM 网络错误 (尝试{retry+1}/3)，{delay}s 后重试: {e}")
                     for _ in range(int(delay)):
                         time.sleep(1)
                         if cancel_check():
@@ -227,7 +227,7 @@ def _run_react_agent(task: AutoTask,
                     break
 
         if not llm_success:
-            print(f"   ❌ [ReAct] LLM 调用失败: {llm_error}")
+            print(f"   [ReAct] LLM 调用失败: {llm_error}")
             return f"[API_ERROR] LLM 调用失败: {llm_error[:200]}"
 
         choice = response.choices[0]
@@ -239,16 +239,16 @@ def _run_react_agent(task: AutoTask,
         tool_calls = getattr(msg, "tool_calls", None)
 
         if content and not tool_calls:
-            print(f"   ✅ [ReAct] 第{iteration+1}轮 LLM 返回文本({len(content)}字): {content[:150]}")
+            print(f"   [ReAct] 第{iteration+1}轮 LLM 返回文本({len(content)}字): {content[:150]}")
             return content
 
         if finish == "stop" and not tool_calls:
-            print(f"   ✅ [ReAct] 第{iteration+1}轮 finish=stop: {content[:150] if content else '(空)'}")
+            print(f"   [ReAct] 第{iteration+1}轮 finish=stop: {content[:150] if content else '(空)'}")
             return content if content else "任务完成"
 
         # ── 无 tool_calls 且无内容 → 尝试推进 ──
         if not tool_calls:
-            print(f"   ⚠️ [ReAct] 第{iteration+1}轮无 tool_calls 无内容，finish={finish}")
+            print(f"   [ReAct] 第{iteration+1}轮无 tool_calls 无内容，finish={finish}")
             # 给 LLM 一个推动
             if finish == "length":
                 messages.append({"role": "assistant", "content": content or ""})
@@ -267,13 +267,13 @@ def _run_react_agent(task: AutoTask,
             except json.JSONDecodeError:
                 tool_params = {}
 
-            print(f"   🔧 [ReAct] 第{iteration+1}轮 调用: {tool_name}({json.dumps(tool_params, ensure_ascii=False)[:120]})")
+            print(f"   [ReAct] 第{iteration+1}轮 调用: {tool_name}({json.dumps(tool_params, ensure_ascii=False)[:120]})")
 
             try:
                 tool_result = execute_tool(tool_name, tool_params)
             except Exception as e:
                 tool_result = f"[ERROR] 工具执行异常: {e}"
-                print(f"   💥 [ReAct] {tool_name} 异常: {e}")
+                print(f"   [ReAct] {tool_name} 异常: {e}")
 
             success = _is_tool_success(tool_result)
             status = "✅" if success else "❌"
@@ -317,7 +317,7 @@ def _run_react_agent(task: AutoTask,
             last_tool_hashes.pop(0)
         if (len(last_tool_hashes) >= _REACT_DEAD_LOOP_THRESHOLD
                 and len(set(last_tool_hashes)) == 1):
-            print(f"   ⚠️ [ReAct] 检测到死循环，注入破圈提示")
+            print(f"   [ReAct] 检测到死循环，注入破圈提示")
             messages.append({
                 "role": "user",
                 "content": "你已经连续多次执行了相同的操作且结果相同。请换一种方法，或者如果任务确实无法完成，直接说明原因。",
@@ -325,7 +325,7 @@ def _run_react_agent(task: AutoTask,
             last_tool_hashes.clear()
 
     # 达到最大迭代次数
-    print(f"   ⚠️ [ReAct] 达到最大迭代次数 {_REACT_MAX_ITERATIONS}")
+    print(f"   [ReAct] 达到最大迭代次数 {_REACT_MAX_ITERATIONS}")
     return "[TIMEOUT] 达到最大执行轮数，任务可能未完成"
 
 
@@ -346,7 +346,7 @@ def _execute_sync(task: AutoTask,
     with _lock:
         if task_id in _running_tasks:
             logger.warning(f"任务 {task.name} 正在执行中，跳过")
-            print(f"⏭ [AutoTaskExecutor] 任务「{task.name}」正在执行中，跳过重复触发")
+            print(f"[AutoTaskExecutor] 任务「{task.name}」正在执行中，跳过重复触发")
             return
         _running_tasks.add(task_id)
         _cancel_flags.pop(task_id, None)
@@ -355,7 +355,7 @@ def _execute_sync(task: AutoTask,
     start_time = time.time()
 
     print(f"\n{'='*60}")
-    print(f"🚀 [AutoTaskExecutor] 开始执行任务「{task.name}」(ID:{task_id}) [ReAct模式]")
+    print(f"[AutoTaskExecutor] 开始执行任务「{task.name}」(ID:{task_id}) [ReAct模式]")
     print(f"   调度类型: {task.schedule_type} | 时间: {task.schedule_time}")
     print(f"   描述: {task.description[:120]}")
     print(f"{'='*60}")
@@ -395,13 +395,13 @@ def _execute_sync(task: AutoTask,
         final_message = str(e)
         manager.add_log(task_id, -1, False, f"执行异常: {e}")
         manager.mark_executed(task_id, False, final_message[:500])
-        print(f"💥 [AutoTaskExecutor] 执行异常: {e}")
+        print(f"[AutoTaskExecutor] 执行异常: {e}")
 
     finally:
         elapsed = time.time() - start_time
         status_icon = "✅ 成功" if all_success else "❌ 失败"
         print(f"{'='*60}")
-        print(f"🏁 [AutoTaskExecutor] 任务「{task.name}」执行完毕: {status_icon} (耗时 {elapsed:.1f}s)")
+        print(f"[AutoTaskExecutor] 任务「{task.name}」执行完毕: {status_icon} (耗时 {elapsed:.1f}s)")
         print(f"{'='*60}\n")
         with _lock:
             _running_tasks.discard(task_id)

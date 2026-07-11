@@ -35,20 +35,20 @@ class AutoTaskManager:
             if _AUTO_TASKS_PATH.exists():
                 raw = json.loads(_AUTO_TASKS_PATH.read_text(encoding="utf-8"))
                 self._tasks = [AutoTask.from_dict(d) for d in raw.get("tasks", [])]
-                print(f"📂 [AutoTaskManager] 已加载 {len(self._tasks)} 个自动化任务")
+                print(f"[AutoTaskManager] 已加载 {len(self._tasks)} 个自动化任务")
             else:
                 self._tasks = []
-                print(f"📂 [AutoTaskManager] 无已有任务，从零开始")
+                print(f"[AutoTaskManager] 无已有任务，从零开始")
         except Exception as e:
             logger.warning(f"加载 auto_tasks.json 失败: {e}")
-            print(f"⚠️ [AutoTaskManager] 加载任务文件失败: {e}")
+            print(f"[AutoTaskManager] 加载任务文件失败: {e}")
             self._tasks = []
 
         try:
             if _AUTO_TASK_LOGS_PATH.exists():
                 raw = json.loads(_AUTO_TASK_LOGS_PATH.read_text(encoding="utf-8"))
                 self._execution_logs = raw.get("logs", [])
-                print(f"📂 [AutoTaskManager] 已加载 {len(self._execution_logs)} 条执行日志")
+                print(f"[AutoTaskManager] 已加载 {len(self._execution_logs)} 条执行日志")
             else:
                 self._execution_logs = []
         except Exception:
@@ -84,7 +84,7 @@ class AutoTaskManager:
         self._tasks.append(task)
         self.save()
         self._notify()
-        print(f"➕ [AutoTaskManager] 新增任务: 「{task.name}」(ID:{task.task_id}) type={task.schedule_type} next={task.next_run}")
+        print(f"[AutoTaskManager] 新增任务: 「{task.name}」(ID:{task.task_id}) type={task.schedule_type} next={task.next_run}")
         return task
 
     def update_task(self, task_id: str, **kwargs) -> bool:
@@ -106,7 +106,7 @@ class AutoTaskManager:
         if len(self._tasks) < before:
             self.save()
             self._notify()
-            print(f"🗑 [AutoTaskManager] 删除任务: ID={task_id} (剩余 {len(self._tasks)} 个)")
+            print(f"[AutoTaskManager] 删除任务: ID={task_id} (剩余 {len(self._tasks)} 个)")
             return True
         return False
 
@@ -175,7 +175,7 @@ class AutoTaskManager:
             self._tasks = [t for t in self._tasks if t.task_id not in to_remove]
             self.save()
             self._notify()
-            print(f"🧹 [AutoTaskManager] 已清理 {len(to_remove)} 个过期 once 任务")
+            print(f"[AutoTaskManager] 已清理 {len(to_remove)} 个过期 once 任务")
         return len(to_remove)
 
     # ── 调度检查 ──
@@ -196,11 +196,11 @@ class AutoTaskManager:
                     if t.schedule_type == "once":
                         t.status = "completed"
                         self.save()
-                        print(f"⚠️ [AutoTaskManager] once 任务「{t.name}」无有效时间，自动标记完成")
+                        print(f"[AutoTaskManager] once 任务「{t.name}」无有效时间，自动标记完成")
                     else:
-                        print(f"⚠️ [AutoTaskManager] 任务「{t.name}」无法计算 next_run，跳过")
+                        print(f"[AutoTaskManager] 任务「{t.name}」无法计算 next_run，跳过")
                     continue
-                print(f"🔄 [AutoTaskManager] 补算 next_run: 「{t.name}」→ {t.next_run}")
+                print(f"[AutoTaskManager] 补算 next_run: 「{t.name}」-> {t.next_run}")
                 # 补算后不跳过，继续判断是否到期
             try:
                 next_dt = datetime.strptime(t.next_run, "%Y-%m-%d %H:%M")
@@ -246,15 +246,15 @@ class AutoTaskManager:
                     if t.schedule_type == "once":
                         t.status = "completed"
                         t.next_run = ""
-                        print(f"✅ [AutoTaskManager] 一次性任务「{t.name}」已完成")
+                        print(f"[AutoTaskManager] 一次性任务「{t.name}」已完成")
                     elif t.has_reached_max:
                         t.status = "completed"
-                        print(f"✅ [AutoTaskManager] 任务「{t.name}」已完成(已达最大执行次数 {t.max_executions})")
+                        print(f"[AutoTaskManager] 任务「{t.name}」已完成(已达最大执行次数 {t.max_executions})")
                     else:
                         t.next_run = t.compute_next_run()
-                        print(f"✅ [AutoTaskManager] 任务「{t.name}」执行成功，下次: {t.next_run}")
+                        print(f"[AutoTaskManager] 任务「{t.name}」执行成功，下次: {t.next_run}")
                 else:
-                    print(f"❌ [AutoTaskManager] 任务「{t.name}」执行失败: {result[:100]}")
+                    print(f"[AutoTaskManager] 任务「{t.name}」执行失败: {result[:100]}")
                 self.save()
                 self._notify()
                 return
