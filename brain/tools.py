@@ -2306,18 +2306,20 @@ def search_files_everything(keyword: str, ext: str = "",
     if not es:
         return "⚠️ 未检测到 Everything。请从 https://www.voidtools.com 下载安装，可获得毫秒级全盘文件搜索。"
 
-    # 构建 Everything 搜索语法
-    parts = [keyword]
+    # 构建 Everything 搜索语法（路径过滤放在搜索串中，不用无效的 CLI -path 参数）
+    query_parts = [keyword]
     if ext:
-        parts.append(f"ext:{ext}")
-    if recent_days > 0:
-        parts.append(f"dm:last{recent_days}days")
-
-    query = " ".join(parts)
-    cmd = [es]
+        for e in ext.split(";"):
+            e = e.strip()
+            if e:
+                query_parts.append(f"ext:{e}")
     if folder:
-        cmd += ["-path", folder]
-    cmd += ["-n", str(max_results), "-s", query]
+        query_parts.append(f'parent:"{folder}"')
+    if recent_days > 0:
+        query_parts.append(f"dm:last{recent_days}days")
+
+    query = " ".join(query_parts)
+    cmd = [es, "-n", str(max_results), query]
 
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
@@ -2333,24 +2335,35 @@ def search_files_everything(keyword: str, ext: str = "",
 
 def get_file_info_everything(filepath: str) -> str:
     """
-    获取文件元数据：大小、修改时间、创建时间（依赖 Everything）。
+    获取文件元数据：大小、修改时间、创建时间。
     """
     import os as _os
-    es = _find_everything_es()
-    if not es:
-        return "⚠️ 未检测到 Everything"
+    from datetime import datetime
+
+    p = Path(filepath).expanduser().resolve()
+    if not p.exists():
+        return f"文件不存在: {filepath}"
 
     try:
-        name = Path(filepath).name
-        parent = str(Path(filepath).parent)
-        r = subprocess.run(
-            [es, "-name-part", name, "-path", parent,
-             "-size", "-date-modified", "-date-created", "-n", "1"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10
+        stat = p.stat()
+        size = stat.st_size
+        if size < 1024:
+            size_str = f"{size} B"
+        elif size < 1024 * 1024:
+            size_str = f"{size / 1024:.1f} KB"
+        else:
+            size_str = f"{size / 1024 / 1024:.1f} MB"
+        mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        ctime = datetime.fromtimestamp(stat.st_ctime).strftime("%Y-%m-%d %H:%M:%S")
+        return (
+            f"文件: {p.name}\n"
+            f"路径: {p.parent}\n"
+            f"大小: {size_str}\n"
+            f"修改时间: {mtime}\n"
+            f"创建时间: {ctime}"
         )
-        return r.stdout.strip() or f"未找到文件: {filepath}"
     except Exception as e:
-        return f"查询失败: {e}"
+        return f"获取文件信息失败: {e}"
 
 
 def open_app(name: str) -> str:
@@ -2522,7 +2535,7 @@ def run_command(command: str) -> str:
 # ==================== 联网搜索工具函数 ====================
 
 def web_search(query: str, max_results: int = 5) -> str:
-    """联网搜索，优先百度，DuckDuckGo 兜底。智能代理：先直连，不通自动切代理。"""
+    """联网搜索，优先 Tavily → 知乎 → 百度 → DDG → Bing → 浏览器。智能代理：先直连，不通自动切代理。"""
     import urllib.parse
     import requests
     from bs4 import BeautifulSoup
@@ -2648,7 +2661,90 @@ def web_search(query: str, max_results: int = 5) -> str:
             logger.warning(f"浏览器搜索失败: {e}")
             return None
 
-    # ── 后端 1：百度（先直连，不通再走代理） ────────────
+    def _try_tavily():
+        """尝试 Tavily AI 搜索（REST API），返回结果字符串或 None。"""
+        try:
+            from config import get_tavily_config
+            api_key = get_tavily_config().get("api_key", "").strip()
+            if not api_key:
+                return None
+            resp = requests.post(
+                "https://api.tavily.com/search",
+                json={"query": query, "max_results": min(max_results, 10), "search_depth": "basic"},
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+                timeout=15,
+            )
+            if not resp.ok:
+                return None
+            data = resp.json()
+            results = data.get("results", [])
+            if not results:
+                return None
+            output_lines = [f"[Tavily] 搜索「{query}」的结果："]
+            for i, r in enumerate(results[:max_results], 1):
+                output_lines.append(
+                    f"\n{i}. {r.get('title', '无标题')}"
+                    f"\n   链接：{r.get('url', '')}"
+                    f"\n   摘要：{r.get('content', '')}"
+                )
+            return "\n".join(output_lines)
+        except Exception:
+            return None
+
+    def _try_zhihu():
+        """尝试知乎全网搜索（REST API），返回结果字符串或 None。"""
+        try:
+            from config import get_zhihu_config
+            access_secret = get_zhihu_config().get("access_secret", "").strip()
+            if not access_secret:
+                return None
+            import time as _time
+            resp = requests.get(
+                "https://developer.zhihu.com/api/v1/content/global_search",
+                params={"Query": query, "Count": min(max_results, 10)},
+                headers={
+                    "Authorization": f"Bearer {access_secret}",
+                    "X-Request-Timestamp": str(int(_time.time())),
+                },
+                timeout=15,
+            )
+            if not resp.ok:
+                return None
+            data = resp.json()
+            items = data.get("data", [])
+            if not items:
+                return None
+            output_lines = [f"[知乎] 搜索「{query}」的结果："]
+            for i, item in enumerate(items[:max_results], 1):
+                title = item.get("title", "无标题")
+                url = item.get("url", "")
+                snippet = (item.get("excerpt") or item.get("content", ""))[:200]
+                output_lines.append(
+                    f"\n{i}. {title}"
+                    f"\n   链接：{url}"
+                    f"\n   摘要：{snippet}"
+                )
+            return "\n".join(output_lines)
+        except Exception:
+            return None
+
+    # ── 后端 1：Tavily AI 搜索（最高质量，AI 原生搜索引擎） ──
+    try:
+        result = _try_tavily()
+        if result:
+            return result
+    except Exception:
+        pass
+
+    # ── 后端 2：知乎全网搜索（中文内容优质） ────────────
+    try:
+        result = _try_zhihu()
+        if result:
+            return result
+    except Exception:
+        pass
+
+    # ── 后端 3：百度（先直连，不通再走代理） ────────────
     try:
         result = _try_baidu()
         if result:
@@ -2664,7 +2760,7 @@ def web_search(query: str, max_results: int = 5) -> str:
     except Exception:
         pass
 
-    # ── 后端 2：DuckDuckGo（先直连，不通再走代理） ─────
+    # ── 后端 4：DuckDuckGo（先直连，不通再走代理） ─────
     try:
         result = _try_ddg()
         if result:
@@ -2682,7 +2778,7 @@ def web_search(query: str, max_results: int = 5) -> str:
     except Exception:
         pass
 
-    # ── 后端 3：Bing（先直连，不通再走代理） ────────────
+    # ── 后端 5：Bing（先直连，不通再走代理） ────────────
     try:
         result = _try_bing()
         if result:
@@ -2698,7 +2794,7 @@ def web_search(query: str, max_results: int = 5) -> str:
     except Exception:
         pass
 
-    # ── 后端 4：Playwright 浏览器搜索（最可靠） ─────────
+    # ── 后端 6：Playwright 浏览器搜索（最可靠） ─────────
     try:
         result = _try_browser_search()
         if result:
@@ -4507,13 +4603,11 @@ def plan_tasks(task_description: str, context: str = "", max_subtasks: int = 5) 
     )
 
     try:
-        from config import get_api_config
+        from config import get_api_config, normalize_model_for_litellm
         cfg = get_api_config()
         api_key = cfg["api_key"]
         api_base = cfg["base_url"]
-        model = cfg["model"]
-        if "/" not in model:
-            model = f"deepseek/{model}"
+        model = normalize_model_for_litellm(cfg["model"], api_base)
         response = litellm.completion(
             model=model,
             messages=[
@@ -4563,13 +4657,11 @@ def delegate_task(task: str, working_dir: str = "",
             return f"工作目录不存在：{working_dir}"
 
     try:
-        from config import get_api_config
+        from config import get_api_config, normalize_model_for_litellm
         cfg = get_api_config()
         api_key = cfg["api_key"]
         api_base = cfg["base_url"]
-        model = cfg["model"]
-        if "/" not in model:
-            model = f"deepseek/{model}"
+        model = normalize_model_for_litellm(cfg["model"], api_base)
 
         sub_agent = AgentCore(
             disable_tools=True,

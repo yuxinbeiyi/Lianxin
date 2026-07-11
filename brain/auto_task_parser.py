@@ -184,10 +184,12 @@ def _parse_to_task(user_text: str) -> dict:
 
     注意：不再要求 LLM 生成 actions。执行时由 ReAct Agent 决定工具调用。
     """
+    from config import normalize_model_for_litellm
     api_cfg = get_api_config()
-    model = api_cfg.get("model", "deepseek-v4-flash")
-    if "/" not in model:
-        model = f"deepseek/{model}"
+    model = normalize_model_for_litellm(
+        api_cfg.get("model", "deepseek-v4-flash"),
+        api_cfg.get("base_url", ""),
+    )
 
     system_text = _PARSE_SYSTEM
 
@@ -349,7 +351,7 @@ def parse_auto_task(user_text: str) -> AutoTask:
             # 默认 1 分钟后
             target = datetime.now() + timedelta(seconds=60)
             schedule_time = target.strftime("%H:%M")
-            print(f"   ⏱ [AutoTaskParser] 无法确定延迟，默认 1 分钟后: {schedule_time}")
+            print(f"   [AutoTaskParser] 无法确定延迟，默认 1 分钟后: {schedule_time}")
 
     task = AutoTask(
         name=parsed.get("name", "未命名任务"),

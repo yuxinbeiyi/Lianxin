@@ -7,6 +7,14 @@ import sys
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 os.environ['TQDM_DISABLE'] = '1'          # 抑制 modelscope/funasr tqdm 进度条
+
+# ── 强制 stdout/stderr UTF-8：防止 Windows GBK 环境下 emoji print() 崩溃 ──
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 import ctypes
 
 # ── 禁用 Windows 终端快速编辑模式（防止误触终端导致进程卡住） ──
@@ -117,18 +125,24 @@ if sys.platform == "win32":
                 try:
                     try:
                         self._real.write(text)
-                        self._real.flush()
                     except UnicodeEncodeError:
                         self._real.write(text.encode("gbk", errors="replace").decode("gbk"))
-                        self._real.flush()
                 except Exception:
                     pass
+                # 批量 flush：每 20 条或遇到换行时才刷终端，大幅减少终端 I/O 阻塞
+                if text and "\n" in text:
+                    try:
+                        self._real.flush()
+                    except Exception:
+                        pass
 
         def write(self, text):
             if self._log is not None:
                 try:
                     self._log.write(text)
-                    self._log.flush()
+                    # 仅在文本不含换行符时才手动 flush（line-buffered 模式已自动处理 \n）
+                    if "\n" not in text:
+                        self._log.flush()
                 except Exception:
                     try:
                         self._log.close()
@@ -284,6 +298,13 @@ def main():
             print(f"[启动体检] 检测过程异常: {e}", flush=True)
 
     window = MainWindow(autostart_mode=autostart_mode)
+
+    # ── 主线程预加载 torch（避免子线程 access violation + WinError 206）──
+    try:
+        from brain.memory_rag import _preload_torch
+        _preload_torch()
+    except Exception:
+        pass
 
     # ── 记忆 RAG 向量检索：后台预热 + 补建旧记忆的 embedding ──
     try:

@@ -97,6 +97,32 @@ def get_api_config() -> dict:
     return result
 
 
+def normalize_model_for_litellm(model: str, api_base: str = "") -> str:
+    """将用户配置的模型名标准化为 LiteLLM 可识别的 provider/model 格式。
+
+    核心原则：
+    - 官方 DeepSeek：LiteLLM 需要 "deepseek/模型名"
+    - 第三方 API（硅基流动等）：LiteLLM 需要 "openai/完整模型名"，模型名部分原样保留
+    - "deepseek-ai/" 是硅基流动的模型命名空间，不是 LiteLLM provider，不要动它
+    """
+    _is_official = "deepseek.com" in (api_base or "").lower()
+
+    if "/" not in model:
+        # 无斜杠 → 自动补前缀
+        return f"deepseek/{model}" if _is_official else f"openai/{model}"
+
+    if _is_official:
+        # 官方 API：将无效 provider（如 deepseek-ai）修正为 deepseek
+        if model.startswith("deepseek-ai/"):
+            model = f"deepseek/{model[len('deepseek-ai/'):]}"
+        return model
+
+    # 第三方 API：保持原始模型名不变，只确保有 openai/ 前缀
+    if not model.startswith("openai/"):
+        return f"openai/{model}"
+    return model
+
+
 def save_api_config(config: dict):
     """保存 DeepSeek API 配置（仅更新 deepseek 部分，不影响其他配置）。"""
     full = _load_full_config()

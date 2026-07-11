@@ -18,19 +18,50 @@ _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 def _ensure_torch_fsdp_compat():
     """torch 2.5.1 移除了 torch.distributed.fsdp，sentence-transformers 依赖它。
-    仅在需要加载模型时才调用，避免未安装 sentence-transformers 时也拖慢启动。"""
-    import torch.distributed as _dist
-    if not hasattr(_dist, "fsdp"):
-        import types as _types
-        _fsdp = _types.ModuleType("torch.distributed.fsdp")
-        _fsdp.FullyShardedDataParallel = type("FullyShardedDataParallel", (), {})
-        _fsdp.ShardingStrategy = type("ShardingStrategy", (), {
-            "FULL_SHARD": 1, "SHARD_GRAD_OP": 2, "NO_SHARD": 3, "HYBRID_SHARD": 4, "_HYBRID_SHARD_ZERO2": 5
-        })
-        _fsdp.StateDictType = type("StateDictType", (), {
-            "FULL_STATE_DICT": 1, "LOCAL_STATE_DICT": 2, "SHARDED_STATE_DICT": 3
-        })
+    要求在主线程先调用 _preload_torch() 完成 torch 初始化，避免子线程 access violation。"""
+    import sys as _sys
+    import types as _types
+
+    _fsdp = _types.ModuleType("torch.distributed.fsdp")
+    _fsdp.FullyShardedDataParallel = type("FullyShardedDataParallel", (), {})
+    _fsdp.ShardingStrategy = type("ShardingStrategy", (), {
+        "FULL_SHARD": 1, "SHARD_GRAD_OP": 2, "NO_SHARD": 3, "HYBRID_SHARD": 4, "_HYBRID_SHARD_ZERO2": 5
+    })
+    _fsdp.StateDictType = type("StateDictType", (), {
+        "FULL_STATE_DICT": 1, "LOCAL_STATE_DICT": 2, "SHARDED_STATE_DICT": 3
+    })
+
+    if "torch.distributed" in _sys.modules:
+        _dist = _sys.modules["torch.distributed"]
+        if not hasattr(_dist, "fsdp"):
+            _dist.fsdp = _fsdp
+    else:
+        _dist = _types.ModuleType("torch.distributed")
         _dist.fsdp = _fsdp
+        _dist.is_available = lambda: False
+        _dist.is_initialized = lambda: False
+        _dist.init_process_group = lambda **kw: None
+        _dist.get_rank = lambda: -1
+        _dist.get_world_size = lambda: 1
+        _sys.modules["torch.distributed"] = _dist
+        _sys.modules["torch.distributed.fsdp"] = _fsdp
+
+
+def _preload_torch():
+    """在 MAIN THREAD 上预加载 torch，避免子线程中触发 Windows access violation。
+    必须在任何后台线程尝试使用 torch 之前调用。"""
+    import sys as _sys
+    try:
+        import torch
+        # 尝试加载 torch.distributed —— 即使失败也不影响
+        try:
+            import torch.distributed
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        logger.warning("torch 预加载失败: %s", e)
+        return False
 
 logger = logging.getLogger("MemoryRAG")
 

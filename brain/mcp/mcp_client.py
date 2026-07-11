@@ -137,12 +137,16 @@ class ExternalMCPClient:
         if self._connected:
             return True
         try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self._connect())
-        # 已有事件循环，在新线程中运行
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(lambda: asyncio.run(self._connect())).result(timeout=30)
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(self._connect())
+            # 已有事件循环，在新线程中运行
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(lambda: asyncio.run(self._connect())).result(timeout=30)
+        except Exception as e:
+            logger.error(f"[MCP] connect_sync 异常: {self.service_name} → {e}")
+            return False
 
     def get_tool_definitions_openai(self) -> list:
         """返回 OpenAI Function Calling 格式的工具定义"""

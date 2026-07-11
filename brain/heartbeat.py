@@ -133,10 +133,12 @@ def perform_heartbeat(recent_messages: list[dict]) -> Optional[str]:
     checklist_text = checklist.format_for_prompt()
 
     # LLM 调用
+    from config import normalize_model_for_litellm
     api_cfg = get_api_config()
-    model = api_cfg.get("model", "deepseek-v4-flash")
-    if "/" not in model:
-        model = f"deepseek/{model}"
+    model = normalize_model_for_litellm(
+        api_cfg.get("model", "deepseek-v4-flash"),
+        api_cfg.get("base_url", ""),
+    )
 
     system_text = _HEARTBEAT_SYSTEM
     user_text = f"{_HEARTBEAT_USER}\n\n{checklist_text}\n\n【最近对话记录】\n{conversation_text[:4000]}"

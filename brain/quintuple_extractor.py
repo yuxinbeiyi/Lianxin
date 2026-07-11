@@ -64,10 +64,12 @@ def extract_quintuples(conversation_text: str) -> list[tuple]:
     if not conversation_text or len(conversation_text) < 30:
         return []
 
+    from config import normalize_model_for_litellm
     api_cfg = get_api_config()
-    model = api_cfg.get("model", "deepseek-v4-flash")
-    if "/" not in model:
-        model = f"deepseek/{model}"
+    model = normalize_model_for_litellm(
+        api_cfg.get("model", "deepseek-v4-flash"),
+        api_cfg.get("base_url", ""),
+    )
 
     try:
         response = litellm.completion(
@@ -124,7 +126,7 @@ def extract_and_store_with_config(conversation_text: str, model: str,
     try:
         import litellm
         response = litellm.completion(
-            model=model if "/" in model else f"deepseek/{model}",
+            model=model,
             messages=[
                 {"role": "system", "content": _EXTRACT_SYSTEM},
                 {"role": "user", "content": f"请从以下对话中提取五元组：\n\n{conversation_text[:4000]}"},

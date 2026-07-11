@@ -170,10 +170,12 @@ def _run_react_agent(task: AutoTask,
     Returns:
         最终结果字符串。以 [CANCELLED]/[API_ERROR]/[TIMEOUT] 开头表示失败。
     """
+    from config import normalize_model_for_litellm
     api_cfg = get_api_config()
-    model = api_cfg.get("model", "deepseek-v4-flash")
-    if "/" not in model:
-        model = f"deepseek/{model}"
+    model = normalize_model_for_litellm(
+        api_cfg.get("model", "deepseek-v4-flash"),
+        api_cfg.get("base_url", ""),
+    )
 
     all_tools = _get_all_available_tools()
     if not all_tools:

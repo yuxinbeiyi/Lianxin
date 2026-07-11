@@ -165,18 +165,9 @@ class AgentCore:
             self._api_base   = cfg.get("local_base_url", "http://localhost:11434/v1")
             self._api_key    = "ollama"
         else:  # deepseek / 自定义 OpenAI 兼容 API
-            model = cfg["model"]
+            from config import normalize_model_for_litellm
             base_url = cfg.get("base_url", "https://api.deepseek.com")
-            # 判断是否为官方 DeepSeek：默认 URL 包含 deepseek.com
-            _is_official_deepseek = "deepseek.com" in base_url.lower()
-            if "/" not in model:
-                # 无斜杠 → 自动补官方前缀
-                model = f"deepseek/{model}" if _is_official_deepseek else f"openai/{model}"
-            elif not _is_official_deepseek and not model.startswith("openai/"):
-                # 有斜杠但指向第三方 API（如硅基流动）→ 强制 openai/ 前缀
-                model = f"openai/{model}"
-            # 若已是 "deepseek/xxx" 或 "openai/xxx" 则保持不动
-            self._model      = model
+            self._model      = normalize_model_for_litellm(cfg["model"], base_url)
             self._max_tokens = cfg["max_tokens"]
             self._api_base   = base_url
             self._api_key    = cfg["api_key"]
@@ -1484,6 +1475,16 @@ class AgentCore:
         _soft_limit_triggered = False          # 自评估提示只发一次
         _urgent_limit_triggered = False        # 收尾提示只发一次
 
+        # ── 三层熔断器状态 ──
+        _content_drought_count = 0           # 连续无文本回复计数
+        _same_tool_streak_name = None        # 当前连续同工具名
+        _same_tool_streak_count = 0          # 连续同工具计数
+        _last_round_tool_sets: list[str] = []  # 最近N轮的工具名集合
+        _force_text_response = False         # 下一轮强制 tool_choice="none"
+        CONTENT_DROUGHT_MAX = 3              # 连续无文本N轮→熔断
+        SAME_TOOL_STORM_MAX = 4              # 同工具连续N轮→强制干预
+        NO_PROGRESS_MAX = 3                  # 工具名集合连续相同N轮→熔断
+
         # ── 复杂度判断：用户消息超过80字视为复杂任务 ──
         is_complex = len(self.history[-1]["content"]) > 80 if self.history else False
 
@@ -1546,10 +1547,14 @@ class AgentCore:
                 })
 
 
-            # 确定 tool_choice
-            tool_choice = "auto"
-            if forced_tool and forced_tool in [t["function"]["name"] for t in all_tools]:
+            # 确定 tool_choice（熔断器可强制设为 "none"）
+            if _force_text_response:
+                tool_choice = "none"
+                _force_text_response = False
+            elif forced_tool and forced_tool in [t["function"]["name"] for t in all_tools]:
                 tool_choice = {"type": "function", "function": {"name": forced_tool}}
+            else:
+                tool_choice = "auto"
 
             # 诊断：打印 system prompt 构建耗时和大小
             _t1 = time.time()
@@ -1716,11 +1721,62 @@ class AgentCore:
                     _reason = "连续相同结果" if _dead_loop_by_result else "连续相同工具调用"
                     print(f"  [死循环检测] {_reason}，连续{DEAD_LOOP_THRESHOLD}轮，强制终止",
                           flush=True)
+                    _force_text_response = True
                     messages.append({
                         "role": "system",
                         "content": (
-                            "⚠️ 检测到连续多轮返回相同结果，可能陷入循环。"
-                            "请停止调用工具，基于已有信息直接给出最终回答。"
+                            "检测到连续多轮返回相同结果，判定为死循环。"
+                            "下一轮你必须停止调用工具，基于已有信息直接给出最终回答。"
+                        ),
+                    })
+
+                # ── 三层熔断器检测 ──────────────────────
+                _has_content = bool(content and content.strip())
+
+                if not _has_content:
+                    _content_drought_count += 1
+                else:
+                    _content_drought_count = 0
+
+                _this_tool_names = sorted(tc.function.name for tc in fake_tool_calls)
+                if _this_tool_names:
+                    _first_tool = _this_tool_names[0]
+                    if _first_tool == _same_tool_streak_name:
+                        _same_tool_streak_count += 1
+                    else:
+                        _same_tool_streak_name = _first_tool
+                        _same_tool_streak_count = 1
+
+                _tool_set_key = "|".join(_this_tool_names)
+                _last_round_tool_sets.append(_tool_set_key)
+                if len(_last_round_tool_sets) > NO_PROGRESS_MAX:
+                    _last_round_tool_sets.pop(0)
+                _no_progress = (
+                    len(_last_round_tool_sets) >= NO_PROGRESS_MAX
+                    and _tool_set_key
+                    and len(set(_last_round_tool_sets)) == 1
+                )
+
+                _breaker_reason = ""
+                if _content_drought_count >= CONTENT_DROUGHT_MAX:
+                    _breaker_reason = f"连续{CONTENT_DROUGHT_MAX}轮无文本回复"
+                    _content_drought_count = 0
+                elif _same_tool_streak_count >= SAME_TOOL_STORM_MAX:
+                    _breaker_reason = f"同一工具 [{_same_tool_streak_name}] 连续调用{_same_tool_streak_count}轮"
+                    _same_tool_streak_count = 0
+                elif _no_progress:
+                    _breaker_reason = f"连续{NO_PROGRESS_MAX}轮工具集合无变化"
+                    _last_round_tool_sets.clear()
+                    _same_tool_streak_count = 0
+
+                if _breaker_reason:
+                    print(f"  [熔断器] {_breaker_reason}，下一轮强制 tool_choice=none", flush=True)
+                    _force_text_response = True
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            f"检测到{_breaker_reason}，判定为陷入循环。"
+                            "下一轮你必须停止调用工具，基于已有信息直接给出最终回答。"
                         ),
                     })
 
