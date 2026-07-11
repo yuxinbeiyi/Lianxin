@@ -1403,35 +1403,22 @@ class AgentCore:
         messages.append({
             "role": "system",
             "content": (
-                "【关于你的长期记忆】\n"
-                "你的长期记忆存储在本地知识库中，按分类组织，不会自动加载到 system prompt 中。\n"
-                "记忆分为以下分类：\n"
-                "  profile — 个人档案（姓名、外貌、性格、背景故事等稳定信息）\n"
-                "  preferences — 偏好（喜欢的音乐、游戏、食物等）\n"
-                "  events — 事件（过去发生的事、经历、计划）\n"
-                "  knowledge — 知识（路径配置、工作原理、规则等事实）\n"
-                "  behaviors — 行为模式（沟通风格、习惯、互动偏好）\n"
-                "  skills — 技能（你学会的能力、工具使用经验）\n"
-                "当用户询问关于个人信息、过去说过的话、偏好等需要回忆的内容时：\n"
-                "  1. 优先使用 search_graph_memory 统一搜索（同时返回分类事实 + 实体关系）\n"
-                "     例：问\"我之前说过喜欢什么音乐\" → search_graph_memory(keywords:['音乐','喜欢'])\n"
-                "     例：问\"莲心AI用了哪些技术\" → search_graph_memory(keywords:['莲心AI','技术'])\n"
-                "  2. 若统一搜索不够精确，再用 search_memory 按关键词+分类精确搜索\n"
-                "  3. 使用 save_memory 保存新事实，可指定分类（会立刻生效）\n"
-                "  4. 使用 update_memory 更新已过时的事实（会立刻生效）\n"
-                "  5. 使用 delete_memory 删除不需要的事实（会立刻生效）\n"
-                "  6. 使用 list_memories 查看全部记忆内容\n"
-                "\n"
-                "【实体关系查询】（当问题明确涉及实体间关系时额外使用）\n"
-                "  7. 使用 query_connected_entities 多跳遍历查找间接关联\n"
-                "     例：\"我的朋友们都住在哪里\" → query_connected_entities('我', depth=2)\n"
-                "     例：\"和莲心AI项目相关的所有信息\" → query_connected_entities('莲心AI', depth=2)\n"
-                "  8. 使用 add_graph_edge 手动添加实体关系（如从分类记忆中提取出关系后写入图）\n"
-                "  9. 使用 delete_graph_entity 删除错误实体及其关联边（不可恢复）\n"
-                "  10. 使用 remove_graph_edge 删除指定关系边"
-
+                "【长期记忆】\n"
+                "相关记忆已自动注入上方消息中，你无需主动搜索。\n"
+                "仅在用户明确说\"你还记得XXX吗\"\"我之前说过XXX\"\"帮我查一下记忆\"时才调用 search_graph_memory。\n"
+                "用户说\"记住XXX\"时调用 save_memory 保存。"
             )
         })
+
+        # ── 防幻觉提醒（最后一条 system 消息，利用近因效应） ──
+        if not disable_tools:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "【本轮铁律】收到文件查找/搜索/系统操作类请求时，"
+                    "必须先调用工具获取真实结果再回复。禁止凭猜测编造任何文件名、路径或数据。"
+                )
+            })
 
         # ── 禁用工具模式：直接纯文本对话，不走工具循环 ──────
         if disable_tools:

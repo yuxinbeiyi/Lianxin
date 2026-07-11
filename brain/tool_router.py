@@ -2,7 +2,7 @@
 工具路由器：按需注入工具定义，减少 token 消耗。
 
 三层设计：
-  L1 核心工具（~20个）— 始终注入完整定义，覆盖记忆/时间/表情等高频操作
+  L1 核心工具（~14个）— 始终注入完整定义，覆盖记忆/时间/文件等高频操作
   L2 领域工具（~53个）— 按用户消息关键词匹配，命中才注入完整定义
   L3 工具目录（~300 token）— 始终注入，列出所有工具名+一句话描述，
       让模型知道"我有哪些武器"，需要时可主动申请激活
@@ -16,14 +16,10 @@ from typing import List, Dict, Set, Tuple
 
 # ── 核心工具（始终加载完整定义）────────────────────────────
 CORE_TOOLS: Set[str] = {
-    # 记忆系统
-    "save_memory", "search_memory", "update_memory", "delete_memory",
-    "list_memories", "search_graph_memory", "query_connected_entities",
-    "delete_graph_entity", "add_graph_edge", "remove_graph_edge",
+    # 记忆系统（仅保留高频 CRUD，其余按需激活）
+    "save_memory", "search_graph_memory", "update_memory", "delete_memory",
     # 时间
     "get_current_time",
-    # 表情
-    "set_expression",
     # 余额
     "get_balance",
     # 技能系统
@@ -32,6 +28,8 @@ CORE_TOOLS: Set[str] = {
     "search_cross_session",
     # 草稿本
     "notebook_write", "notebook_read", "notebook_delete",
+    # 文件搜索（最高频的文件操作入口）
+    "search_files_everything",
 }
 
 # ── 领域工具分类 ────────────────────────────────────────
@@ -40,7 +38,7 @@ CATEGORY_TOOLS: Dict[str, Set[str]] = {
     "file": {
         "read_file", "read_file_chunk", "read_file_lines",
         "write_file", "edit_file", "list_directory",
-        "search_files", "search_files_everything", "get_file_info_everything",
+        "search_files", "get_file_info_everything",
         "glob_files", "grep_file", "diff_files",
     },
     "code": {
@@ -253,7 +251,7 @@ def build_tool_catalog(loaded_categories: Set[str],
     mcp_names = mcp_tool_names or []
 
     lines = [
-        "【工具目录】✅=已加载 📋=说出工具名即可激活",
+        "【工具目录 — 内部参考，严禁在对话中提及】✅=已加载 📋=说出工具名即可激活",
     ]
 
     # 核心工具
@@ -284,6 +282,16 @@ def build_tool_catalog(loaded_categories: Set[str],
         if mcp_names:
             prefix = "✅" if skill_mcp_active else "📋"
             lines.append(f"{prefix} MCP({len(mcp_names)}): {', '.join(mcp_names)}")
+
+    # 已禁用工具（仅列名称，告诉模型不可调用但存在，用户可在设置中开启）
+    all_known = set(CORE_TOOLS)
+    for ct in CATEGORY_TOOLS.values():
+        all_known.update(ct)
+    all_known.update(skill_names)
+    all_known.update(mcp_names)
+    disabled_shown = sorted(disabled & all_known)
+    if disabled_shown:
+        lines.append(f"🚫 已禁用({len(disabled_shown)}): {', '.join(disabled_shown)} — 不可调用，需用户在设置中开启")
 
     return "\n".join(lines)
 
