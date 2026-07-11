@@ -50,7 +50,7 @@
 - **DeepSeek V4** / **Agnes AI** 双提供商
 - **Ollama 本地模型** 一键切换，离线可用
 - LiteLLM 统一网关，支持 OpenAI / Anthropic 双格式
-- **三层按需注入架构**（核心20 + 领域53 + 技能/MCP 动态），覆盖文件、系统、搜索、视觉、记忆等
+- **三层按需注入架构**（核心14 + 领域53 + 技能/MCP 动态），覆盖文件、系统、搜索、视觉、记忆等
 - 意图路由器：小模型分类 + 规则兜底，零成本智能化路由
 - 上下文压缩器：长对话智能摘要，告别记忆丢失
 
@@ -149,6 +149,8 @@
 | 📚 学习助手 | 学习方法与记忆力建议 | ❌ |
 
 > 渐进式披露架构：技能知识按需注入 System Prompt，12 个 `_prompt_guides` 模块按关键词触发（搜索、浏览器、文件编辑、视觉OCR、B站、音乐、日记备忘、文档笔记、长内容、子代理、工具生态、语音），与全量注入相比大幅节省 Token。
+> 
+> **Token 管控优化**：核心工具精简至 14 个（移除易触发死循环的 `set_expression`、记忆工具 10→4、新增高频文件搜索 `search_files_everything`），记忆说明从 400 token 压缩至 60 token，防幻觉提醒利用近因效应注入。单轮输入 token 降低约 **26%**（~14,800 → ~11,000）。
 
 ### 🧠 棱镜记忆系统 · 三引擎
 
@@ -505,7 +507,7 @@ python main.py --autostart
 
 ## 🛠️ 内置工具清单
 
-莲心向 AI 模型暴露 **73 个 Function Calling 工具**（核心20 + 领域53，不含技能和 MCP 扩展），按类别组织：
+莲心向 AI 模型暴露 **73 个 Function Calling 工具**（核心14 + 领域53，不含技能和 MCP 扩展），按类别组织：
 
 <details open>
 <summary><b>📁 文件操作（9 个）</b></summary>
@@ -565,14 +567,15 @@ python main.py --autostart
 </details>
 
 <details open>
-<summary><b>🧠 记忆与知识（10 个）</b></summary>
+<summary><b>🧠 记忆与知识（10 个 — 核心4 + 领域6）</b></summary>
 
-| 工具 | 说明 |
-|------|------|
-| `save_memory` / `search_memory` / `update_memory` / `delete_memory` / `list_memories` | 分类事实 CRUD |
-| `search_graph_memory` | 统一搜索（事实 + 图边） |
-| `query_connected_entities` / `delete_graph_entity` | 图实体查询与删除 |
-| `add_graph_edge` / `remove_graph_edge` | 图关系管理 |
+| 工具 | 层级 | 说明 |
+|------|:---:|------|
+| `save_memory` / `update_memory` / `delete_memory` | ✅ 核心 | 分类事实 CRUD |
+| `search_graph_memory` | ✅ 核心 | 统一搜索（事实 + 图边） |
+| `search_memory` / `list_memories` | 📋 领域 | 关键词搜索 + 全量查看 |
+| `query_connected_entities` / `delete_graph_entity` | 📋 领域 | 图实体查询与删除 |
+| `add_graph_edge` / `remove_graph_edge` | 📋 领域 | 图关系管理 |
 
 </details>
 
@@ -599,7 +602,7 @@ python main.py --autostart
 | `plan_tasks` / `delegate_task` / `track_tasks` | 子代理任务规划与委派 |
 | `get_weather` / `set_user_city` | 天气查询（和风天气） |
 | `generate_image` / `generate_video` | AI 图片/视频生成 |
-| `set_expression` | 角色表情切换 |
+| `set_expression` | 角色表情切换（非核心，按需激活） |
 | `toggle_proactive_chat` | 主动聊天开关 |
 
 </details>
