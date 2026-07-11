@@ -1586,6 +1586,9 @@ class AgentCore:
                     "connection reset", "broken pipe", "eof",
                 ])
                 if is_retryable and iteration < 3:
+                    if self._cancel_event.is_set():
+                        print(f"[API重试] 第{iteration}轮收到取消信号，终止重试", flush=True)
+                        return "（响应超时，任务已取消。请重新发送消息。）"
                     import time as _time
                     delay = 1.5 * (iteration + 1)
                     print(f"[API重试] 第{iteration}轮失败，{delay:.1f}秒后重试: {e}", flush=True)

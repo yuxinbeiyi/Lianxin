@@ -1165,6 +1165,7 @@ class MainWindow(QMainWindow):
 
 
     def _on_error(self, err: str):
+        self._watchdog_resolved = True  # 防止看门狗 cleanup 重复添加系统提示
         self._agent_watchdog.stop()
         self._chat_widget.finalize_tool_groups()
         self._duty_scheduler.set_agent_busy(False)
@@ -1175,6 +1176,7 @@ class MainWindow(QMainWindow):
 
 
     def _on_ai_response(self, text: str):
+        self._watchdog_resolved = True  # 防止看门狗 cleanup 重复添加系统提示
         self._agent_watchdog.stop()
         from brain.task_tracker import get_task_tracker
         get_task_tracker().clear()
@@ -2586,15 +2588,70 @@ class MainWindow(QMainWindow):
             pass
 
     def _on_agent_watchdog_timeout(self):
-        """AgentWorker 看门狗超时：强制终止卡死的 Worker 线程。"""
+        """AgentWorker 看门狗超时：优雅取消 → 等待完工 → 兜底强杀 + 清理残留。"""
+        if not self._agent_worker or not self._agent_worker.isRunning():
+            return
+        print("[看门狗] AgentWorker 超过 3 分钟无响应，发起优雅取消", flush=True)
+        # 记录当前 history 末尾索引，用于后续清理残留的未展示回复
+        self._watchdog_history_snapshot = len(self._agent.history) if self._agent else 0
+        self._watchdog_resolved = False  # 防止 response_ready 和 cleanup 重复处理
+        # 协作取消
+        self._agent._cancel_event.set()
+        # 等待最多 8 秒让 worker 自然结束（API 超时 120s，重试时也能检查取消事件）
+        self._watchdog_retry_count = 0
+        self._watchdog_check_timer = QTimer(self)
+        self._watchdog_check_timer.timeout.connect(self._on_watchdog_check)
+        self._watchdog_check_timer.start(2000)  # 每 2 秒检查一次
+
+    def _on_watchdog_check(self):
+        self._watchdog_retry_count += 1
         if self._agent_worker and self._agent_worker.isRunning():
-            print("[看门狗] AgentWorker 超过 3 分钟无响应，强制终止", flush=True)
-            self._agent_worker.terminate()
-            self._agent_worker = None
+            if self._watchdog_retry_count >= 5:  # 10 秒后仍运行
+                print("[看门狗] 优雅取消失败，强制终止", flush=True)
+                self._agent_worker.terminate()
+                self._agent_worker = None
+                self._finish_watchdog_cleanup(force=True)
+        else:
+            # worker 已自然结束（_on_ai_response 可能已处理）
+            if not getattr(self, '_watchdog_resolved', False):
+                self._finish_watchdog_cleanup(force=False)
+
+    def _finish_watchdog_cleanup(self, force: bool):
+        if getattr(self, '_watchdog_resolved', False):
+            return
+        self._watchdog_resolved = True
+        if hasattr(self, '_watchdog_check_timer'):
+            self._watchdog_check_timer.stop()
+            del self._watchdog_check_timer
+        if hasattr(self, '_watchdog_retry_count'):
+            del self._watchdog_retry_count
+
+        # 清理 history 中残留的未展示 assistant 回复
+        if force and self._agent:
+            snapshot = getattr(self, '_watchdog_history_snapshot', 0)
+            current_len = len(self._agent.history)
+            if current_len > snapshot:
+                # history 末端新增了消息，检查是否是未展示的 assistant 回复
+                new_msgs = self._agent.history[snapshot:]
+                for i, msg in enumerate(new_msgs):
+                    if msg.get("role") == "assistant":
+                        # 清理这条未展示回复，同时清理对应位置的 user 消息后的 assistant
+                        idx = snapshot + i
+                        if idx < len(self._agent.history):
+                            print(f"[看门狗] 清理残留回复: {msg.get('content', '')[:50]}...", flush=True)
+                            self._agent.history.pop(idx)
+                        break
+        if hasattr(self, '_watchdog_history_snapshot'):
+            del self._watchdog_history_snapshot
+
+        self._agent._cancel_event.clear()
         self._input_panel.hide_interrupt_bar()
         self._char_widget.stop_thinking()
         self._set_idle_state()
-        self._chat_widget.add_system_tip("⚠️ 莲心响应超时（3分钟），已自动终止。请重试或检查网络。")
+        self._chat_widget.add_system_tip(
+            "⚠️ 莲心响应超时（3分钟），已自动终止。请重试或检查网络。" if force
+            else "⚠️ 莲心响应较慢，已自动结束当前任务。"
+        )
 
     def _on_heartbeat_check(self):
         """心跳自检触发：检查活跃时段后启动 Worker。"""
