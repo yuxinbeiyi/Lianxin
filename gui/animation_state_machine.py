@@ -9,7 +9,8 @@ class AnimationStateMachine(QObject):
     """管理角色动画状态机"""
     state_changed = pyqtSignal(str)
 
-    def __init__(self, label: QLabel, config_path: str, assets_dir: str, parent=None):
+    def __init__(self, label: QLabel, config_path: str, assets_dir: str, parent=None,
+                 skip_initial: bool = False):
         super().__init__(parent)
         self.label = label
         self.config_path = Path(config_path)
@@ -23,8 +24,9 @@ class AnimationStateMachine(QObject):
         self._pending_event = None
         self._movie_cache = {}
         self._current_anim_file = ""  # 当前 label 上显示的动画文件路径
-        self._preload_all_movies()
-        self._goto_state(self.config["modes"][self.current_mode]["initial"])
+        if not skip_initial:
+            self._preload_all_movies()
+            self._goto_state(self.config["modes"][self.current_mode]["initial"])
 
     def _load_config(self):
         if not self.config_path.exists():

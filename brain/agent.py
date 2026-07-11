@@ -5,6 +5,7 @@ AgentCore：莲心AI 的大脑（LiteLLM 统一网关 + Function Calling）
 
 import json
 import re
+import time
 import threading
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +18,7 @@ litellm.suppress_debug_info = True  # 关闭 "Give Feedback" stderr 输出
 from config import get_api_config, get_base_prompt, get_local_base_prompt, get_qq_bridge_config, get_qq_timing_config, get_memory_config, get_graph_config
 from brain.tools import TOOL_DEFINITIONS, execute_tool, set_cross_session_context
 from brain.skill_manager import get_active_tool_definitions, get_active_knowledge
+from brain.tool_router import filter_builtin_tools, build_tool_catalog, match_categories, detect_tool_request, CATEGORY_ORDER
 from brain.graph_memory import (
     build_extraction_prompt,
     ALL_CATEGORIES,
@@ -88,6 +90,56 @@ def _get_group_lock(group: str) -> threading.Lock:
             if group not in _resource_locks:
                 _resource_locks[group] = threading.Lock()
     return _resource_locks[group]
+
+
+# ── Prompt 调试转储 ─────────────────────────────────────
+
+def _dump_prompt_debug(messages: list, all_tools: list,
+                       iteration: int, total_chars: int, tool_count: int):
+    """将完整 prompt 转储到 logs/prompt_dump.json，便于排查模型收到的实际内容。
+    每次覆盖写入，避免磁盘膨胀。
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    dump_path = _Path(__file__).parent.parent / "logs" / "prompt_dump.json"
+    dump_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 工具摘要（只保留名称+描述，不输出完整 schema）
+    tool_summary = []
+    for t in all_tools:
+        fn = t.get("function", {})
+        tool_summary.append({
+            "name": fn.get("name", "?"),
+            "desc": (fn.get("description", "") or "")[:80],
+        })
+
+    dump = {
+        "_meta": {
+            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "iteration": iteration,
+            "message_count": len(messages),
+            "total_chars": total_chars,
+            "tool_count": tool_count,
+            "est_tokens": total_chars // 2,  # 粗估：中文约2字符/token
+        },
+        "tools": tool_summary,
+        "messages": [],
+    }
+
+    for i, m in enumerate(messages):
+        role = m.get("role", "?")
+        content = m.get("content", "")
+        # 截断过长内容
+        display = content[:3000] + ("…[截断]" if len(content) > 3000 else "")
+        dump["messages"].append({
+            "index": i,
+            "role": role,
+            "chars": len(content),
+            "content": display,
+        })
+
+    dump_path.write_text(_json.dumps(dump, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
 
 
 class AgentCore:
@@ -1220,6 +1272,7 @@ class AgentCore:
                                on_round_start=None) -> str:
 
        
+        _t0 = time.time()
         messages = [{"role": "system", "content": self._system_prompt}]
 
         # ── 注入实时时间信息（自适应精度：间隔>15分钟用分钟级，否则小时级） ──
@@ -1316,15 +1369,24 @@ class AgentCore:
                 messages.append({"role": "system", "content": summary_text})
             messages.extend(recent_history)
 
-        # 合并核心工具 + 已激活技能的自定义工具（本地模式跳过）
+        # ── 工具按需注入：核心常驻 + 领域匹配 + 目录摘要 ──
         if self._use_local:
             all_tools = []
+            loaded_categories = set()
         else:
             skill_tools = get_active_tool_definitions()
             mcp_tools = get_all_mcp_tool_definitions()
-            all_tools = TOOL_DEFINITIONS + skill_tools + mcp_tools
 
-            # 串联过滤：按用户内置工具配置过滤禁用的工具
+            # 按用户消息关键词匹配领域
+            _msg_for_match = last_user_msg if last_user_msg else user_message
+            loaded_categories = match_categories(_msg_for_match)
+
+            # 筛选内置工具：核心 + 命中领域
+            filtered_builtin = filter_builtin_tools(TOOL_DEFINITIONS, _msg_for_match)
+            # 技能/MCP 工具始终注入（用户自行激活的服务，不参与按需过滤）
+            all_tools = filtered_builtin + skill_tools + mcp_tools
+
+            # 用户禁用的工具过滤
             from config import get_builtin_tool_config
             builtin_cfg = get_builtin_tool_config()
             disabled_tool_names = {name for name, enabled in builtin_cfg.items() if not enabled}
@@ -1333,6 +1395,16 @@ class AgentCore:
                     t for t in all_tools
                     if t.get("function", {}).get("name", "") not in disabled_tool_names
                 ]
+
+            # 注入工具目录（让模型知道全部工具，✅/📋 区分已加载/未加载）
+            _skill_names = [t.get("function", {}).get("name", "?") for t in skill_tools]
+            _mcp_names = [t.get("function", {}).get("name", "?") for t in mcp_tools]
+            catalog_text = build_tool_catalog(
+                loaded_categories,
+                skill_tool_names=_skill_names if _skill_names else None,
+                mcp_tool_names=_mcp_names if _mcp_names else None,
+            )
+            messages.append({"role": "system", "content": catalog_text})
 
 
         # ── 长期记忆说明（必须在对话历史之前注入） ────────────
@@ -1446,7 +1518,25 @@ class AgentCore:
             tool_choice = "auto"
             if forced_tool and forced_tool in [t["function"]["name"] for t in all_tools]:
                 tool_choice = {"type": "function", "function": {"name": forced_tool}}
+
+            # 诊断：打印 system prompt 构建耗时和大小
+            _t1 = time.time()
+            _total_chars = sum(len(m.get("content", "")) for m in messages)
+            _tool_count = len(all_tools)
+            print(f"[诊断] 第{iteration}轮 prompt 构建: {_t1 - _t0:.1f}s, "
+                  f"{len(messages)}条消息, {_total_chars}字符, {_tool_count}个工具", flush=True)
+
+            # ── Prompt 调试转储 ──
             try:
+                from config import get_debug_config
+                if get_debug_config().get("dump_prompt", False):
+                    _dump_prompt_debug(messages, all_tools, iteration,
+                                       _total_chars, _tool_count)
+            except Exception:
+                pass
+
+            try:
+                _api_start = time.time()
                 stream = litellm.completion(
                     model=self._model,
                     max_tokens=self._max_tokens,
@@ -1460,6 +1550,10 @@ class AgentCore:
                     timeout=120,
                 )
                 content, reasoning, stream_tool_calls, finish = self._collect_stream(stream, on_chunk=on_progress)
+                _api_elapsed = time.time() - _api_start
+                _content_len = len(content) if content else 0
+                print(f"[诊断] 第{iteration}轮 API 完成: {_api_elapsed:.1f}s, "
+                      f"回复{_content_len}字, finish={finish}", flush=True)
             except Exception as e:
                 error_msg = str(e).lower()
                 is_retryable = any(kw in error_msg for kw in [
@@ -1482,6 +1576,26 @@ class AgentCore:
                 self._last_reasoning = reasoning
 
             if finish == "stop" or finish == "length":
+                # 工具激活重试：模型暗示需要未加载的工具
+                if (not self._use_local and loaded_categories
+                        and detect_tool_request(content or "")):
+                    print("[工具激活] 检测到模型需要未激活工具，全量注入重试", flush=True)
+                    loaded_categories = set(CATEGORY_ORDER)  # 全部激活
+                    all_tools = TOOL_DEFINITIONS + skill_tools + mcp_tools
+                    if disabled_tool_names:
+                        all_tools = [t for t in all_tools
+                                     if t.get("function", {}).get("name", "") not in disabled_tool_names]
+                    # 替换最后一条目录消息为全量激活版
+                    catalog_text = build_tool_catalog(
+                        loaded_categories,
+                        skill_tool_names=_skill_names if _skill_names else None,
+                        mcp_tool_names=_mcp_names if _mcp_names else None,
+                    )
+                    for i in range(len(messages) - 1, -1, -1):
+                        if messages[i].get("content", "").startswith("【你的工具目录】"):
+                            messages[i] = {"role": "system", "content": catalog_text}
+                            break
+                    continue
                 return content or "（莲心没有说话）"
             elif finish == "tool_calls":
                 from types import SimpleNamespace

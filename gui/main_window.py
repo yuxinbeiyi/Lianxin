@@ -1806,7 +1806,7 @@ class MainWindow(QMainWindow):
     def _on_alarm_clicked(self):
         play_sound("ButtonAll.mp3")
         if self._alarm_dialog is None:
-            self._alarm_dialog = AlarmDialog(self._alarm_manager, self, todo_manager=self._todo_manager)
+            self._alarm_dialog = AlarmDialog(self._alarm_manager, self, todo_manager=self._todo_manager, reminder_manager=self.reminder_manager)
             self._alarm_dialog.alarms_changed.connect(self._on_alarms_changed)
         self._alarm_dialog.show()
         self._alarm_dialog.raise_()
@@ -3594,7 +3594,7 @@ class MainWindow(QMainWindow):
     def _open_reminder_dialog(self):
         play_sound("ButtonMusic.mp3")
         from gui.reminder_dialog import ReminderDialog
-        dlg = ReminderDialog(self)
+        dlg = ReminderDialog(self, manager=self.reminder_manager)
         dlg.show()
 
     def _touch_heartbeat(self):

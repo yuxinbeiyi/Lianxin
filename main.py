@@ -26,6 +26,13 @@ if sys.platform == "win32":
         pass  # 非终端环境（如 IDE 启动）跳过
 import warnings
 import traceback
+import faulthandler
+
+# 启用 faulthandler：即使 C++ 级崩溃（segfault/access violation）也能打印 Python 堆栈
+_FAULT_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "fault.log")
+os.makedirs(os.path.dirname(_FAULT_LOG), exist_ok=True)
+_fault_fd = open(_FAULT_LOG, "a", encoding="utf-8")
+faulthandler.enable(file=_fault_fd, all_threads=True)
 
 # 屏蔽 pydub/TTS 临时文件未关闭的 ResourceWarning 刷屏
 warnings.simplefilter("ignore", ResourceWarning)

@@ -46,6 +46,11 @@ def _load_model():
     try:
         from config import resolve_device, get_device_preference
         dev = resolve_device("funasr")
+
+        # 抑制 transformers 加载远程代码时的 No module named 'model' 警告（无害）
+        import warnings
+        warnings.filterwarnings("ignore", message=".*Loading remote code failed.*")
+
         logger.info(f"🔊 正在加载 FunASR SenseVoice-Small 模型 ({dev})…")
         _model = AutoModel(
             model="iic/SenseVoiceSmall",
@@ -140,12 +145,21 @@ def is_available() -> bool:
 
 
 def warmup():
-    """预热模型：在后台线程加载，不阻塞启动。"""
+    """预热模型：在后台线程加载，不阻塞启动。
+
+    外层 try/except 确保即使 GPU/CUDA 硬崩溃也能安全降级，
+    不会拖垮整个进程。
+    """
     import threading
     def _load():
-        logger.info("🔥 后台预热 FunASR 模型…")
-        m = _load_model()
-        if m:
-            logger.info("🔥 FunASR 预热完成")
+        try:
+            logger.info("🔥 后台预热 FunASR 模型…")
+            m = _load_model()
+            if m:
+                logger.info("🔥 FunASR 预热完成")
+            else:
+                logger.warning("⚠️ FunASR 预热返回 None，语音识别可能不可用")
+        except Exception as e:
+            logger.warning(f"⚠️ FunASR 预热失败: {e}")
     t = threading.Thread(target=_load, daemon=True)
     t.start()

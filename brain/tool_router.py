@@ -1,0 +1,306 @@
+"""
+工具路由器：按需注入工具定义，减少 token 消耗。
+
+三层设计：
+  L1 核心工具（~20个）— 始终注入完整定义，覆盖记忆/时间/表情等高频操作
+  L2 领域工具（~53个）— 按用户消息关键词匹配，命中才注入完整定义
+  L3 工具目录（~300 token）— 始终注入，列出所有工具名+一句话描述，
+      让模型知道"我有哪些武器"，需要时可主动申请激活
+
+激活流程：
+  用户消息 → 关键词匹配领域 → 核心+命中领域(完整定义) + 目录(全部)
+  若模型回复中暗示需要未激活的工具 → 自动重试，全量注入
+"""
+
+from typing import List, Dict, Set, Tuple
+
+# ── 核心工具（始终加载完整定义）────────────────────────────
+CORE_TOOLS: Set[str] = {
+    # 记忆系统
+    "save_memory", "search_memory", "update_memory", "delete_memory",
+    "list_memories", "search_graph_memory", "query_connected_entities",
+    "delete_graph_entity", "add_graph_edge", "remove_graph_edge",
+    # 时间
+    "get_current_time",
+    # 表情
+    "set_expression",
+    # 余额
+    "get_balance",
+    # 技能系统
+    "list_skills", "activate_skill", "deactivate_skill",
+    # 跨端搜索
+    "search_cross_session",
+    # 草稿本
+    "notebook_write", "notebook_read", "notebook_delete",
+}
+
+# ── 领域工具分类 ────────────────────────────────────────
+
+CATEGORY_TOOLS: Dict[str, Set[str]] = {
+    "file": {
+        "read_file", "read_file_chunk", "read_file_lines",
+        "write_file", "edit_file", "list_directory",
+        "search_files", "search_files_everything", "get_file_info_everything",
+        "glob_files", "grep_file", "diff_files",
+    },
+    "code": {
+        "run_python_code", "search_code", "run_command", "run_shell",
+        "code_structure", "code_goto_def", "code_find_refs",
+        "code_diagnostics", "git_status",
+    },
+    "web": {
+        "web_search", "fetch_webpage", "fetch_webpage_browser",
+        "fetch_webpage_via_api", "fetch_webpage_stealth",
+        "bilibili_search", "bilibili_add_tag", "bilibili_list_tags",
+    },
+    "office": {
+        "read_excel", "write_excel", "copy_excel_content",
+        "write_docx", "format_document",
+    },
+    "media": {
+        "ocr_image", "ocr_batch", "describe_image",
+        "capture_from_camera", "capture_desktop",
+        "generate_image", "generate_video",
+    },
+    "auto": {
+        "open_app", "get_clipboard", "send_file_to_qq",
+        "toggle_proactive_chat", "plan_tasks", "delegate_task", "track_tasks",
+    },
+    "todo": {
+        "add_todo", "list_todos", "complete_todo",
+    },
+    "weather": {
+        "get_weather", "set_user_city",
+    },
+}
+
+# ── 关键词 → 领域映射 ────────────────────────────────────
+
+CATEGORY_KEYWORDS: Dict[str, List[str]] = {
+    "file": [
+        "文件", "读取", "写入", "编辑", "目录", "文件夹", "路径",
+        "保存", "创建文件", "新建文件", "修改文件", "文档内容",
+        "打开文件", "查看文件", "看看文件", "帮我写", "帮我改",
+        "read", "write", "edit", "file", "directory", "folder",
+    ],
+    "code": [
+        "代码", "编程", "python", "运行", "调试", "bug", "函数",
+        "程序", "脚本", "script", "run", "重构", "定义", "引用",
+        "git", "commit", "分支", "仓库", "命令行", "终端", "shell",
+    ],
+    "web": [
+        "搜索", "网页", "网络", "上网", "查一下", "百度", "谷歌",
+        "bilibili", "B站", "视频", "fetch", "抓取", "链接",
+        "帮我搜", "查查", "最新", "新闻", "search", "web", "internet",
+    ],
+    "office": [
+        "excel", "表格", "word", "文档", "docx", "xlsx",
+        "排版", "格式化", "office", "办公", "报告",
+    ],
+    "media": [
+        "图片", "图像", "照片", "截图", "拍照", "相机",
+        "ocr", "识别文字", "提取文字", "生成图", "生成视频",
+        "画一张", "画个", "生成一张", "做一张", "image", "photo", "video",
+    ],
+    "auto": [
+        "打开", "启动", "应用", "程序", "剪贴板", "复制的内容",
+        "QQ", "发到QQ", "计划", "自动化", "定时", "桌面", "屏幕",
+    ],
+    "todo": [
+        "待办", "提醒", "todo", "task", "清单", "记一下", "帮我记", "别忘了",
+    ],
+    "weather": [
+        "天气", "温度", "下雨", "晴天", "weather", "气候",
+        "冷不冷", "热不热", "刮风", "下雪",
+    ],
+}
+
+# ── 工具简短描述（用于目录） ──────────────────────────────
+
+TOOL_DESCRIPTIONS: Dict[str, str] = {
+    "read_file": "读取文件",
+    "read_file_chunk": "读取长文件分块",
+    "read_file_lines": "按行号范围读取",
+    "write_file": "写入/覆盖文件",
+    "edit_file": "精确替换内容",
+    "list_directory": "列出目录",
+    "search_files": "按文件名搜索",
+    "search_files_everything": "全盘极速搜索",
+    "get_file_info_everything": "文件元数据",
+    "glob_files": "模式匹配文件",
+    "grep_file": "文件内容搜索",
+    "diff_files": "对比文件差异",
+    "run_python_code": "沙箱执行Python",
+    "search_code": "正则搜索代码",
+    "run_command": "执行系统命令",
+    "run_shell": "Shell命令增强",
+    "code_structure": "列出代码结构",
+    "code_goto_def": "跳转到定义",
+    "code_find_refs": "查找引用",
+    "code_diagnostics": "检查代码错误",
+    "git_status": "查看Git状态",
+    "web_search": "联网搜索",
+    "fetch_webpage": "提取网页内容",
+    "fetch_webpage_browser": "浏览器提取网页",
+    "fetch_webpage_via_api": "Jina解析网页",
+    "fetch_webpage_stealth": "TLS伪装提取",
+    "bilibili_search": "B站搜索视频",
+    "bilibili_add_tag": "添加B站标签",
+    "bilibili_list_tags": "查看B站标签",
+    "read_excel": "读取Excel",
+    "write_excel": "写入Excel",
+    "copy_excel_content": "复制Excel内容",
+    "write_docx": "写入Word",
+    "format_document": "Markdown转Word",
+    "ocr_image": "图片文字识别",
+    "ocr_batch": "批量文字识别",
+    "describe_image": "理解图片内容",
+    "capture_from_camera": "摄像头拍照",
+    "capture_desktop": "截取屏幕",
+    "generate_image": "AI生成图片",
+    "generate_video": "AI生成视频",
+    "open_app": "打开应用程序",
+    "get_clipboard": "读取剪贴板",
+    "send_file_to_qq": "发文件到QQ",
+    "toggle_proactive_chat": "开关QQ主动聊天",
+    "plan_tasks": "分解复杂任务",
+    "delegate_task": "委派子代理",
+    "track_tasks": "追踪任务进度",
+    "add_todo": "添加待办",
+    "list_todos": "列出待办",
+    "complete_todo": "完成待办",
+    "get_weather": "查询天气",
+    "set_user_city": "设置用户城市",
+}
+
+# ── 领域中文名 ──────────────────────────────────────────
+
+CATEGORY_NAMES: Dict[str, str] = {
+    "file": "文件操作",
+    "code": "代码开发",
+    "web": "网页搜索",
+    "office": "办公文档",
+    "media": "图像媒体",
+    "auto": "系统自动化",
+    "todo": "待办清单",
+    "weather": "天气查询",
+}
+
+# 按目录显示顺序
+CATEGORY_ORDER = ["file", "code", "web", "office", "media", "auto", "todo", "weather"]
+
+
+def match_categories(user_message: str) -> Set[str]:
+    """根据用户消息关键词匹配需要加载的领域。
+
+    每个领域只要命中任意一个关键词即激活。
+    """
+    if not user_message:
+        return set()
+
+    msg_lower = user_message.lower()
+    matched: Set[str] = set()
+
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            if kw.lower() in msg_lower:
+                matched.add(category)
+                break
+
+    return matched
+
+
+def get_active_tool_names(user_message: str) -> Set[str]:
+    """获取当前应该加载完整定义的工具名集合。
+
+    包括：核心工具 + 关键词命中的领域工具
+    """
+    categories = match_categories(user_message)
+    needed = set(CORE_TOOLS)
+    for cat in categories:
+        needed.update(CATEGORY_TOOLS.get(cat, set()))
+    return needed
+
+
+def filter_builtin_tools(all_tools: List[dict], user_message: str) -> List[dict]:
+    """从全部内置工具中筛选出当前需要的工具。
+
+    Args:
+        all_tools: TOOL_DEFINITIONS 完整列表
+        user_message: 用户最后一条消息
+
+    Returns:
+        筛选后的工具列表（仅核心+命中领域）
+    """
+    active = get_active_tool_names(user_message)
+    return [t for t in all_tools
+            if t.get("function", {}).get("name", "") in active]
+
+
+def build_tool_catalog(loaded_categories: Set[str],
+                       skill_tool_names: list = None,
+                       mcp_tool_names: list = None) -> str:
+    """构建工具目录 system 消息。
+
+    目录始终列出所有工具，但用 ✅/📋 区分已加载和未加载。
+    """
+    lines = [
+        "【你的工具目录】",
+        "你拥有以下工具能力。标有 ✅ 的工具当前已加载完整参数，可直接调用。",
+        "标有 📋 的工具仅目录可见——如需使用，请在回复中说明，我会立即激活对应工具。",
+        "",
+    ]
+
+    # 核心工具
+    core_names = sorted(CORE_TOOLS)
+    core_desc = "、".join(
+        f"{n}({TOOL_DESCRIPTIONS.get(n, '')})" for n in core_names
+    )
+    lines.append(f"✅ 核心工具（始终可用）：{core_desc}")
+    lines.append("")
+
+    # 领域工具
+    for cat in CATEGORY_ORDER:
+        tools = sorted(CATEGORY_TOOLS[cat])
+        count = len(tools)
+        name = CATEGORY_NAMES[cat]
+        prefix = "✅" if cat in loaded_categories else "📋"
+        tool_list = "、".join(
+            f"{t}({TOOL_DESCRIPTIONS.get(t, '')})" for t in tools
+        )
+        lines.append(f"{prefix} {name}（{count}个）：{tool_list}")
+
+    # 技能工具（用户激活的服务，始终可用）
+    if skill_tool_names:
+        lines.append("")
+        lines.append(f"✅ 技能服务（{len(skill_tool_names)}个，始终可用）："
+                     + "、".join(skill_tool_names))
+
+    # MCP 工具（用户激活的外部服务，始终可用）
+    if mcp_tool_names:
+        lines.append("")
+        lines.append(f"✅ MCP服务（{len(mcp_tool_names)}个，始终可用）："
+                     + "、".join(mcp_tool_names))
+
+    return "\n".join(lines)
+
+
+def detect_tool_request(response_text: str) -> bool:
+    """检测模型回复是否暗示需要未激活的工具。
+
+    如果模型说"我没有这个工具"、"需要...工具"等，返回 True。
+    """
+    if not response_text:
+        return False
+
+    patterns = [
+        "我没有这个工具", "我没有对应的工具", "没有这个功能",
+        "需要.*工具", "缺少.*工具", "无法调用",
+        "没有.*权限", "没有.*能力",
+        "请激活", "需要激活",
+    ]
+    import re
+    for p in patterns:
+        if re.search(p, response_text):
+            return True
+    return False

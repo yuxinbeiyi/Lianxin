@@ -58,20 +58,24 @@ class CharacterWidget(QWidget):
 
         self._build_ui()
 
-        config_path = self._assets_dir / "animation_config.json"
-        self.anim_machine = AnimationStateMachine(
-            label=self._gif_label,
-            config_path=str(config_path),
-            assets_dir=str(self._gif_dir)
-        )
-        self.anim_machine.state_changed.connect(self._on_state_changed)
-
+        # 提前读取头像配置，静态模式下跳过 GIF 预加载，节省资源
         from config import get_avatar_config
         avatar_cfg = get_avatar_config()
         self._avatar_mode = avatar_cfg.get("mode", "animated")
         self._static_image_path = avatar_cfg.get("static_image_path", "")
+        _is_static = (self._avatar_mode == "static" and self._static_image_path
+                      and os.path.exists(self._static_image_path))
 
-        if self._avatar_mode == "static" and self._static_image_path and os.path.exists(self._static_image_path):
+        config_path = self._assets_dir / "animation_config.json"
+        self.anim_machine = AnimationStateMachine(
+            label=self._gif_label,
+            config_path=str(config_path),
+            assets_dir=str(self._gif_dir),
+            skip_initial=_is_static,
+        )
+        self.anim_machine.state_changed.connect(self._on_state_changed)
+
+        if _is_static:
             self._apply_static_avatar(self._static_image_path)
         else:
             self.anim_machine.set_mode("normal")

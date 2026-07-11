@@ -15,14 +15,14 @@ from utils.settings import get_settings
 
 
 class ReminderDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, manager=None):
         super().__init__(parent)
         self.setWindowTitle("⏰ 智能提醒")
         self.setMinimumSize(500, 400)
         self.resize(550, 450)
         self.setModal(False)
 
-        self.manager = ReminderManager()
+        self.manager = manager if manager is not None else ReminderManager()
         self.settings = get_settings()
 
         self._build_ui()

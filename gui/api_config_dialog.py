@@ -40,11 +40,16 @@ class _TestWorker(QThread):
     def run(self):
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=self._api_key, base_url=self._base_url)
+            client = OpenAI(
+                api_key=self._api_key,
+                base_url=self._base_url,
+                timeout=30.0,  # 30 秒超时，避免 API 故障时永远卡住
+            )
             kwargs = dict(
                 model=self._model,
                 max_tokens=16,
                 messages=[{"role": "user", "content": "你好"}],
+                timeout=30.0,
             )
             # 本地模型温度可能需要设为 0 避免随机性
             if self._is_local:

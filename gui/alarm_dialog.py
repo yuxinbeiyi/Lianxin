@@ -24,10 +24,11 @@ class AlarmDialog(QDialog):
     # 信号：闹钟列表变化时通知主窗口
     alarms_changed = pyqtSignal()
 
-    def __init__(self, alarm_manager, parent=None, todo_manager=None):
+    def __init__(self, alarm_manager, parent=None, todo_manager=None, reminder_manager=None):
         super().__init__(parent)
         self._manager = alarm_manager  # 使用主窗口传入的实例
         self._todo_manager = todo_manager  # 待办管理器
+        self._reminder_manager = reminder_manager  # 提醒管理器（共享实例）
         self.setWindowTitle("⏰ 闹钟&提醒")
         self.setMinimumSize(550, 620)
         self.resize(580, 680)
@@ -487,7 +488,6 @@ class AlarmDialog(QDialog):
 
     def _build_reminder_tab(self):
         """构建提醒管理标签页"""
-        from utils.reminder_manager import ReminderManager
         from utils.settings import get_settings
 
         tab = QWidget()
@@ -495,7 +495,9 @@ class AlarmDialog(QDialog):
         layout.setSpacing(12)
         layout.setContentsMargins(12, 12, 12, 12)
 
-        self._reminder_manager = ReminderManager()
+        if self._reminder_manager is None:
+            from utils.reminder_manager import ReminderManager
+            self._reminder_manager = ReminderManager()
         self._reminder_settings = get_settings()
 
         # 全局智能提醒开关

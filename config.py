@@ -1080,3 +1080,13 @@ def get_bilibili_cookie() -> str:
     if jct:
         parts.append(f"bili_jct={jct}")
     return "; ".join(parts)
+
+
+def get_debug_config() -> dict:
+    """获取调试配置。目前在 user_config.json 中无对应 UI，
+    可手动在 user_config.json 添加 `"debug": {"dump_prompt": true}` 来启用。
+    """
+    try:
+        return _load_full_config().get("debug", {})
+    except Exception:
+        return {}

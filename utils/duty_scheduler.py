@@ -662,9 +662,9 @@ class SmartReminderDuty(Duty):
         due = rm.get_due_reminders()
         if not due:
             return False
-        # 标记已触发
+        # 标记已触发（持久化到文件，避免重复提醒）
         for d in due:
-            d["triggered"] = True
+            rm.mark_triggered(d["id"])
         # 构建提醒文本
         names = [d.get("name", d.get("title", "")) for d in due]
         self._pending_names = names
