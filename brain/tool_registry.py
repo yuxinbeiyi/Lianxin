@@ -50,8 +50,7 @@ CATEGORIES = {
     "🎵 音乐日记": [
         "control_music", "get_music_playlist", "get_music_status",
         "read_diary", "write_diary",
-        "read_note", "organize_note", "notebook_write",
-        "notebook_read", "notebook_delete",
+        "read_note", "organize_note",
     ],
     "🤖 代理调度": [
         "plan_tasks", "delegate_task", "track_tasks",

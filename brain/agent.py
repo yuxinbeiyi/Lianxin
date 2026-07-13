@@ -311,16 +311,6 @@ class AgentCore:
         except Exception:
             pass
 
-        # 清除上次会话的普通草稿本笔记（持久笔记不受影响）
-        try:
-            from brain.notebook import get_notebook
-            nb = get_notebook()
-            persisted = {k: n for k, n in nb.get_all().items() if n.persist}
-            nb._store.clear()
-            nb._store.update(persisted)
-        except Exception:
-            pass
-
         self.history.append({"role": "user", "content": user_message})
         if not self._session_titled:
             title = user_message.strip()[:20]

@@ -12,7 +12,6 @@ triggers: ["报告", "排版", "文档", "Word", "草稿", "笔记", "notebook",
 
 ### 2. 内容起草
 - 逐章起草，每章先列出要点让用户确认
-- 长文档中途用 notebook_write 暂存阶段性内容
 
 ### 3. 排版输出
 - 用户确认内容后，调 **format_document** 生成排版精美的 .docx
@@ -27,11 +26,3 @@ triggers: ["报告", "排版", "文档", "Word", "草稿", "笔记", "notebook",
 ### 文档生成
 - **format_document(content, output_path)** — 将 Markdown 转为格式优美的 Word 文档（推荐）
 - **write_docx(file_path, content)** — 直接写入 .docx 文件
-
-### 草稿本（不受对话压缩影响）
-- **notebook_write(key="名称", value="内容")** — 写入临时笔记
-- **notebook_write(key="名称", value="内容", persist=True)** — 持久笔记（跨会话保留）
-- **notebook_read(key="名称")** — 读取；notebook_read() — 列出所有
-- **notebook_delete(key="名称")** — 删除
-- key 只支持英文/数字/下划线/连字符
-- 适用场景：跨文件汇总、长内容分批、阶段性结论、写作中途暂存

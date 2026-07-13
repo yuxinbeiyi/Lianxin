@@ -1666,57 +1666,6 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "notebook_write",
-            "description": (
-                "写入会话草稿本。草稿本是一个不会被对话压缩影响的临时存储区，"
-                "用于存储中间结果、搜索结果汇总、代码片段、任务计划等。"
-                "标记 persist=True 的笔记可跨会话保留。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "key": {"type": "string", "description": "笔记标题（英文/数字/下划线），如 'search_results'、'file_summary'"},
-                    "value": {"type": "string", "description": "笔记内容，可包含多行文本，最大 8000 字符"},
-                    "persist": {"type": "boolean", "description": "是否持久化（跨会话保留），默认 false"}
-                },
-                "required": ["key", "value"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "notebook_read",
-            "description": (
-                "读取会话草稿本中的笔记。不传 key 则列出所有笔记目录。"
-                "当需要回顾之前保存的中间结果时使用。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "key": {"type": "string", "description": "要读取的笔记标题，不传则列出所有笔记"}
-                },
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "notebook_delete",
-            "description": "删除草稿本中的一条笔记。当某条笔记不再需要时使用。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "key": {"type": "string", "description": "要删除的笔记标题"}
-                },
-                "required": ["key"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "code_goto_def",
             "description": "跳转到 Python 函数/类/变量的定义位置。给定文件和行号，精确返回定义的文件路径、行号和代码。支持跨文件追踪（如导入的函数）。",
             "parameters": {
@@ -4754,16 +4703,6 @@ def track_tasks(todos: list) -> str:
     from brain.task_tracker import get_task_tracker
     tracker = get_task_tracker()
     return tracker.update(todos)
-# ── 临时草稿本 ──
-def _notebook_exec(action: str, inp: dict) -> str:
-    from brain.notebook import get_notebook
-    nb = get_notebook()
-    if action == "write":
-        return nb.write(inp.get("key", ""), inp.get("value", ""), inp.get("persist", False))
-    elif action == "read":
-        return nb.read(inp.get("key", ""))
-    else:
-        return nb.delete(inp.get("key", ""))
 def _track_tasks_exec(todos: list) -> str:
     from brain.task_tracker import get_task_tracker
     return get_task_tracker().update(todos)
@@ -4873,9 +4812,6 @@ TOOL_EXECUTORS = {
     ),
     # 第三阶段：任务进度追踪
     "track_tasks": lambda inp: _track_tasks_exec(inp.get("todos", [])),
-    "notebook_write": lambda inp: _notebook_exec("write", inp),
-    "notebook_read": lambda inp: _notebook_exec("read", inp),
-    "notebook_delete": lambda inp: _notebook_exec("delete", inp),
     "code_goto_def":    lambda inp: goto_definition(inp["file_path"], inp["line"], inp.get("symbol", ""), inp.get("column", 0)),
     "code_find_refs":   lambda inp: find_references(inp["file_path"], inp["line"], inp.get("symbol", ""), inp.get("column", 0)),
     "code_diagnostics": lambda inp: get_diagnostics(inp["file_path"]),

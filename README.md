@@ -588,7 +588,7 @@ python main.py --autostart
 | `add_alarm` / `list_alarms` / `delete_alarm` | 闹钟管理 |
 | `control_music` / `get_music_playlist` / `get_music_status` | 音乐盒控制 |
 | `read_diary` / `write_diary` | 日记读写 |
-| `read_note` / `organize_note` / `notebook_write` / `notebook_read` / `notebook_delete` | 备忘本与草稿本 |
+| `read_note` / `organize_note` | 备忘本 |
 | `search_cross_session` | 跨会话/跨设备搜索 |
 | `send_file_to_qq` | QQ 文件发送 |
 
@@ -682,7 +682,6 @@ ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
 │   ├── hardware_bridge.py   #   ESP32 WebSocket 云中继桥接
 │   ├── browser_controller.py #  Playwright 浏览器控制
 │   ├── heartbeat.py         #   心跳自检引擎
-│   ├── notebook.py          #   草稿本/代码执行
 │   ├── task_tracker.py      #   任务追踪
 │   ├── weather.py           #   和风天气集成
 │   ├── vision.py            #   视觉分析统一入口

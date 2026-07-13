@@ -26,8 +26,6 @@ CORE_TOOLS: Set[str] = {
     "list_skills", "activate_skill", "deactivate_skill",
     # 跨端搜索
     "search_cross_session",
-    # 草稿本
-    "notebook_write", "notebook_read", "notebook_delete",
     # 文件搜索（最高频的文件操作入口）
     "search_files_everything",
 }
