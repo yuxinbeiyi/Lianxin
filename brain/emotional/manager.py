@@ -17,6 +17,7 @@ EmotionManager v2.0：涟漪情感系统统一入口。
 
 import logging
 import math
+import random
 import time
 from typing import Optional
 
@@ -269,7 +270,7 @@ class EmotionManager:
     # ── 内部方法（v2.0） ────────────────────────────────
 
     def _apply_event_v2(self, event: Event):
-        """应用事件效果（v2.0：冷却 + 会话上限 + 情绪分量）。"""
+        """应用事件效果（v2.1：支持随机范围 + 冷却 + 会话上限 + 情绪分量）。"""
         now = time.time()
 
         # 冷却检查
@@ -280,8 +281,14 @@ class EmotionManager:
         ]
         multiplier = max(0.25, 1.0 - 0.4 * len(recent_same))
 
+        # 随机范围：如果事件设置了 random_range，从中随机取值
+        base_delta = event.primary_delta
+        if event.random_range is not None:
+            lo, hi = event.random_range
+            base_delta = random.uniform(lo, hi)
+
         # 应用主影响（含会话上限）
-        delta = event.primary_delta * multiplier
+        delta = base_delta * multiplier
         actual = self.state.can_apply(event.primary_need, delta)
         if actual != 0:
             old = getattr(self.state.needs, event.primary_need)

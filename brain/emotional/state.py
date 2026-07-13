@@ -60,7 +60,8 @@ class Event:
     """一次影响情感状态的事件。"""
     type: str                         # 事件类型标识
     primary_need: str                 # 主影响需求
-    primary_delta: float              # 主影响量
+    primary_delta: float              # 主影响量（固定值）
+    random_range: tuple = None        # 随机范围 (min, max)，设置后忽略 primary_delta
     secondary: dict = field(default_factory=dict)  # 邻域共振 {need: delta}
     deep_delta: float = 0.0           # 对深层信任的影响
     severity: int = 1                 # 0-5 严重等级
