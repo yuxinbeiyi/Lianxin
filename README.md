@@ -150,7 +150,7 @@
 
 > 渐进式披露架构：技能知识按需注入 System Prompt，12 个 `_prompt_guides` 模块按关键词触发（搜索、浏览器、文件编辑、视觉OCR、B站、音乐、日记备忘、文档笔记、长内容、子代理、工具生态、语音），与全量注入相比大幅节省 Token。
 > 
-> **Token 管控优化**：核心工具精简至 14 个（移除易触发死循环的 `set_expression`、记忆工具 10→4、新增高频文件搜索 `search_files_everything`），记忆说明从 400 token 压缩至 60 token，防幻觉提醒利用近因效应注入。单轮输入 token 降低约 **26%**（~14,800 → ~11,000）。
+> **Token 管控优化**：核心工具精简至 14 个（移除易触发死循环的 `set_expression`、记忆工具 10→4、新增高频文件搜索 `search_files_everything`），记忆说明从 400 token 压缩至 60 token，防幻觉提醒利用近因效应注入。通过三层按需注入架构，简单聊天时工具从 90+ 降至 20-30，单轮输入 token 降低约 **48%**（~10,000 → ~5,200）。
 
 ### 🧠 棱镜记忆系统 · 三引擎
 
@@ -507,7 +507,7 @@ python main.py --autostart
 
 ## 🛠️ 内置工具清单
 
-莲心向 AI 模型暴露 **73 个 Function Calling 工具**（核心14 + 领域53，不含技能和 MCP 扩展），按类别组织：
+莲心向 AI 模型暴露 **73 个 Function Calling 工具**（核心14 + 领域52 + 图数据库4 + 其他3），按类别组织：
 
 <details open>
 <summary><b>📁 文件操作（9 个）</b></summary>
@@ -567,7 +567,7 @@ python main.py --autostart
 </details>
 
 <details open>
-<summary><b>🧠 记忆与知识（10 个 — 核心4 + 领域6）</b></summary>
+<summary><b>🧠 记忆与知识（8 个 — 核心4 + 图数据库4）</b></summary>
 
 | 工具 | 层级 | 说明 |
 |------|:---:|------|
