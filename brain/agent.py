@@ -1340,6 +1340,15 @@ class AgentCore:
             except Exception:
                 pass
 
+            # ── 图谱发现自动注入：遍历"用户"节点，发现关联实体和关系 ──
+            try:
+                from brain.graph_memory import get_graph_summary_for_user
+                graph_summary = get_graph_summary_for_user(depth=2)
+                if graph_summary:
+                    messages.append({"role": "system", "content": graph_summary})
+            except Exception:
+                pass
+
         # ── 对话历史：云端模式滑动窗口 + 摘要压缩 ──────
         # 必须在所有 system 注入之后，确保用户消息是最后一条非 system 消息
         if self._use_local:

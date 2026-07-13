@@ -39,7 +39,7 @@ CATEGORIES = {
     "🧠 记忆知识": [
         "save_memory", "search_memory", "update_memory",
         "delete_memory", "list_memories",
-        "search_graph_memory", "query_connected_entities",
+        "search_graph_memory", "discover_connections", "query_connected_entities",
         "delete_graph_entity", "add_graph_edge", "remove_graph_edge",
         "search_cross_session",
     ],

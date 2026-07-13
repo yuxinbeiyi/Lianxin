@@ -144,6 +144,31 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "discover_connections",
+            "description": (
+                "图谱关系发现引擎：从指定实体出发，遍历知识图谱，发现所有直接和间接关联的实体、关系、路径。"
+                "与 search_graph_memory 不同——discover 是图遍历（发现你不知道的关联），search 是关键词搜索（找你知道的）。"
+                "适用于「我和XX有什么关系」「这个项目涉及哪些人」「把所有相关的东西找出来」。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "entity_name": {
+                        "type": "string",
+                        "description": "起始实体名称，如'用户'、'莲心AI'、'张三'。默认'用户'"
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "遍历深度（1=直接关联, 2=两跳间接关联, 最多3），默认2"
+                    }
+                },
+                "required": ["entity_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "read_file",
             "description": (
                 "读取指定路径文件的内容（第0块，即开头部分）。"
@@ -4079,6 +4104,21 @@ def _ensure_migrated():
         pass
 
 
+def _discover_connections(entity_name: str, depth: int = 2) -> str:
+    """图谱关系发现：从实体出发 BFS 遍历，返回结构化发现摘要。"""
+    if not entity_name or not entity_name.strip():
+        return "请提供要发现的实体名称。"
+    if depth < 1:
+        depth = 1
+    if depth > 3:
+        depth = 3
+    from brain.graph_memory import discover_from_entity
+    discovery = discover_from_entity(entity_name.strip(), depth=depth)
+    if not discovery["direct_relations"] and not discovery["indirect_relations"]:
+        return f"在图谱中未找到与「{entity_name}」相关的任何关系。"
+    return discovery["summary"]
+
+
 def _search_graph_memory(keywords, entity_type: str = None) -> str:
     """在图记忆中搜索实体关联，同时搜索图边和分类事实。"""
     if isinstance(keywords, list):
@@ -4762,6 +4802,7 @@ TOOL_EXECUTORS = {
     "update_memory":   lambda inp: _update_memory(inp["old_keyword"], inp["new_fact"], inp.get("category")),
     "delete_memory":   lambda inp: _delete_memory(inp["keyword"], inp.get("category")),
     "list_memories":   lambda inp: _list_memories(),
+    "discover_connections": lambda inp: _discover_connections(inp["entity_name"], inp.get("depth", 2)),
     "search_graph_memory": lambda inp: _search_graph_memory(inp["keywords"], inp.get("entity_type")),
     "query_connected_entities": lambda inp: _query_connected_entities(inp["entity_name"], inp.get("depth", 1)),
     "delete_graph_entity": lambda inp: _delete_graph_entity(inp["entity_name"]),

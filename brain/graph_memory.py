@@ -241,10 +241,8 @@ def query_by_relation(relation_keyword: str, head_type: str = None,
 def query_connected(entity_name: str, depth: int = 1) -> list[dict]:
     """BFS 多跳遍历，找到与指定实体间接关联的实体和路径。"""
     if depth > 3:
-        depth = 3  # 安全上限
-
+        depth = 3
     conn = _get_conn()
-    # 先找到起始实体
     start_rows = conn.execute(
         "SELECT id, name, entity_type FROM graph_entities WHERE name LIKE ? LIMIT 3",
         ("%" + entity_name.strip() + "%",)
@@ -257,37 +255,12 @@ def query_connected(entity_name: str, depth: int = 1) -> list[dict]:
 
     for start in start_rows:
         current_ids = {start["id"]}
-        # 第 0 跳：直接关联边
-        direct_rows = conn.execute("""
-            SELECT h.name AS head, e.head_type, e.relation,
-                   t.name AS tail, e.tail_type, e.strength
-            FROM graph_edges e
-            JOIN graph_entities h ON e.head_id = h.id
-            JOIN graph_entities t ON e.tail_id = t.id
-            WHERE e.head_id = ? OR e.tail_id = ?
-            ORDER BY e.strength DESC LIMIT 20
-        """, (start["id"], start["id"])).fetchall()
-
-        for r in direct_rows:
-            key = (r["head"], r["relation"], r["tail"])
-            if key not in visited:
-                visited.add(key)
-                results.append(dict(r))
-                current_ids.add(conn.execute(
-                    "SELECT id FROM graph_entities WHERE name=?",
-                    (r["head"],)
-                ).fetchone()["id"])
-                current_ids.add(conn.execute(
-                    "SELECT id FROM graph_entities WHERE name=?",
-                    (r["tail"],)
-                ).fetchone()["id"])
-
-        # 第 N 跳
-        for _ in range(1, depth):
+        for hop in range(depth):
             if not current_ids:
                 break
             placeholders = ",".join("?" * len(current_ids))
-            next_rows = conn.execute(f"""
+            ids_list = list(current_ids)
+            rows = conn.execute(f"""
                 SELECT h.name AS head, e.head_type, e.relation,
                        t.name AS tail, e.tail_type, e.strength
                 FROM graph_edges e
@@ -295,19 +268,161 @@ def query_connected(entity_name: str, depth: int = 1) -> list[dict]:
                 JOIN graph_entities t ON e.tail_id = t.id
                 WHERE e.head_id IN ({placeholders}) OR e.tail_id IN ({placeholders})
                 ORDER BY e.strength DESC LIMIT 30
-            """, list(current_ids) + list(current_ids)).fetchall()
+            """, ids_list + ids_list).fetchall()
 
             new_ids = set()
-            for r in next_rows:
+            for r in rows:
                 key = (r["head"], r["relation"], r["tail"])
                 if key not in visited:
                     visited.add(key)
                     results.append(dict(r))
-            if not new_ids:
-                break
-            current_ids = new_ids
+                hid = conn.execute(
+                    "SELECT id FROM graph_entities WHERE name=?", (r["head"],)
+                ).fetchone()
+                tid = conn.execute(
+                    "SELECT id FROM graph_entities WHERE name=?", (r["tail"],)
+                ).fetchone()
+                if hid:
+                    new_ids.add(hid["id"])
+                if tid:
+                    new_ids.add(tid["id"])
+            current_ids = new_ids - current_ids  # 只探索新发现的实体
 
     return results
+
+
+def discover_from_entity(entity_name: str, depth: int = 2) -> dict:
+    """从指定实体出发，BFS 遍历图并返回结构化发现摘要。
+
+    返回: {
+        "entity": "用户",
+        "direct_relations": [...],    # 直接关联的边
+        "indirect_relations": [...],  # 间接关联的边
+        "entities_discovered": [...], # 发现的实体列表
+        "relation_groups": {...},     # 按关系类型分组
+        "summary": "..."              # 自然语言摘要
+    }
+    """
+    if depth > 3:
+        depth = 3
+    conn = _get_conn()
+
+    start_rows = conn.execute(
+        "SELECT id, name, entity_type FROM graph_entities WHERE name LIKE ? LIMIT 3",
+        ("%" + entity_name.strip() + "%",)
+    ).fetchall()
+    if not start_rows:
+        return {"entity": entity_name, "direct_relations": [], "indirect_relations": [],
+                "entities_discovered": [], "relation_groups": {}, "summary": "未找到该实体。"}
+
+    visited_edges = set()
+    visited_entities = set()
+    direct_relations = []
+    indirect_relations = []
+    entities_discovered = []
+
+    for start in start_rows:
+        visited_entities.add(start["name"])
+        current_ids = {start["id"]}
+
+        for hop in range(depth):
+            if not current_ids:
+                break
+            placeholders = ",".join("?" * len(current_ids))
+            ids_list = list(current_ids)
+            rows = conn.execute(f"""
+                SELECT h.name AS head, e.head_type, e.relation,
+                       t.name AS tail, e.tail_type, e.strength
+                FROM graph_edges e
+                JOIN graph_entities h ON e.head_id = h.id
+                JOIN graph_entities t ON e.tail_id = t.id
+                WHERE e.head_id IN ({placeholders}) OR e.tail_id IN ({placeholders})
+                ORDER BY e.strength DESC LIMIT 30
+            """, ids_list + ids_list).fetchall()
+
+            new_ids = set()
+            for r in rows:
+                key = (r["head"], r["relation"], r["tail"])
+                if key not in visited_edges:
+                    visited_edges.add(key)
+                    d = dict(r)
+                    if hop == 0:
+                        direct_relations.append(d)
+                    else:
+                        indirect_relations.append(d)
+                for name in (r["head"], r["tail"]):
+                    if name not in visited_entities:
+                        visited_entities.add(name)
+                        entities_discovered.append(name)
+                hid = conn.execute(
+                    "SELECT id FROM graph_entities WHERE name=?", (r["head"],)
+                ).fetchone()
+                tid = conn.execute(
+                    "SELECT id FROM graph_entities WHERE name=?", (r["tail"],)
+                ).fetchone()
+                if hid:
+                    new_ids.add(hid["id"])
+                if tid:
+                    new_ids.add(tid["id"])
+            current_ids = new_ids - current_ids
+
+    # 按关系类型分组
+    relation_groups = {}
+    for r in direct_relations + indirect_relations:
+        rel = r["relation"]
+        if rel not in relation_groups:
+            relation_groups[rel] = []
+        relation_groups[rel].append(r)
+
+    # 生成自然语言摘要
+    summary_lines = [f"「{entity_name}」的图谱发现："]
+    if direct_relations:
+        summary_lines.append(f"  直接关联 {len(direct_relations)} 条关系：")
+        for r in direct_relations[:8]:
+            summary_lines.append(
+                f"    · {r['head']} —[{r['relation']}]→ {r['tail']} [强度:{r['strength']}]"
+            )
+    if indirect_relations:
+        summary_lines.append(f"  间接关联 {len(indirect_relations)} 条关系：")
+        for r in indirect_relations[:5]:
+            summary_lines.append(
+                f"    · {r['head']} —[{r['relation']}]→ {r['tail']} [强度:{r['strength']}]"
+            )
+    if entities_discovered:
+        unique_entities = list(set(entities_discovered))[:10]
+        summary_lines.append(f"  发现的实体: {', '.join(unique_entities)}")
+
+    return {
+        "entity": entity_name,
+        "direct_relations": direct_relations,
+        "indirect_relations": indirect_relations,
+        "entities_discovered": list(set(entities_discovered)),
+        "relation_groups": relation_groups,
+        "summary": "\n".join(summary_lines),
+    }
+
+
+def get_graph_summary_for_user(depth: int = 2) -> str:
+    """获取「用户」实体的图谱发现摘要，用于自动注入 system prompt。
+    返回空字符串表示无可用图谱。"""
+    from config import get_graph_config
+    cfg = get_graph_config()
+    if not cfg.get("graph_enabled", True):
+        return ""
+
+    discovery = discover_from_entity("用户", depth=depth)
+    if not discovery["direct_relations"] and not discovery["indirect_relations"]:
+        return ""
+
+    # 精简 version：只返回直接关系 + 关键实体
+    lines = ["【图谱发现】"]
+    for r in discovery["direct_relations"][:6]:
+        lines.append(f"  {r['head']} —[{r['relation']}]→ {r['tail']}")
+    if discovery["entities_discovered"]:
+        unique = [e for e in discovery["entities_discovered"] if e != "用户"][:8]
+        if unique:
+            lines.append(f"  相关: {', '.join(unique)}")
+    return "\n".join(lines)
 
 
 def search_graph(keywords: list[str]) -> list[dict]:

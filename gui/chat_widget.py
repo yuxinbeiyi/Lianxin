@@ -50,6 +50,7 @@ _TOOL_FRIENDLY = {
     "delete_memory": "让我删掉这个记忆...",
     "search_memory": "让我回忆一下...",
     "search_graph_memory": "让我在知识图谱里找找...",
+    "discover_connections": "让我帮你理一下关系网...",
     "list_memories": "让我翻翻记忆本...",
     "query_connected_entities": "让我查查关联信息...",
     "delete_graph_entity": "让我清理一下图谱...",

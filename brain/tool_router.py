@@ -2,7 +2,7 @@
 工具路由器：按需注入工具定义，减少 token 消耗。
 
 三层设计：
-  L1 核心工具（14个）— 始终注入完整定义，覆盖记忆/时间/文件等高频操作
+  L1 核心工具（12个）— 始终注入完整定义，覆盖记忆/时间/文件等高频操作
   L2 领域工具（52个）— 按用户消息关键词匹配，命中才注入完整定义
   L3 工具目录（~300 token）— 始终注入，列出所有工具名+一句话描述，
       让模型知道"我有哪些武器"，需要时可主动申请激活
@@ -18,6 +18,7 @@ from typing import List, Dict, Set, Tuple
 CORE_TOOLS: Set[str] = {
     # 记忆系统（仅保留高频 CRUD，其余按需激活）
     "save_memory", "search_graph_memory", "update_memory", "delete_memory",
+    "discover_connections",  # 图谱关系发现
     # 时间
     "get_current_time",
     # 余额
