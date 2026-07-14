@@ -172,6 +172,7 @@ TOOL_DEFINITIONS = [
             "name": "read_file",
             "description": (
                 "读取指定路径文件的内容（第0块，即开头部分）。"
+                "⚠️ 此工具只接受文件路径，不接受目录路径。如需浏览目录中的文件列表，请先用 list_directory 或 search_files_everything。"
                 "支持 .txt .md .py .csv .json 等文本文件（自动识别 UTF-8/GBK 等编码），"
                 "以及 .docx Word文档、.pdf PDF文件。"
                 "每次最多返回 15000 字符。若文件更长，返回结果中会注明总块数，"
@@ -240,13 +241,21 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "list_directory",
-            "description": "列出指定目录下的所有文件和子目录。",
+            "description": "列出指定目录下的所有文件和子目录。找不到文件时启用 recursive=True 递归搜索子目录。找文件先 list_directory 确认，再打开查看。\n找到文件后如需查看内容，请立即调用 read_file，不要只报告文件名。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
                         "description": "目录路径，不填则默认列出桌面"
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "是否递归列出子目录，默认 False，找不到文件时设为 True"
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "递归深度限制，默认 3"
                     }
                 },
                 "required": []
@@ -260,6 +269,7 @@ TOOL_DEFINITIONS = [
             "description": (
                 "【推荐优先使用】毫秒级全盘文件搜索（依赖 Everything + es.exe）。"
                 "支持按扩展名、最近修改天数过滤。若 Everything 未索引目标目录，自动降级为 Python 直接搜索。"
+                "找到文件后如需查看内容，请立即调用 read_file，不要只报告文件名。"
                 "调用示例：search_files_everything(keyword='简历', ext='docx;pdf', recent_days=2)"
             ),
             "parameters": {
@@ -1077,9 +1087,9 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "list_skills",
             "description": (
-                "列出所有可用的技能包及其激活状态。"
-                "技能包是按需加载的知识或工具集，激活后可以获得额外能力。"
-                "当用户问'你有什么技能'、'有哪些技能'、'激活了什么技能'时调用。"
+                "仅当用户明确询问'你有什么技能''有哪些技能''激活了什么技能'时才调用此工具。"
+                "不要在每次对话开始时调用。不要在文件操作、搜索、读取、对比等非技能相关任务中调用。"
+                "\u26a0\ufe0f 文件操作（读取、搜索、对比、编辑）不需要技能，直接使用 read_file/search_files_everything/diff_files 等工具即可。"
             ),
             "parameters": {
                 "type": "object",
@@ -2167,13 +2177,44 @@ def write_docx(file_path: str, content: str, mode: str = "create") -> str:
 
 
 
-def list_directory(path: str = "") -> str:
+def list_directory(path: str = "", recursive: bool = False, max_depth: int = 3) -> str:
     try:
         target = Path(path) if path else Path.home() / "Desktop"
         if not target.exists():
             return f"错误：目录不存在 → {target}"
         if not target.is_dir():
             return f"错误：路径不是目录 → {target}"
+
+        if recursive:
+            from collections import defaultdict
+            tree = defaultdict(list)
+            for entry in sorted(target.rglob('*'), key=lambda e: str(e)):
+                depth = len(entry.relative_to(target).parts)
+                if depth > max_depth:
+                    continue
+                if entry.is_dir():
+                    tree[depth].append(f"[目录] {entry.name}")
+                else:
+                    size = entry.stat().st_size
+                    size_str = f"{size:,} B" if size < 1024 else f"{size//1024:,} KB"
+                    tree[depth].append(f"  [文件] {entry.name}  ({size_str})")
+            result = f"目录（递归）: {target}\n" + "─" * 40 + "\n"
+            total = 0
+            for depth in sorted(tree):
+                if depth == 0:
+                    continue
+                indent = "  " * (depth - 1)
+                items = tree[depth]
+                result += f"\n  [深度 {depth}]\n"
+                for item in items[:50]:
+                    result += f"{indent}{item}\n"
+                    total += 1
+                if len(items) > 50:
+                    result += f"  ... 还有 {len(items) - 50} 项\n"
+            result += f"\n共 {total} 项（深度限制 {max_depth}）"
+            result += "\n\n\U0001F449 如需查看文件内容，请调用 read_file"
+            return result
+
         dirs, files = [], []
         for item in sorted(target.iterdir()):
             if item.is_dir():
@@ -2184,6 +2225,7 @@ def list_directory(path: str = "") -> str:
                 files.append(f"[文件] {item.name}  ({size_str})")
         result = f"目录: {target}\n" + "─" * 40 + "\n"
         result += "\n".join(dirs + files) if (dirs or files) else "（空目录）"
+        result += "\n\n\U0001F449 如需查看文件内容，请调用 read_file"
         return result
     except Exception as e:
         return f"列出目录出错: {e}"
@@ -2195,7 +2237,7 @@ _EVERYTHING_ES_PATH: str | None = None
 
 
 def _fallback_search_folder(folder: str, keyword: str, ext: str = "", recent_days: int = 0, max_results: int = 20) -> str | None:
-    """Everything 失效时的 Python 降级搜索（只搜指定目录不递归）"""
+    """Everything 失效时的 Python 降级搜索（递归搜索子目录）"""
     from datetime import datetime, timedelta
 
     base = Path(folder).expanduser().resolve()
@@ -2206,7 +2248,7 @@ def _fallback_search_folder(folder: str, keyword: str, ext: str = "", recent_day
     cutoff = datetime.now() - timedelta(days=recent_days) if recent_days > 0 else None
 
     matches = []
-    for entry in base.iterdir():
+    for entry in base.rglob('*'):
         if not entry.is_file():
             continue
         if keyword.lower() not in entry.name.lower():
@@ -2223,7 +2265,12 @@ def _fallback_search_folder(folder: str, keyword: str, ext: str = "", recent_day
         return None
 
     matches = matches[:max_results]
-    return f"找到 {len(matches)} 个文件:\n" + "\n".join(matches)
+    lines = [f"找到 {len(matches)} 个文件:"]
+    for i, m in enumerate(matches, 1):
+        lines.append(f"  {i}. {m}")
+    lines.append("")
+    lines.append("\U0001F449 如需查看文件内容，请调用 read_file")
+    return "\n".join(lines)
 
 
 def _find_everything_es() -> str | None:
@@ -2301,7 +2348,12 @@ def search_files_everything(keyword: str, ext: str = "",
                 if fallback:
                     return f"⚠️ Everything 未索引此目录，改用直接搜索：\n{fallback}"
             return f"未找到匹配「{keyword}」的文件"
-        return f"找到 {len(lines)} 个文件:\n" + "\n".join(lines)
+        result_lines = [f"找到 {len(lines)} 个文件:"]
+        for i, l in enumerate(lines, 1):
+            result_lines.append(f"  {i}. {l}")
+        result_lines.append("")
+        result_lines.append("\U0001F449 如需查看文件内容，请调用 read_file")
+        return "\n".join(result_lines)
     except FileNotFoundError:
         return "⚠️ 未找到 es.exe，请检查 Everything 是否已安装"
     except subprocess.TimeoutExpired:
@@ -4039,7 +4091,8 @@ def search_cross_session(keyword: str, limit: int = 5) -> str:
 # ── 技能系统工具函数 ─────────────────────────────────────────
 def _list_skills():
     from brain.skill_manager import get_skill_list
-    return get_skill_list()
+    note = "\U0001F4A1 文件操作（读取、搜索、对比、编辑）不需要技能，直接使用对应工具即可。\n\n"
+    return note + get_skill_list()
 
 def _activate_skill(name: str) -> str:
     from brain.skill_manager import activate_skill as _do_activate
@@ -4775,7 +4828,7 @@ TOOL_EXECUTORS = {
     "read_file":       lambda inp: read_file(inp["path"]),
     "read_file_chunk": lambda inp: read_file_chunk(inp["path"], int(inp["chunk_index"])),
     "write_file":      lambda inp: write_file(inp["path"], inp["content"]),
-    "list_directory": lambda inp: list_directory(inp.get("path", "")),
+    "list_directory": lambda inp: list_directory(inp.get("path", ""), inp.get("recursive", False), inp.get("max_depth", 3)),
     "search_files_everything": lambda inp: search_files_everything(
         inp["keyword"],
         inp.get("ext", ""),

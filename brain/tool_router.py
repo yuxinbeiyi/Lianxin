@@ -27,8 +27,8 @@ CORE_TOOLS: Set[str] = {
     "list_skills", "activate_skill", "deactivate_skill",
     # 跨端搜索
     "search_cross_session",
-    # 文件搜索（最高频的文件操作入口）
-    "search_files_everything",
+    # 文件操作（最高频入口，始终可用避免模型绕弯路）
+    "search_files_everything", "read_file",
 }
 
 # ── 领域工具分类 ────────────────────────────────────────
