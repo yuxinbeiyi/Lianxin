@@ -307,18 +307,24 @@ def detect_tool_request(response_text: str) -> bool:
 
     import re
 
-    # 明确表达缺少工具
+    # 明确表达缺少工具（短回复才可能是工具缺失，长回复中可能是正常语气）
     missing_patterns = [
         "我没有这个工具", "我没有对应的工具", "没有这个功能",
         "需要.*工具", "缺少.*工具", "无法调用",
         "没有.*权限", "没有.*能力",
         "请激活", "需要激活",
-        "我无法", "我不能", "我没法",
         "暂时没有", "目前没有",
     ]
     for p in missing_patterns:
         if re.search(p, response_text):
             return True
+
+    # "我无法/我不能/我没法" 这类语气词在角色扮演中很常见，只在极短回复中判定为工具缺失
+    if len(response_text) < 50:
+        short_missing = ["我无法", "我不能", "我没法"]
+        for p in short_missing:
+            if p in response_text:
+                return True
 
     # 表达了工具使用意图（但短回复才可能真的是被工具限制截断，
     # 长回复说明模型已经完成回答了，不应重试）
