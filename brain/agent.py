@@ -907,7 +907,7 @@ class AgentCore:
                 })
                 continue
             # 跨轮次去重：同一工具+同一参数在整个循环中只能调用一次
-            if call_key in _loop_tool_call_history:
+            if call_key in self._loop_tool_call_history:
                 print(f"  [去重] 跳过重复调用: {name}（参数与之前完全相同）", flush=True)
                 messages.append({
                     "role": "tool", "tool_call_id": tc.id,
@@ -918,7 +918,7 @@ class AgentCore:
                 })
                 continue
             self._last_tool_call_key = call_key
-            _loop_tool_call_history.add(call_key)
+            self._loop_tool_call_history.add(call_key)
             parsed.append({"tc": tc, "name": name, "args": args})
 
         if not parsed:
@@ -1478,7 +1478,7 @@ class AgentCore:
         _same_tool_streak_count = 0          # 连续同工具计数
         _last_round_tool_sets: list[str] = []  # 最近N轮的工具名集合
         _force_text_response = False         # 下一轮强制 tool_choice="none"
-        _loop_tool_call_history: set = set()  # 本循环中所有 (工具名, 参数序列化) 的集合
+        self._loop_tool_call_history: set = set()  # 本循环中所有 (工具名, 参数序列化) 的集合
         CONTENT_DROUGHT_MAX = 3              # 连续无文本N轮→熔断
         SAME_TOOL_STORM_MAX = 3              # 同工具连续N轮→强制干预
         NO_PROGRESS_MAX = 3                  # 工具名集合连续相同N轮→熔断
