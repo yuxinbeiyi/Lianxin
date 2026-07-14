@@ -1868,7 +1868,8 @@ def read_file_chunk(path: str, chunk_index: int = 0) -> str:
         if not p.exists():
             return f"错误：文件不存在 → {path}"
         if not p.is_file():
-            return f"错误：路径不是文件 → {path}"
+            # 目录路径 → 自动降级为列出目录内容，而不是报错让模型重试
+            return f"⚠️ 「{path}」是一个目录，不是文件。已自动列出目录内容：\n{list_directory(path)}"
 
         content, err = _extract_full_text(p)
         if err:
@@ -4086,7 +4087,9 @@ def search_cross_session(keyword: str, limit: int = 5) -> str:
         matches = history_mgr.search_session_messages(target_id, keyword, limit=matched_limit)
 
         if not matches:
-            return f"在{source_name}的聊天记录中，未找到包含「{keyword}」的内容。"
+            return (f"在{source_name}的聊天记录中，未找到包含「{keyword}」的内容。\n\n"
+                    "\U0001F449 如果连续搜索多次都找不到，请直接告诉用户没找到，"
+                    "不要反复尝试不同关键词。")
 
         lines = [f"在{source_name}的聊天记录中找到 {len(matches)} 条相关消息："]
         for m in matches:

@@ -796,7 +796,9 @@ def format_unified_search_result(result: dict) -> str:
     total = len(facts) + len(edges)
 
     if total == 0:
-        return "未找到匹配的记忆。"
+        return ("未找到匹配的记忆。\n\n"
+                "\U0001F449 如果连续搜索多次都找不到，请直接告诉用户没找到，"
+                "不要反复尝试不同关键词。")
 
     lines = [f"找到 {len(facts)} 条事实记忆 + {len(edges)} 条关联关系："]
 
@@ -820,7 +822,15 @@ def format_unified_search_result(result: dict) -> str:
                 f"[强度:{strength}, {src}]"
             )
 
-    return "\n".join(lines)
+    result_str = "\n".join(lines)
+
+    # Layer 3: 结果级引导 — 防止模型过度依赖历史记忆忽略当前对话
+    result_str += (
+        "\n\n⚠️ 以上是长期记忆中的历史信息。"
+        "如果你在当前对话中已经读到过相关内容，请以当前对话内容为准。"
+    )
+
+    return result_str
 
 
 def list_all_facts() -> dict[str, list[dict]]:

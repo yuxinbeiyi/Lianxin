@@ -299,7 +299,8 @@ def detect_tool_request(response_text: str) -> bool:
 
     触发条件：
     1. 模型明确说"我没有这个工具"、"需要...工具"等
-    2. 模型表达了使用意图但工具未激活（如"让我搜索一下"）
+    2. 模型的回复很短（<100字）且表达了工具使用意图
+       注意：长回复（>100字）说明模型已经做了完整回答，跳过意图检测。
     """
     if not response_text:
         return False
@@ -319,7 +320,11 @@ def detect_tool_request(response_text: str) -> bool:
         if re.search(p, response_text):
             return True
 
-    # 表达了工具使用意图（但可能因为工具未激活而无法调用）
+    # 表达了工具使用意图（但短回复才可能真的是被工具限制截断，
+    # 长回复说明模型已经完成回答了，不应重试）
+    if len(response_text) >= 100:
+        return False
+
     intent_keywords = [
         "让我搜索", "我来搜索", "帮你搜索", "搜一下",
         "让我查", "我来查", "帮你查", "查一下",

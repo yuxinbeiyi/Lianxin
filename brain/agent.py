@@ -1482,6 +1482,15 @@ class AgentCore:
         CONTENT_DROUGHT_MAX = 3              # 连续无文本N轮→熔断
         SAME_TOOL_STORM_MAX = 3              # 同工具连续N轮→强制干预
         NO_PROGRESS_MAX = 3                  # 工具名集合连续相同N轮→熔断
+        SEARCH_FATIGUE_MAX = 4               # 连续搜索/读取N轮→强制收尾
+
+        _search_fatigue_count = 0            # 连续搜索轮计数
+        _SEARCH_READ_TOOLS = {
+            "search_files_everything", "search_graph_memory", "search_cross_session",
+            "search_code", "glob_files", "list_directory",
+            "read_file", "read_file_chunk", "read_file_lines",
+            "get_file_info_everything", "grep_file", "web_search",
+        }
 
         # ── 复杂度判断：用户消息超过80字视为复杂任务 ──
         is_complex = len(self.history[-1]["content"]) > 80 if self.history else False
@@ -1760,6 +1769,17 @@ class AgentCore:
                 )
 
                 _breaker_reason = ""
+
+                # ── 搜索疲劳检测：连续多轮全部是搜索/读取类工具 ──
+                _all_search_read = (
+                    _this_tool_names
+                    and all(t in _SEARCH_READ_TOOLS for t in _this_tool_names)
+                )
+                if _all_search_read:
+                    _search_fatigue_count += 1
+                else:
+                    _search_fatigue_count = 0
+
                 if _content_drought_count >= CONTENT_DROUGHT_MAX:
                     _breaker_reason = f"连续{CONTENT_DROUGHT_MAX}轮无文本回复"
                     _content_drought_count = 0
@@ -1770,6 +1790,9 @@ class AgentCore:
                     _breaker_reason = f"连续{NO_PROGRESS_MAX}轮工具集合无变化"
                     _last_round_tool_sets.clear()
                     _same_tool_streak_count = 0
+                elif _search_fatigue_count >= SEARCH_FATIGUE_MAX:
+                    _breaker_reason = f"连续{SEARCH_FATIGUE_MAX}轮都在搜索/读取，无实质产出"
+                    _search_fatigue_count = 0
 
                 if _breaker_reason:
                     print(f"  [熔断器] {_breaker_reason}，下一轮强制 tool_choice=none", flush=True)
