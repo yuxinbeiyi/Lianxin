@@ -17,7 +17,6 @@ _TIMESTAMP_GAP_SECONDS = 5 * 60   # 超过此间隔则在气泡前插入时间�
 
 # 工具名 → 第一人称友好描述（莲心口吻）
 _TOOL_FRIENDLY = {
-    "search_files": "让我翻翻你的文件...",
     "search_files_everything": "让我用 Everything 搜一下...",
     "get_file_info_everything": "让我看看文件信息...",
     "glob_files": "让我找找匹配的文件...",

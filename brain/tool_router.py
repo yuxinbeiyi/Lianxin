@@ -37,7 +37,7 @@ CATEGORY_TOOLS: Dict[str, Set[str]] = {
     "file": {
         "read_file", "read_file_chunk", "read_file_lines",
         "write_file", "edit_file", "list_directory",
-        "search_files", "get_file_info_everything",
+        "get_file_info_everything",
         "glob_files", "grep_file", "diff_files",
     },
     "code": {
@@ -121,7 +121,6 @@ TOOL_DESCRIPTIONS: Dict[str, str] = {
     "write_file": "写入/覆盖文件",
     "edit_file": "精确替换内容",
     "list_directory": "列出目录",
-    "search_files": "按文件名搜索",
     "search_files_everything": "全盘极速搜索",
     "get_file_info_everything": "文件元数据",
     "glob_files": "模式匹配文件",

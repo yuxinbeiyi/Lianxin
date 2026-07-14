@@ -25,7 +25,7 @@ from brain.code_intel import goto_definition, find_references, get_diagnostics
 # delegate_task 生成的子代理只能使用这些工具
 _SUBAGENT_ALLOWED_TOOLS = {
     "read_file", "read_file_lines", "read_file_chunk",
-    "grep_file", "search_code", "glob_files", "search_files",
+    "grep_file", "search_code", "glob_files",
     "search_files_everything", "list_directory", "edit_file", "code_structure",
     "run_shell", "run_python_code", "diff_files", "git_status",
 }
@@ -256,31 +256,10 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "search_files",
-            "description": "在指定目录中搜索包含关键词的文件名。如需全盘搜索或按时间/扩展名过滤，请优先使用 search_files_everything。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "directory": {
-                        "type": "string",
-                        "description": "搜索的目录路径，默认用户主目录"
-                    },
-                    "keyword": {
-                        "type": "string",
-                        "description": "要搜索的关键词（文件名模糊匹配）"
-                    }
-                },
-                "required": ["keyword"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "search_files_everything",
             "description": (
-                "【推荐优先使用】毫秒级全盘文件搜索，比 search_files 快 100 倍以上。"
-                "支持按扩展名、最近修改天数过滤。"
+                "【推荐优先使用】毫秒级全盘文件搜索（依赖 Everything + es.exe）。"
+                "支持按扩展名、最近修改天数过滤。若 Everything 未索引目标目录，自动降级为 Python 直接搜索。"
                 "调用示例：search_files_everything(keyword='简历', ext='docx;pdf', recent_days=2)"
             ),
             "parameters": {
@@ -896,7 +875,7 @@ TOOL_DEFINITIONS = [
                 "在指定目录中按文件名模式批量查找文件，支持通配符。"
                 "适用于：找出所有 Python 文件、找所有 .docx 文档、找特定前缀的文件。"
                 "pattern 示例：'**/*.py'（所有Python文件）、'*.txt'（当前目录txt文件）、'报告*.docx'（报告开头的Word文档）。"
-                "比 search_files 更强大：支持精确的文件名模式而不只是关键词匹配。"
+                "支持精确的文件名模式匹配（通配符），比关键词搜索更精准。"
             ),
             "parameters": {
                 "type": "object",
@@ -2210,25 +2189,41 @@ def list_directory(path: str = "") -> str:
         return f"列出目录出错: {e}"
 
 
-def search_files(directory: str, keyword: str) -> str:
-    try:
-        base = Path(directory)
-        if not base.exists():
-            return f"错误：目录不存在 → {directory}"
-        matches = [
-            str(p) for p in base.rglob("*")
-            if keyword.lower() in p.name.lower() and p.is_file()
-        ]
-        if not matches:
-            return f"在 {directory} 中未找到包含 '{keyword}' 的文件"
-        return f"找到 {len(matches)} 个匹配文件:\n" + "\n".join(matches[:50])
-    except Exception as e:
-        return f"搜索文件出错: {e}"
-
-
 # ── Everything 毫秒级文件搜索 ──────────────────────────
 
 _EVERYTHING_ES_PATH: str | None = None
+
+
+def _fallback_search_folder(folder: str, keyword: str, ext: str = "", recent_days: int = 0, max_results: int = 20) -> str | None:
+    """Everything 失效时的 Python 降级搜索（只搜指定目录不递归）"""
+    from datetime import datetime, timedelta
+
+    base = Path(folder).expanduser().resolve()
+    if not base.exists() or not base.is_dir():
+        return None
+
+    exts = [e.strip().lower() for e in ext.split(';') if e.strip()]
+    cutoff = datetime.now() - timedelta(days=recent_days) if recent_days > 0 else None
+
+    matches = []
+    for entry in base.iterdir():
+        if not entry.is_file():
+            continue
+        if keyword.lower() not in entry.name.lower():
+            continue
+        if exts and entry.suffix.lower().lstrip('.') not in exts:
+            continue
+        if cutoff:
+            mtime = datetime.fromtimestamp(entry.stat().st_mtime)
+            if mtime < cutoff:
+                continue
+        matches.append(str(entry))
+
+    if not matches:
+        return None
+
+    matches = matches[:max_results]
+    return f"找到 {len(matches)} 个文件:\n" + "\n".join(matches)
 
 
 def _find_everything_es() -> str | None:
@@ -2263,7 +2258,8 @@ def search_files_everything(keyword: str, ext: str = "",
                             max_results: int = 20) -> str:
     """
     【推荐】毫秒级全盘文件搜索（依赖 Everything + es.exe）。
-    比 search_files 快 100 倍以上，支持按扩展名、最近修改天数过滤。
+    若 Everything 未索引目标目录，自动降级为 Python 直接搜索。
+    支持按扩展名、最近修改天数过滤。
 
     调用示例：
       search_files_everything(keyword="简历", ext="docx;pdf", recent_days=2)
@@ -2299,6 +2295,11 @@ def search_files_everything(keyword: str, ext: str = "",
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
         lines = [l.strip() for l in r.stdout.strip().split("\n") if l.strip()]
         if not lines:
+            # ── 自动降级：Everything 未索引此目录 → Python 直接搜索 ──
+            if folder:
+                fallback = _fallback_search_folder(folder, keyword, ext, recent_days, max_results)
+                if fallback:
+                    return f"⚠️ Everything 未索引此目录，改用直接搜索：\n{fallback}"
             return f"未找到匹配「{keyword}」的文件"
         return f"找到 {len(lines)} 个文件:\n" + "\n".join(lines)
     except FileNotFoundError:
@@ -4361,11 +4362,34 @@ def diff_files(file_a, file_b, context_lines=3):
     if not path_b.exists():
         return f"错误：文件不存在 — {path_b}"
 
+    def _read_text(path: Path) -> str:
+        ext = path.suffix.lower()
+        if ext == '.pdf':
+            try:
+                return _extract_pdf(path)
+            except Exception as e:
+                raise RuntimeError(f"PDF 解析失败: {e}")
+        if ext == '.docx':
+            try:
+                return _extract_docx(path)
+            except Exception as e:
+                raise RuntimeError(f"docx 解析失败: {e}")
+        try:
+            return path.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            try:
+                return path.read_text(encoding='gbk')
+            except UnicodeDecodeError:
+                raise RuntimeError("文件不是 UTF-8/GBK 文本格式")
+
     try:
-        lines_a = path_a.read_text(encoding='utf-8').splitlines()
-        lines_b = path_b.read_text(encoding='utf-8').splitlines()
-    except UnicodeDecodeError:
-        return "错误：其中一个文件不是 UTF-8 文本格式"
+        text_a = _read_text(path_a)
+        text_b = _read_text(path_b)
+    except RuntimeError as e:
+        return f"错误：{e}"
+
+    lines_a = text_a.splitlines()
+    lines_b = text_b.splitlines()
 
     diff = difflib.unified_diff(
         lines_a, lines_b,
@@ -4752,7 +4776,6 @@ TOOL_EXECUTORS = {
     "read_file_chunk": lambda inp: read_file_chunk(inp["path"], int(inp["chunk_index"])),
     "write_file":      lambda inp: write_file(inp["path"], inp["content"]),
     "list_directory": lambda inp: list_directory(inp.get("path", "")),
-    "search_files":   lambda inp: search_files(inp.get("directory", os.path.expanduser("~")), inp["keyword"]),
     "search_files_everything": lambda inp: search_files_everything(
         inp["keyword"],
         inp.get("ext", ""),

@@ -17,7 +17,7 @@ CATEGORIES = {
     "📁 文件操作": [
         "read_file", "read_file_chunk", "read_file_lines",
         "write_file", "edit_file", "list_directory",
-        "search_files", "glob_files", "grep_file", "search_code",
+        "glob_files", "grep_file", "search_code",
         "diff_files", "code_structure", "goto_definition",
         "find_references", "code_diagnostics",
         "read_excel", "write_excel", "copy_excel_content",
