@@ -3623,7 +3623,19 @@ def read_file_lines(path: str, start_line: int, end_line: int = None) -> str:
 def glob_files(directory: str, pattern: str, max_results: int = 50) -> str:
     """在目录中按模式批量查找文件，支持 * ? ** 通配符。"""
     try:
-        base = Path(directory)
+        # 如果 pattern 是绝对路径（如 E:/**/*.pdf），拆分为目录 + 相对模式
+        pattern_path = Path(pattern)
+        if pattern_path.is_absolute() or (len(pattern) >= 2 and pattern[1] == ':'):
+            base = Path(pattern_path.parts[0])  # 盘符根目录
+            rel_parts = pattern_path.parts[1:]  # 剩余相对路径
+            if rel_parts:
+                pattern = str(Path(*rel_parts))
+                directory = str(base)
+                base = Path(directory)
+            else:
+                base = Path(directory)  # fallback
+        else:
+            base = Path(directory)
         if not base.exists():
             return f"错误：目录不存在 → {directory}"
         if not base.is_dir():

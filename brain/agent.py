@@ -1572,6 +1572,7 @@ class AgentCore:
 
             try:
                 _api_start = time.time()
+                print("  [等待] 正在等待 API 响应...", flush=True)
                 stream = litellm.completion(
                     model=self._model,
                     max_tokens=self._max_tokens,
