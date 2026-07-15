@@ -379,6 +379,7 @@ ReAct 第8轮 → "任务完成！已保存至 E:\Desktop\test\AI大模型最新
 | GPT-SoVITS 语音克隆 | [GPT-SoVITS](https://github.com/RVC-Project/GPT-SoVITS) | `git clone` 到项目根目录 | `GPT-SoVITS-v2pro/` |
 | 端侧语音合成 | [ChatTTS](https://github.com/2noise/ChatTTS) | `git clone` 到项目根目录 | `ChatTTS/` |
 | 全双工语音云中继 | [OVRDOZE](https://github.com/luke23334/OVRDOZE) | `git clone` 到 `game/` | `game/OVRDOZE-main/` |
+| 阿里云语音识别 | [alibabacloud-nls-python-sdk](https://github.com/aliyun/alibabacloud-nls-python-sdk) | `git clone` 到项目根目录 + `python setup.py install` | `alibabacloud-nls-python-sdk/` |
 
 > 💡 以上项目均遵循各自原项目的许可证，请遵守其使用条款。
 

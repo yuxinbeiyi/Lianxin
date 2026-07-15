@@ -85,6 +85,10 @@ graphify-out/cost.json
 # Claude Code 本地配置
 .claude/
 
+# Codex / Agent 本地配置
+.agents/
+AGENTS.md
+
 # Graphify 输出目录
 graphify-out/
 
@@ -121,3 +125,4 @@ alibabacloud-nls-python-sdk/
 docx_backup/"skills/�㷨����/" 
 "skills/ǰ�����/" 
 "skills/MCP������/"
+莲心改进建议.md
