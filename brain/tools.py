@@ -4746,6 +4746,7 @@ def delegate_task(task: str, working_dir: str = "",
 
         sub_agent = AgentCore(
             disable_tools=True,
+            track_emotion=False,
         )
 
         sub_prompt = (
@@ -5063,6 +5064,16 @@ def execute_tool(name: str, tool_input: dict) -> str:
     success = True
     retries = 0
     try:
+        # 情感门控必须位于所有工具路由之前，避免 MCP 工具绕过统一检查。
+        try:
+            from brain.emotional import get_manager as _get_emotion_mgr
+            _allowed, _reason = _get_emotion_mgr().check_tool_allowed(name)
+            if not _allowed:
+                success = False
+                return f"[拒绝] {_reason}"
+        except Exception:
+            pass
+
         # ── MCP 工具路由 ──────────────────────────────────────
         if name.startswith("mcp__"):
             try:
@@ -5071,15 +5082,6 @@ def execute_tool(name: str, tool_input: dict) -> str:
             except Exception as e:
                 success = False
                 return f"MCP工具调用失败: {e}"
-
-        # ── 情感系统防御模式检查 ────────────────────────────────
-        try:
-            from brain.emotional import get_manager as _get_emotion_mgr
-            _allowed, _reason = _get_emotion_mgr().check_tool_allowed(name)
-            if not _allowed:
-                return f"[拒绝] {_reason}"
-        except Exception:
-            pass
 
         executor = TOOL_EXECUTORS.get(name)
         if not executor:

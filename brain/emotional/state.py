@@ -12,6 +12,7 @@
 import json
 import math
 import os
+import threading
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -46,6 +47,8 @@ LONELY_MAX_HOURS = 72      # 漂移最多累积 3 天量
 # ── 持久化路径 ────────────────────────────────────────────
 STATE_FILE = get_user_data_dir() / "emotional_state.json"
 STATE_BACKUP = get_user_data_dir() / "emotional_state.json.bak"
+STATE_SCHEMA_VERSION = 3
+_STATE_IO_LOCK = threading.RLock()
 # ── 默认初始值（从"已有关系"开始，非中性） ──────────────
 _DEFAULT_NEEDS = {"respect": 70, "needed": 65, "autonomy": 60,
                   "novelty": 55, "security": 68}
@@ -129,6 +132,7 @@ class EmotionalState:
                  emotions: Optional[EmotionComponents] = None,
                  event_history: Optional[list] = None,
                  last_update: float = 0,
+                 last_interaction: float = 0,
                  enabled: bool = True,
                  emotional_memories: Optional[list] = None,
                  days_since_start: int = 0):
@@ -139,7 +143,7 @@ class EmotionalState:
             self.emotions.frustration = _clamp(aggression, 0, 100)
         self.event_history: list[Event] = event_history or []
         self.last_update = last_update or time.time()
-        self._last_interaction = self.last_update
+        self._last_interaction = last_interaction or self.last_update
         self.enabled = enabled
         self.days_since_start = days_since_start
         self.emotional_memories: list[dict] = emotional_memories or []
@@ -259,17 +263,15 @@ class EmotionalState:
     def save(self):
         """原子写入 JSON（v2.0：增加情绪分量、情感记忆、启动天数）。"""
         data = {
+            "schema_version": STATE_SCHEMA_VERSION,
             "needs": self.needs.to_dict(),
             "deep_layer": round(self.deep_layer, 1),
             "emotions": self.emotions.to_dict(),
-            "last_update": time.time(),
+            "last_update": self.last_update,
             "last_interaction": self._last_interaction,
             "enabled": self.enabled,
             "days_since_start": self.days_since_start,
             "emotional_memories": self.emotional_memories[-50:],
-            "session_caps": {
-                k: round(v, 1) for k, v in self._session_caps.items()
-            },
             "history": [
                 {"type": e.type, "primary_need": e.primary_need,
                  "primary_delta": e.primary_delta, "severity": e.severity,
@@ -279,17 +281,27 @@ class EmotionalState:
                 for e in self.event_history[-100:]
             ],
         }
-        tmp = str(STATE_FILE) + ".tmp"
+        tmp = Path(
+            f"{STATE_FILE}.tmp.{os.getpid()}.{threading.get_ident()}"
+        )
         try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, str(STATE_FILE))
-            # 保留备份
-            import shutil
-            shutil.copy2(str(STATE_FILE), str(STATE_BACKUP))
+            with _STATE_IO_LOCK:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(str(tmp), str(STATE_FILE))
+                # 备份最近一次完整写入，供主文件损坏时回退。
+                import shutil
+                shutil.copy2(str(STATE_FILE), str(STATE_BACKUP))
         except Exception as e:
             import logging
             logging.getLogger("EmotionState").warning(f"保存情感状态失败: {e}")
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
     @classmethod
     def load(cls) -> "EmotionalState":
         """从 JSON 加载，失败时返回默认。"""
@@ -297,11 +309,21 @@ class EmotionalState:
             try:
                 if not path.exists():
                     continue
-                data = json.loads(path.read_text(encoding="utf-8"))
+                with _STATE_IO_LOCK:
+                    data = json.loads(path.read_text(encoding="utf-8"))
                 needs = NeedsState.from_dict(data.get("needs", {}))
                 deep = _clamp(float(data.get("deep_layer", _DEFAULT_DEEP)), 10, 95)
-                last_update = float(data.get("last_update", 0))
-                last_interaction = float(data.get("last_interaction", 0))
+                now = time.time()
+                last_update = float(data.get("last_update", now) or now)
+                if last_update <= 0 or last_update > now + 300:
+                    last_update = now
+                # v1/v2 文件可能没有 last_interaction。不能回退到 Unix
+                # 时间 0，否则第一次加载会被当成几十年无人交互。
+                last_interaction = float(
+                    data.get("last_interaction", last_update) or last_update
+                )
+                if last_interaction <= 0 or last_interaction > now + 300:
+                    last_interaction = last_update
                 history_raw = data.get("history", [])
                 history = []
                 for h in history_raw:
@@ -328,21 +350,23 @@ class EmotionalState:
                             aggression=0,
                             emotions=emotions,
                             event_history=history, last_update=last_update,
+                            last_interaction=last_interaction,
                             enabled=enabled,
                             emotional_memories=memories,
                             days_since_start=days)
 
-                state._last_interaction = last_interaction
-                # 恢复会话上限
-                caps = data.get("session_caps", {})
-                if caps:
-                    state._session_caps = {n: float(caps.get(n, 0)) for n in NEED_NAMES}
+                # 会话额度是运行期状态，不能跨进程持久化。旧文件中的
+                # session_caps 会在下一次保存时自然移除。
+                state.reset_session_caps()
                 # 应用时间差衰减（禁用状态下跳过，锁定当前数值）
                 if enabled:
-                    now = time.time()
                     hours_passed = (now - last_update) / 3600
                     if hours_passed > 0:
-                        state._apply_decay(hours_passed)
+                        state._apply_decay(hours_passed, now=now)
+                        # 推进衰减游标并立即持久化，避免第一个定时器重复
+                        # 结算同一段离线时间。
+                        state.last_update = now
+                        state.save()
                 return state
             except Exception as e:
                 import logging
@@ -350,10 +374,12 @@ class EmotionalState:
                     f"加载情感状态失败 ({path.name}): {e}")
         return cls()  # 完全失败时返回默认
     # ── 内部：衰减（v2.0：新 τ 值 + 温和漂移 + 情绪分量衰减） ─
-    def _apply_decay(self, hours_passed: float):
+    def _apply_decay(self, hours_passed: float, now: float = None):
         """时间差衰减：所有需求向基线回归 + 孤独漂移 + 情绪分量衰减。"""
         if hours_passed <= 0:
             return
+        now_ts = time.time() if now is None else now
+        previous_ts = now_ts - hours_passed * 3600
         effective = min(hours_passed, 72)
         for name in NEED_NAMES:
             cfg = NEED_CONFIG[name]
@@ -364,9 +390,21 @@ class EmotionalState:
                 new_val = current - diff * decay_factor
                 setattr(self.needs, name, _clamp(new_val))
         # 孤独漂移：超过 12 小时无交互才触发（旧：6h）
-        interaction_gap = (time.time() - self._last_interaction) / 3600
-        if interaction_gap > LONELY_TRIGGER_HOURS:
-            lonely_hours = min(interaction_gap - LONELY_TRIGGER_HOURS, LONELY_MAX_HOURS)
+        # 只结算自上次衰减游标以来新增的孤独时长。旧实现每 5 分钟
+        # 都按完整离线时长重复扣除，会在一次 tick 内把安全感打到 15。
+        def _eligible_lonely_hours(at_time: float) -> float:
+            gap = (at_time - self._last_interaction) / 3600
+            return min(
+                max(gap - LONELY_TRIGGER_HOURS, 0.0),
+                LONELY_MAX_HOURS,
+            )
+
+        lonely_hours = max(
+            0.0,
+            _eligible_lonely_hours(now_ts)
+            - _eligible_lonely_hours(previous_ts),
+        )
+        if lonely_hours > 0:
             sec_drift = -NEED_CONFIG["security"]["drift"] * lonely_hours
             self.needs.security = _clamp(self.needs.security + sec_drift, 15, 100)
             need_drift = -NEED_CONFIG["needed"]["drift"] * lonely_hours
@@ -383,6 +421,10 @@ class EmotionalState:
                 decay = 1.0 - math.exp(-effective / EMOTION_TAU)
                 setattr(self.emotions, name, _clamp(
                     val - val * decay, 0, 100))
+
+    def mark_interaction(self, timestamp: float = None):
+        """记录一次真实用户交互，统一孤独漂移使用的持久化时间源。"""
+        self._last_interaction = time.time() if timestamp is None else timestamp
     # ── 内部：修复期检测 ────────────────────────────────
     def _in_repair(self) -> bool:
         """检测是否处于边界事件后的修复期。"""

@@ -1034,11 +1034,20 @@ class QQBridgeWorker(QThread):
 
             if db_session_id is not None:
                 # 已有映射：恢复该会话
-                agent = AgentCore(session_id=db_session_id, user_desc=user_desc, disable_tools=disable_tools)
+                agent = AgentCore(
+                    session_id=db_session_id,
+                    user_desc=user_desc,
+                    disable_tools=disable_tools,
+                    track_emotion=is_owner,
+                )
                 self._log(f"[*] 恢复会话: {session_key} (session_id={db_session_id})")
             else:
                 # 新用户：创建全新 AgentCore（自动新建 DB session）
-                agent = AgentCore(user_desc=user_desc, disable_tools=disable_tools)
+                agent = AgentCore(
+                    user_desc=user_desc,
+                    disable_tools=disable_tools,
+                    track_emotion=is_owner,
+                )
                 db_session_id = agent._session_id
                 self._session_map[session_key] = db_session_id
                 self._save_session_map()

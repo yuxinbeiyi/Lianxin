@@ -18,13 +18,24 @@ EmotionManager v2.0：涟漪情感系统统一入口。
 import logging
 import math
 import random
+import threading
 import time
+from functools import wraps
 from typing import Optional
 
 from .state import EmotionalState, Event, EMOTION_NAMES, EMOTION_LABELS
 from .events import detect_events, EVENT_TYPES
 
 logger = logging.getLogger("EmotionManager")
+
+
+def _synchronized(method):
+    """使用管理器的可重入锁保护共享情感状态。"""
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
 
 # ── 事件归因文案（v2.0：新增事件类型） ──────────────────
 _EVENT_NARRATIVES = {
@@ -50,23 +61,35 @@ class EmotionManager:
     """情感状态管理器 v2.0。每个进程一个实例。"""
 
     def __init__(self):
+        self._lock = threading.RLock()
         self.state = EmotionalState.load()
+        # 会话额度只属于本次进程运行，旧版本错误持久化的额度不恢复。
+        self.state.reset_session_caps()
         self._consecutive_commands = 0
         self._last_command_reset = time.time()
-        self._last_interaction_time = time.time()
+        self._last_interaction_time = self.state._last_interaction
 
     # ── 启用/禁用开关 ─────────────────────────────────────
     @property
+    @_synchronized
     def enabled(self) -> bool:
         return self.state.enabled
 
     @enabled.setter
+    @_synchronized
     def enabled(self, val: bool):
-        self.state.enabled = val
+        now = time.time()
+        self.state.enabled = bool(val)
+        # 禁用表示冻结；重新启用时也从当前时刻重新开始计时，不能把
+        # 暂停期间累计成一次巨额孤独惩罚。
+        self.state.last_update = now
+        self.state.mark_interaction(now)
+        self._last_interaction_time = now
         self.state.save()
 
     # ── prompt 注入（v2.0：情绪分量 + 关系阶段） ──────────
 
+    @_synchronized
     def build_prompt_snippet(self) -> str:
         """构建情感状态的自然语言描述，注入到 LLM system prompt。"""
         if not self.enabled:
@@ -140,6 +163,7 @@ class EmotionManager:
 
     # ── 交互分析（v2.0：会话上限 + 情绪分量） ────────────
 
+    @_synchronized
     def analyze_and_update(self, user_messages: list[str],
                            tool_call_count: int = 0):
         """分析最近一轮交互，更新情感状态。在 LLM 回复完成后调用。
@@ -189,6 +213,7 @@ class EmotionManager:
             self._apply_event_v2(event)
 
         self._last_interaction_time = now
+        self.state.mark_interaction(now)
         self.state.last_update = now
         self.state.save()
 
@@ -196,15 +221,19 @@ class EmotionManager:
             detail = "; ".join(f"{e.type}({e.primary_delta:+.0f})" for e in events)
             logger.info(f"[情感] {detail}")
 
+    @_synchronized
     def update_decay_only(self):
         """仅做时间衰减（无交互时的状态更新）。"""
+        if not self.enabled:
+            return
         now = time.time()
         hours = (now - self.state.last_update) / 3600
         if hours > 0:
-            self.state._apply_decay(hours)
+            self.state._apply_decay(hours, now=now)
             self.state.last_update = now
             self.state.save()
 
+    @_synchronized
     def reset_session(self):
         """新会话开始时重置会话上限和连续指令计数。"""
         self.state.reset_session_caps()
@@ -213,6 +242,7 @@ class EmotionManager:
 
     # ── 工具拦截 ────────────────────────────────────────
 
+    @_synchronized
     def check_tool_allowed(self, tool_name: str) -> tuple[bool, str]:
         """检查工具在当前状态下是否可用。"""
         if not self.enabled:
@@ -222,7 +252,7 @@ class EmotionManager:
         # 寒冬模式：拒绝侵入性工具
         _INVASIVE_TOOLS = {
             "shoulder_photo", "shoulder_pan", "shoulder_tilt",
-            "camera_capture", "take_photo", "ocr_image",
+            "camera_capture", "capture_from_camera", "take_photo", "ocr_image",
         }
         if layer == "寒冬" and tool_name in _INVASIVE_TOOLS:
             return False, "我现在不太想做这件事。"
@@ -230,7 +260,7 @@ class EmotionManager:
         # 微凉模式 + 防御工具
         _DEFENSE_TOOLS = {
             "shoulder_photo", "shoulder_pan", "shoulder_tilt",
-            "camera_capture", "save_observation",
+            "camera_capture", "capture_from_camera", "save_observation",
             "take_photo", "ocr_image",
             "edit_file", "write_file", "delete_file",
         }
@@ -243,6 +273,7 @@ class EmotionManager:
     # ── 主动聊天控制 ────────────────────────────────────
 
     @property
+    @_synchronized
     def proactive_allowed(self) -> bool:
         if not self.enabled:
             return True
@@ -254,8 +285,11 @@ class EmotionManager:
         return True
 
     @property
+    @_synchronized
     def proactive_interval_multiplier(self) -> float:
         """主动聊天频率倍数。"""
+        if not self.enabled:
+            return 1.0
         layer = self.state.middle_layer
         if layer == "暖春":
             return 0.6
@@ -269,8 +303,11 @@ class EmotionManager:
 
     # ── 内部方法（v2.0） ────────────────────────────────
 
+    @_synchronized
     def _apply_event_v2(self, event: Event):
         """应用事件效果（v2.1：支持随机范围 + 冷却 + 会话上限 + 情绪分量）。"""
+        if not self.enabled:
+            return False
         now = time.time()
 
         # 冷却检查
@@ -279,7 +316,10 @@ class EmotionManager:
             if e.type == event.type
             and (now - e.timestamp) < event.cooldown_minutes * 60
         ]
-        multiplier = max(0.25, 1.0 - 0.4 * len(recent_same))
+        # 真正的冷却期应当抑制重复事件，而不是每次仍保留 25% 伤害。
+        if recent_same:
+            return False
+        multiplier = 1.0
 
         # 随机范围：如果事件设置了 random_range，从中随机取值
         base_delta = event.primary_delta
@@ -328,6 +368,7 @@ class EmotionManager:
         # 记录事件
         event.timestamp = now
         self.state.event_history.append(event)
+        return True
 
     def _count_today_events(self, *types: str) -> int:
         """统计今天（最近 24 小时）指定类型的事件数。"""
@@ -339,6 +380,7 @@ class EmotionManager:
 
     # ── 调试接口（v2.0：扩展字段） ──────────────────────
 
+    @_synchronized
     def get_debug_info(self) -> dict:
         """返回调试面板所需的状态信息（v2.0）。"""
         return {
@@ -353,6 +395,7 @@ class EmotionManager:
             ],
         }
 
+    @_synchronized
     def set_needs(self, **kwargs):
         """手动设置需求值（调试用）。"""
         for name, val in kwargs.items():
@@ -360,6 +403,7 @@ class EmotionManager:
                 setattr(self.state.needs, name, max(0, min(100, float(val))))
         self.state.save()
 
+    @_synchronized
     def set_emotion(self, **kwargs):
         """手动设置情绪分量（调试用）。"""
         for name, val in kwargs.items():
@@ -367,18 +411,22 @@ class EmotionManager:
                 setattr(self.state.emotions, name, max(0, min(100, float(val))))
         self.state.save()
 
+    @_synchronized
     def set_deep_trust(self, value: float):
         """手动设置深层信任（调试用）。"""
         self.state.deep_layer = max(10, min(95, float(value)))
         self.state.save()
 
+    @_synchronized
     def reset_state(self):
         """重置为初始状态。"""
         from .state import NeedsState, EmotionComponents, _DEFAULT_DEEP
+        was_enabled = self.state.enabled
         self.state = EmotionalState(
             needs=NeedsState(),
             emotions=EmotionComponents(),
             deep_layer=_DEFAULT_DEEP,
+            enabled=was_enabled,
         )
         self._consecutive_commands = 0
         self._last_interaction_time = time.time()
@@ -389,11 +437,14 @@ class EmotionManager:
 # ── 模块级单例 ────────────────────────────────────────────
 
 _manager: Optional[EmotionManager] = None
+_manager_lock = threading.Lock()
 
 
 def get_manager() -> EmotionManager:
     """获取 EmotionManager 单例。"""
     global _manager
     if _manager is None:
-        _manager = EmotionManager()
+        with _manager_lock:
+            if _manager is None:
+                _manager = EmotionManager()
     return _manager

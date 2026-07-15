@@ -343,7 +343,9 @@ class WeChatBridgeWorker(QObject):
         from flask import jsonify   # type: ignore
         from brain.agent import AgentCore
         try:
-            agent = AgentCore()
+            # 微信桥接可能同时服务多个联系人。只有主人会话可以修改
+            # 全局的“莲心与主人”情感状态，避免其他联系人投毒。
+            agent = AgentCore(track_emotion=self._is_owner(msg.sender_id))
             if prompt_extra:
                 agent._system_prompt += "\n\n" + prompt_extra
 

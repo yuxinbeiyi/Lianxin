@@ -143,7 +143,8 @@ def _dump_prompt_debug(messages: list, all_tools: list,
 
 
 class AgentCore:
-    def __init__(self, session_id: int = None, user_desc: str = None, disable_tools: bool = False):
+    def __init__(self, session_id: int = None, user_desc: str = None,
+                 disable_tools: bool = False, track_emotion: bool = True):
         
         self._cancel_event = threading.Event()
 
@@ -173,6 +174,9 @@ class AgentCore:
             self._api_key    = cfg["api_key"]
 
         self._disable_tools = disable_tools
+        # 工具权限和情感跟踪是两个独立维度。纯聊天可以禁用工具，
+        # 但仍应让问候、道歉、夸奖等真实互动影响情感状态。
+        self._track_emotion = track_emotion
         self._last_emotion = None     # 本轮回复的情绪标签（供 GUI 选图用）
         self._last_raw_response = None  # 本轮回复原始文本（含标签）
         self._last_reasoning = None    # 本轮回复的 COT 推理链
@@ -343,7 +347,7 @@ class AgentCore:
         self._last_raw_response = response_text  # 保留以备他用
 
         # ── 情感系统：分析本轮交互 ────────────────────────────
-        if not effective_disable:
+        if self._track_emotion:
             try:
                 from brain.emotional import get_manager as _get_emotion_mgr
                 # 统计本轮工具调用次数
