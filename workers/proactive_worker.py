@@ -6,6 +6,7 @@ ProactiveWorker：主动聊天消息生成线程
 """
 
 import os
+import time
 from typing import Optional
 
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -75,6 +76,7 @@ class ProactiveWorker(QThread):
     error_occurred  = pyqtSignal(str)   # 生成失败
     observation_text = pyqtSignal(str)  # 观察完成，发射画面描述（空字符串=无观察）
     observation_image = pyqtSignal(str, str)  # 观察图片路径, 视觉描述（用于显示在聊天界面）
+    data_source_called = pyqtSignal(str, str, bool, float)  # name, preview, is_error, elapsed_ms
 
     def __init__(self, history_manager: HistoryManager,
                  observation_mode: str = "",
@@ -228,18 +230,26 @@ class ProactiveWorker(QThread):
         # ── 天气感知 ────────────────────────────────────────
         try:
             from config import get_qweather_config
-            from brain.weather import get_user_city_from_memory
+            from brain.weather import get_user_city_from_memory, get_full_weather
             qw_cfg = get_qweather_config()
             api_key = qw_cfg.get("api_key", "").strip()
             if api_key:
                 city = get_user_city_from_memory()
+                t0 = time.monotonic()
                 if city:
-                    from brain.weather import get_full_weather
                     weather_text = get_full_weather(city, api_key=api_key)
+                    elapsed = (time.monotonic() - t0) * 1000
                     if weather_text and "错误" not in weather_text:
                         parts.append(f"【当前天气信息】\n{weather_text}")
-        except Exception:
-            pass
+                        self.data_source_called.emit("get_weather", f"获取到 {city} 天气", False, elapsed)
+                    else:
+                        self.data_source_called.emit("get_weather", f"获取失败", True, elapsed)
+                else:
+                    self.data_source_called.emit("get_weather", "未设置城市", True, 0)
+            else:
+                self.data_source_called.emit("get_weather", "未配置 API Key", True, 0)
+        except Exception as e:
+            self.data_source_called.emit("get_weather", f"查询异常: {e}", True, 0)
 
         # 长期记忆（按分类组织）
         all_mem = list_all_facts()
@@ -250,6 +260,7 @@ class ProactiveWorker(QThread):
                 mem_lines.append(f"- [{cat}] {item['content']}")
         if mem_lines:
             parts.append(f"【你记得的事情】\n" + "\n".join(mem_lines[:20]))
+            self.data_source_called.emit("get_memory_facts", f"找到 {len(mem_lines)} 条记忆", False, 0)
 
         # 最近聊天记录
         sessions = self._history_mgr.get_sessions()
@@ -345,15 +356,19 @@ class ProactiveWorker(QThread):
             from brain.tools import bilibili_search
             best_videos = []
             used_keyword = ""
+            self.data_source_called.emit("bilibili_keywords",
+                f"将用 {len(keywords)} 个关键词搜索B站: {', '.join(keywords)}", False, 0)
             for kw in keywords:
                 print(f"[B站冲浪] 搜索关键词: {kw}")
                 results = bilibili_search(kw, max_results=10)
                 print(f"[B站冲浪] 搜索结果: {len(results)} 条")
+                self.data_source_called.emit("bilibili_search", f"搜索「{kw}」获得 {len(results)} 条结果", False, 0)
                 results = bmgr.filter_seen(results)
                 print(f"[B站冲浪] 去重后: {len(results)} 条")
                 if results:
                     best_videos = results[:3]
                     used_keyword = kw
+                    self.data_source_called.emit("bilibili_select", f"精选 {len(best_videos)} 个视频 (关键词: {kw})", False, 0)
                     bmgr.mark_tag_searched(kw)
                     break
 

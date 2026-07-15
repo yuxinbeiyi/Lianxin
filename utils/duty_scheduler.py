@@ -152,6 +152,10 @@ class DutyScheduler(QObject):
 
     reminder_response = pyqtSignal(str)               # reminder text
 
+    # 摸鱼数据源透明信号
+    mooyu_data_sources = pyqtSignal(str, object)      # action_name, list[MooyuDataSource]
+    mooyu_duty_data_source = pyqtSignal(str, str, bool, float)  # name, preview, is_error, elapsed_ms
+
     # 状态变化信号
     duty_started = pyqtSignal(str)                    # duty name
     duty_completed = pyqtSignal(str, str)             # duty name, result
@@ -347,6 +351,8 @@ class ProactiveDuty(Duty):
         worker.error_occurred.connect(self._on_error)
         worker.observation_text.connect(self._on_obs_text)
         worker.observation_image.connect(self._on_obs_image)
+        # 摸鱼数据源透明信号（跨线程，Qt 自动队列）
+        worker.data_source_called.connect(self._on_data_source)
 
     def _on_response(self, text: str):
         self.status.is_running = False
@@ -365,6 +371,10 @@ class ProactiveDuty(Duty):
 
     def _on_obs_image(self, img_path: str, desc: str):
         self._scheduler.proactive_observation_image.emit(img_path, desc)
+
+    def _on_data_source(self, name: str, preview: str, is_error: bool, elapsed_ms: float):
+        """中继 ProactiveWorker 的数据源信号到 DutyScheduler。"""
+        self._scheduler.mooyu_duty_data_source.emit(name, preview, is_error, elapsed_ms)
 
     # 子类需要访问 DutyScheduler —— 在 register 时注入
     @property
@@ -412,8 +422,11 @@ class SlackDuty(Duty):
         action = force_action or ps.should_slack()
         if not action:
             return None
-        context = self._build_context(action, state)
+        context, sources = self._build_context(action, state)
         self._current_action = action
+        # 发射摸鱼数据源信号（主线程 → 直接同步）
+        if sources:
+            self._scheduler.mooyu_data_sources.emit(action, sources)
         return SlackWorker(action, context)
 
     def _wire_worker(self, worker):
@@ -432,33 +445,88 @@ class SlackDuty(Duty):
         self.status.fail_count += 1
         self._scheduler.slack_error.emit(err)
 
-    def _build_context(self, action: str, state: SchedulerState) -> str:
-        """为摸鱼动作构建上下文（从 MainWindow._build_slack_context 迁移）。"""
+    def _build_context(self, action: str, state: SchedulerState) -> tuple[str, list]:
+        """为摸鱼动作构建上下文（同步返回 context 文本 + 数据源记录列表）。"""
         from datetime import datetime
-        parts = []
+        from utils.mooyu_data import MooyuDataSource, MOOYU_SOURCE_FRIENDLY
+
+        parts: list[str] = []
+        sources: list[MooyuDataSource] = []
         today = datetime.now().strftime("%Y-%m-%d")
 
+        # ── 补充日记 ──────────────────────────────────────────────
         if action == "supplement_diary":
+            t0 = time.monotonic()
             try:
                 from utils.diary import get_diary_by_date
                 diary = get_diary_by_date(today)
+                elapsed = (time.monotonic() - t0) * 1000
                 if diary:
                     parts.append(f"【今天的日记】\n{diary['content'][:500]}")
-            except Exception:
-                pass
+                    sources.append(MooyuDataSource(
+                        source_name="get_diary_today",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_diary_today", "翻日记"),
+                        preview=f"找到今天的日记，{len(diary['content'])} 字",
+                        elapsed_ms=elapsed,
+                        detail=diary['content'][:500],
+                    ))
+                else:
+                    sources.append(MooyuDataSource(
+                        source_name="get_diary_today",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_diary_today", "翻日记"),
+                        preview="今天还没有日记",
+                        is_error=True,
+                        elapsed_ms=elapsed,
+                    ))
+            except Exception as e:
+                elapsed = (time.monotonic() - t0) * 1000
+                sources.append(MooyuDataSource(
+                    source_name="get_diary_today",
+                    friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_diary_today", "翻日记"),
+                    preview=f"查询失败: {e}",
+                    is_error=True,
+                    elapsed_ms=elapsed,
+                ))
 
+        # ── 翻旧日记 ──────────────────────────────────────────────
         elif action == "review_old_diary":
+            t0 = time.monotonic()
             try:
                 import random as _random
                 from utils.diary import get_all_diaries
                 diaries = get_all_diaries()
+                elapsed = (time.monotonic() - t0) * 1000
                 if diaries:
                     old = _random.choice(diaries)
                     parts.append(f"【旧日记 - {old['date']}】\n{old['content'][:500]}")
-            except Exception:
-                pass
+                    sources.append(MooyuDataSource(
+                        source_name="get_diary_old",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_diary_old", "翻旧日记"),
+                        preview=f"找到 {old['date']} 的日记",
+                        elapsed_ms=elapsed,
+                        detail=old['content'][:500],
+                    ))
+                else:
+                    sources.append(MooyuDataSource(
+                        source_name="get_diary_old",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_diary_old", "翻旧日记"),
+                        preview="没有旧日记",
+                        is_error=True,
+                        elapsed_ms=elapsed,
+                    ))
+            except Exception as e:
+                elapsed = (time.monotonic() - t0) * 1000
+                sources.append(MooyuDataSource(
+                    source_name="get_diary_old",
+                    friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_diary_old", "翻旧日记"),
+                    preview=f"查询失败: {e}",
+                    is_error=True,
+                    elapsed_ms=elapsed,
+                ))
 
+        # ── 翻旧话题 / 随机提问 ──────────────────────────────────
         elif action in ("search_old_topic", "random_question"):
+            t0 = time.monotonic()
             try:
                 hm = state.history_manager
                 if hm:
@@ -466,18 +534,54 @@ class SlackDuty(Duty):
                     if sessions:
                         msgs = hm.get_messages(sessions[0]["id"])
                         recent = msgs[-30:] if len(msgs) > 30 else msgs
+                        elapsed = (time.monotonic() - t0) * 1000
                         user_name = self._get_user_name()
                         lines = [f"{user_name if m['role'] == 'user' else '莲心'}：{m['content'][:200]}"
                                  for m in recent]
                         parts.append("【最近的对话】\n" + "\n".join(lines))
-            except Exception:
-                pass
+                        sources.append(MooyuDataSource(
+                            source_name="get_chat_history",
+                            friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_chat_history", "翻聊天记录"),
+                            preview=f"获取最近 {len(recent)} 条对话",
+                            elapsed_ms=elapsed,
+                            detail="\n".join(lines),
+                        ))
+                    else:
+                        elapsed = (time.monotonic() - t0) * 1000
+                        sources.append(MooyuDataSource(
+                            source_name="get_chat_history",
+                            friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_chat_history", "翻聊天记录"),
+                            preview="没有对话记录",
+                            is_error=True,
+                            elapsed_ms=elapsed,
+                        ))
+                else:
+                    elapsed = (time.monotonic() - t0) * 1000
+                    sources.append(MooyuDataSource(
+                        source_name="get_chat_history",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_chat_history", "翻聊天记录"),
+                        preview="历史管理器不可用",
+                        is_error=True,
+                        elapsed_ms=elapsed,
+                    ))
+            except Exception as e:
+                elapsed = (time.monotonic() - t0) * 1000
+                sources.append(MooyuDataSource(
+                    source_name="get_chat_history",
+                    friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_chat_history", "翻聊天记录"),
+                    preview=f"查询失败: {e}",
+                    is_error=True,
+                    elapsed_ms=elapsed,
+                ))
 
+        # ── 提醒待办 ──────────────────────────────────────────────
         elif action == "remind_todo":
+            t0 = time.monotonic()
             try:
                 tm = state.todo_manager
                 if tm:
                     todos = tm.get_todos(completed=False)
+                    elapsed = (time.monotonic() - t0) * 1000
                     if todos:
                         todo_lines = []
                         for t in todos[:5]:
@@ -486,10 +590,42 @@ class SlackDuty(Duty):
                             else:
                                 todo_lines.append(f"- {t.title}")
                         parts.append(f"【当前日期】{today}\n【未完成的待办】\n" + "\n".join(todo_lines))
-            except Exception:
-                pass
+                        sources.append(MooyuDataSource(
+                            source_name="get_todos",
+                            friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_todos", "查看待办"),
+                            preview=f"找到 {len(todos)} 个未完成待办",
+                            elapsed_ms=elapsed,
+                            detail="\n".join(todo_lines),
+                        ))
+                    else:
+                        sources.append(MooyuDataSource(
+                            source_name="get_todos",
+                            friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_todos", "查看待办"),
+                            preview="没有未完成待办",
+                            elapsed_ms=elapsed,
+                        ))
+                else:
+                    elapsed = (time.monotonic() - t0) * 1000
+                    sources.append(MooyuDataSource(
+                        source_name="get_todos",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_todos", "查看待办"),
+                        preview="待办管理器不可用",
+                        is_error=True,
+                        elapsed_ms=elapsed,
+                    ))
+            except Exception as e:
+                elapsed = (time.monotonic() - t0) * 1000
+                sources.append(MooyuDataSource(
+                    source_name="get_todos",
+                    friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_todos", "查看待办"),
+                    preview=f"查询失败: {e}",
+                    is_error=True,
+                    elapsed_ms=elapsed,
+                ))
 
+        # ── 天气闲聊 ──────────────────────────────────────────────
         elif action == "weather_chitchat":
+            t0 = time.monotonic()
             try:
                 from config import get_qweather_config
                 from brain.weather import get_user_city_from_memory, get_full_weather
@@ -499,58 +635,292 @@ class SlackDuty(Duty):
                     city = get_user_city_from_memory()
                     if city:
                         weather_text = get_full_weather(city, api_key=api_key)
+                        elapsed = (time.monotonic() - t0) * 1000
                         if weather_text and "错误" not in weather_text:
                             parts.append(f"【当前天气】\n{weather_text}")
-            except Exception:
-                pass
+                            sources.append(MooyuDataSource(
+                                source_name="get_weather",
+                                friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_weather", "查天气"),
+                                preview=f"获取到 {city} 的天气数据",
+                                elapsed_ms=elapsed,
+                                detail=weather_text,
+                            ))
+                        else:
+                            sources.append(MooyuDataSource(
+                                source_name="get_weather",
+                                friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_weather", "查天气"),
+                                preview=f"天气获取失败: {weather_text}",
+                                is_error=True,
+                                elapsed_ms=elapsed,
+                            ))
+                    else:
+                        elapsed = (time.monotonic() - t0) * 1000
+                        sources.append(MooyuDataSource(
+                            source_name="get_weather",
+                            friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_weather", "查天气"),
+                            preview="未设置城市",
+                            is_error=True,
+                            elapsed_ms=elapsed,
+                        ))
+                else:
+                    elapsed = (time.monotonic() - t0) * 1000
+                    sources.append(MooyuDataSource(
+                        source_name="get_weather",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_weather", "查天气"),
+                        preview="未配置 API Key",
+                        is_error=True,
+                        elapsed_ms=elapsed,
+                    ))
+            except Exception as e:
+                elapsed = (time.monotonic() - t0) * 1000
+                sources.append(MooyuDataSource(
+                    source_name="get_weather",
+                    friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_weather", "查天气"),
+                    preview=f"查询异常: {e}",
+                    is_error=True,
+                    elapsed_ms=elapsed,
+                ))
 
+        # ── 翻本地文件 ────────────────────────────────────────────
         elif action == "read_local_files":
+            t0 = time.monotonic()
             try:
                 from utils.slack_utils import get_random_document
                 doc = get_random_document()
+                elapsed = (time.monotonic() - t0) * 1000
                 if doc:
                     parts.append(
                         f"【翻到的文件】\n文件名：{doc['name']}\n"
                         f"所在文件夹：{doc['folder']}\n大小：{doc['size_kb']} KB\n"
                         f"\n内容摘要：\n{doc['snippet']}"
                     )
-            except Exception:
-                pass
+                    sources.append(MooyuDataSource(
+                        source_name="get_random_document",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_random_document", "翻文件"),
+                        preview=f"找到文件: {doc['name']} ({doc['size_kb']} KB)",
+                        elapsed_ms=elapsed,
+                        detail=doc['snippet'],
+                    ))
+                else:
+                    sources.append(MooyuDataSource(
+                        source_name="get_random_document",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_random_document", "翻文件"),
+                        preview="没有找到可读文件",
+                        is_error=True,
+                        elapsed_ms=elapsed,
+                    ))
+            except Exception as e:
+                elapsed = (time.monotonic() - t0) * 1000
+                sources.append(MooyuDataSource(
+                    source_name="get_random_document",
+                    friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_random_document", "翻文件"),
+                    preview=f"查询失败: {e}",
+                    is_error=True,
+                    elapsed_ms=elapsed,
+                ))
 
+        # ── 浏览器历史 ────────────────────────────────────────────
         elif action == "browser_history":
+            t0 = time.monotonic()
             try:
                 from utils.slack_utils import get_browser_history_snippet
                 history = get_browser_history_snippet()
+                elapsed = (time.monotonic() - t0) * 1000
                 if history:
                     parts.append(f"【浏览器最近访问记录】\n{history}")
-            except Exception:
-                pass
+                    sources.append(MooyuDataSource(
+                        source_name="get_browser_history",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_browser_history", "看浏览记录"),
+                        preview="获取到浏览器历史记录",
+                        elapsed_ms=elapsed,
+                        detail=history,
+                    ))
+                else:
+                    sources.append(MooyuDataSource(
+                        source_name="get_browser_history",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_browser_history", "看浏览记录"),
+                        preview="浏览器历史为空",
+                        is_error=True,
+                        elapsed_ms=elapsed,
+                    ))
+            except Exception as e:
+                elapsed = (time.monotonic() - t0) * 1000
+                sources.append(MooyuDataSource(
+                    source_name="get_browser_history",
+                    friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_browser_history", "看浏览记录"),
+                    preview=f"查询失败: {e}",
+                    is_error=True,
+                    elapsed_ms=elapsed,
+                ))
 
+        # ── 批量获取：CPU状态/回收站/休息提醒/喝水提醒/纪念日/切歌 ──
         elif action in ("check_cpu_disk", "check_recycle_bin", "remind_rest",
                         "remind_water", "anniversary_remind", "next_song"):
             try:
-                from utils.slack_utils import (
-                    get_system_stats_snippet, get_recycle_bin_info,
-                    get_rest_reminder_context, get_water_reminder_context,
-                    get_anniversary_context, get_next_song_context,
-                )
-                builders = {
-                    "check_cpu_disk": get_system_stats_snippet,
-                    "check_recycle_bin": get_recycle_bin_info,
-                    "remind_rest": get_rest_reminder_context,
-                    "remind_water": get_water_reminder_context,
-                    "anniversary_remind": get_anniversary_context,
-                    "next_song": get_next_song_context,
-                }
-                fn = builders.get(action)
-                if fn:
-                    ctx = fn()
-                    if ctx:
+                if action == "check_cpu_disk":
+                    t0 = time.monotonic()
+                    try:
+                        from utils.slack_utils import get_system_status
+                        status = get_system_status()
+                        elapsed = (time.monotonic() - t0) * 1000
+                        lines = []
+                        if status.get("cpu_percent") is not None:
+                            lines.append(f"CPU: {status['cpu_percent']}%")
+                        if status.get("memory_percent") is not None:
+                            lines.append(f"内存: {status['memory_percent']}%")
+                        if status.get("top_processes"):
+                            lines.append("高占用进程: " + ", ".join(status["top_processes"]))
+                        if status.get("disk_info"):
+                            lines.append(f"磁盘: {status['disk_info']}")
+                        if lines:
+                            ctx = "【电脑系统状态】\n" + "\n".join(lines)
+                            parts.append(ctx)
+                            sources.append(MooyuDataSource(
+                                source_name="get_system_status",
+                                friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_system_status", "查看系统状态"),
+                                preview=f"CPU {status.get('cpu_percent', '?')}% | 内存 {status.get('memory_percent', '?')}%",
+                                elapsed_ms=elapsed,
+                                detail=ctx,
+                            ))
+                        else:
+                            sources.append(MooyuDataSource(
+                                source_name="get_system_status",
+                                friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_system_status", "查看系统状态"),
+                                preview="无系统状态数据",
+                                is_error=True,
+                                elapsed_ms=elapsed,
+                            ))
+                    except Exception as e:
+                        elapsed = (time.monotonic() - t0) * 1000
+                        sources.append(MooyuDataSource(
+                            source_name="get_system_status",
+                            friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_system_status", "查看系统状态"),
+                            preview=f"查询失败: {e}",
+                            is_error=True,
+                            elapsed_ms=elapsed,
+                        ))
+
+                elif action == "check_recycle_bin":
+                    t0 = time.monotonic()
+                    try:
+                        from utils.slack_utils import get_recycle_bin_info
+                        info = get_recycle_bin_info()
+                        elapsed = (time.monotonic() - t0) * 1000
+                        if info:
+                            parts.append(f"【回收站信息】\n{info}")
+                            sources.append(MooyuDataSource(
+                                source_name="get_recycle_bin",
+                                friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_recycle_bin", "查看回收站"),
+                                preview=info[:80].replace("\n", " "),
+                                elapsed_ms=elapsed,
+                                detail=info,
+                            ))
+                        else:
+                            sources.append(MooyuDataSource(
+                                source_name="get_recycle_bin",
+                                friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_recycle_bin", "查看回收站"),
+                                preview="无回收站数据",
+                                is_error=True,
+                                elapsed_ms=elapsed,
+                            ))
+                    except Exception as e:
+                        elapsed = (time.monotonic() - t0) * 1000
+                        sources.append(MooyuDataSource(
+                            source_name="get_recycle_bin",
+                            friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_recycle_bin", "查看回收站"),
+                            preview=f"查询失败: {e}",
+                            is_error=True,
+                            elapsed_ms=elapsed,
+                        ))
+
+                elif action == "remind_rest":
+                    t0 = time.monotonic()
+                    try:
+                        import psutil
+                        from datetime import datetime as _dt
+                        boot = _dt.fromtimestamp(psutil.boot_time())
+                        uptime = _dt.now() - boot
+                        hours = int(uptime.total_seconds() / 3600)
+                        elapsed = (time.monotonic() - t0) * 1000
+                        ctx = f"【电脑开机时长】约 {hours} 小时"
                         parts.append(ctx)
+                        sources.append(MooyuDataSource(
+                            source_name="get_uptime",
+                            friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_uptime", "查看开机时长"),
+                            preview=f"开机 {hours} 小时",
+                            elapsed_ms=elapsed,
+                            detail=ctx,
+                        ))
+                    except Exception as e:
+                        elapsed = (time.monotonic() - t0) * 1000
+                        sources.append(MooyuDataSource(
+                            source_name="get_uptime",
+                            friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_uptime", "查看开机时长"),
+                            preview=f"查询失败: {e}",
+                            is_error=True,
+                            elapsed_ms=elapsed,
+                        ))
+
+                elif action == "remind_water":
+                    ctx = f"【提醒喝水】现在是时候提醒{self._get_user_name()}喝口水了"
+                    parts.append(ctx)
+                    sources.append(MooyuDataSource(
+                        source_name="remind_water",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("remind_water", "提醒喝水"),
+                        preview="提醒喝水",
+                        detail=ctx,
+                    ))
+
+                elif action == "anniversary_remind":
+                    t0 = time.monotonic()
+                    try:
+                        from utils.accompany_stats import AccompanyStats
+                        stats = AccompanyStats()
+                        stats.reload()
+                        first_meet = stats.get_first_meet_date()
+                        elapsed = (time.monotonic() - t0) * 1000
+                        if first_meet:
+                            days = stats.get_total_days_since_first_meet()
+                            ctx = f"【相识纪念日】相识日期: {first_meet}，已相伴 {days} 天"
+                            parts.append(ctx)
+                            sources.append(MooyuDataSource(
+                                source_name="get_anniversary",
+                                friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_anniversary", "查看纪念日"),
+                                preview=f"相识 {days} 天",
+                                elapsed_ms=elapsed,
+                                detail=ctx,
+                            ))
+                        else:
+                            sources.append(MooyuDataSource(
+                                source_name="get_anniversary",
+                                friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_anniversary", "查看纪念日"),
+                                preview="未设置相识日期",
+                                is_error=True,
+                                elapsed_ms=elapsed,
+                            ))
+                    except Exception as e:
+                        elapsed = (time.monotonic() - t0) * 1000
+                        sources.append(MooyuDataSource(
+                            source_name="get_anniversary",
+                            friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_anniversary", "查看纪念日"),
+                            preview=f"查询失败: {e}",
+                            is_error=True,
+                            elapsed_ms=elapsed,
+                        ))
+
+                elif action == "next_song":
+                    sources.append(MooyuDataSource(
+                        source_name="get_current_song",
+                        friendly_name=MOOYU_SOURCE_FRIENDLY.get("get_current_song", "查看播放歌曲"),
+                        preview="（需要在主窗口上下文才能获取播放列表）",
+                        is_error=True,
+                        elapsed_ms=0,
+                    ))
+
             except Exception:
                 pass
 
-        return "\n".join(parts)
+        return ("\n\n".join(parts) if parts else "", sources)
 
     @staticmethod
     def _get_user_name() -> str:
@@ -718,13 +1088,6 @@ class SmartReminderDuty(Duty):
 # Registration helper
 # ═══════════════════════════════════════════════════════════════
 
-def _inject_scheduler(duty: Duty, scheduler: DutyScheduler):
-    """注入 DutyScheduler 引用到 Duty，使其能发射信号。"""
-    # 使用私有属性（见各 Duty 的 _scheduler property）
-    duty._DutyScheduler_ref = scheduler
-
-
-# 扩展 register 方法
 def register_duty(scheduler: DutyScheduler, duty: Duty):
     duty._scheduler = scheduler
     scheduler.register(duty)

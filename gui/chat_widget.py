@@ -304,6 +304,31 @@ class ChatWidget(QScrollArea):
         self._scroll_to_bottom()  
         return label  # 返回引用，供调用方后续 hide()
 
+    def add_mooyu_data_sources(self, sources: list):
+        """在聊天区域插入摸鱼数据来源卡片（橙色 🐟 主题）。
+
+        在 AI 消息之前展示，让用户确认莲心确实获取了真实数据。
+        """
+        from gui.tool_call_card import ToolCallCard
+        from PyQt5.QtWidgets import QWidget, QVBoxLayout
+
+        container = QWidget()
+        container.setObjectName("mooyu_sources")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(16, 2, 16, 2)
+        layout.setSpacing(2)
+
+        for src in sources:
+            card = ToolCallCard(variant="mooyu")
+            # 连续调用 set_running + set_result — 控件尚未绘制，用户看到的是最终态
+            card.set_running(src.friendly_name, "{}")
+            card.set_result(src.preview, src.is_error, src.elapsed_ms)
+            layout.addWidget(card)
+
+        self._layout.insertWidget(self._layout.count() - 1, container)
+        self._container.updateGeometry()
+        self._scroll_to_bottom()
+
     def add_user_image(self, image_path: str, ocr_text: str = "", full_text: str = ""):
         """插入用户图片消息气泡（右侧）。ocr_text 为摘要，full_text 为完整描述（支持展开）。"""
         self._hide_thinking()

@@ -19,12 +19,20 @@ _COLORS = {
     "unknown": {"border": "#666666", "icon": "⬜",  "bg": "#252540", "text": "#888888"},
 }
 
+_MOOYU_COLORS = {
+    "running": {"border": "#F39C12", "icon": "🐟",  "bg": "#2D2510", "text": "#F0D8A0"},
+    "success": {"border": "#F39C12", "icon": "🐟",  "bg": "#2D2510", "text": "#F0D8A0"},
+    "error":   {"border": "#E74C3C", "icon": "🐟",  "bg": "#2D2020", "text": "#E8A0A0"},
+    "unknown": {"border": "#666666", "icon": "🐟",  "bg": "#252540", "text": "#888888"},
+}
+
 
 class ToolCallCard(QWidget):
     """单个工具调用卡片 — 可折叠展开"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, variant="tool"):
         super().__init__(parent)
+        self._variant = variant
         self._tool_name = ""
         self._args_json = ""
         self._status = "running"
@@ -33,6 +41,11 @@ class ToolCallCard(QWidget):
         self._expanded = False
         self._build_ui()
         self.setCursor(Qt.PointingHandCursor)
+
+    # ── 颜色分发 ─────────────────────────────────────
+
+    def _get_colors(self):
+        return _MOOYU_COLORS if self._variant == "mooyu" else _COLORS
 
     # ── 公开方法 ───────────────────────────────────────
 
@@ -150,7 +163,7 @@ class ToolCallCard(QWidget):
         self._detail.setVisible(self._expanded)
 
     def _refresh(self):
-        c = _COLORS[self._status]
+        c = self._get_colors()[self._status]
 
         # 整体样式
         self.setStyleSheet(f"""
@@ -170,9 +183,14 @@ class ToolCallCard(QWidget):
         self._name_label.setStyleSheet(f"color: {c['text']}; background: transparent; font-weight: bold;")
 
         # 状态
-        status_texts = {
-            "running": "执行中…", "success": "完成", "error": "失败", "unknown": "—"
-        }
+        if self._variant == "mooyu":
+            status_texts = {
+                "running": "获取中…", "success": "已获取", "error": "失败", "unknown": "—"
+            }
+        else:
+            status_texts = {
+                "running": "执行中…", "success": "完成", "error": "失败", "unknown": "—"
+            }
         self._status_label.setText(status_texts.get(self._status, ""))
         self._status_label.setStyleSheet(f"color: {c['text']}; background: transparent;")
 

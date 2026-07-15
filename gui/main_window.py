@@ -164,6 +164,9 @@ class MainWindow(QMainWindow):
         self._proactive_scheduler = ProactiveChatScheduler()
         self._last_proactive_was_observation = False
 
+        # ── 摸鱼数据源积累器（ProactiveWorker 跨线程积累）──
+        self._pending_mooyu_sources: list = []
+
         # ── 摸鱼模块 ────────────────────────────────────────
         self._slack_worker: SlackWorker | None = None
 
@@ -327,6 +330,9 @@ class MainWindow(QMainWindow):
         self._duty_scheduler.heartbeat_response.connect(self._on_heartbeat_response)
         self._duty_scheduler.heartbeat_silent.connect(self._on_heartbeat_finished_silent)
         self._duty_scheduler.reminder_response.connect(self._do_reminder)
+        # ── 摸鱼数据源透明信号 ────────────────────────────────
+        self._duty_scheduler.mooyu_data_sources.connect(self._on_mooyu_data_sources)
+        self._duty_scheduler.mooyu_duty_data_source.connect(self._on_mooyu_duty_data_source)
         self._duty_scheduler.start()
 
         self._heartbeat_check_worker: HeartbeatWorker | None = None
@@ -2269,8 +2275,16 @@ class MainWindow(QMainWindow):
         import re
         text = re.sub(r"[【［\[]表情[：:]\s*[^】\]］\]]*[】\]］\]]?", "", text).strip()
         text = re.sub(r'\n\s*\n', '\n', text).strip()
+        # 无论最终发往桌面还是仅发往 QQ，本轮数据源都必须在响应完成后
+        # 取出并清空，避免 QQ-only 模式把旧数据带到下一条桌面消息。
+        pending_sources = self._pending_mooyu_sources
+        self._pending_mooyu_sources = []
+
         # 桌面主动消息
         if self._proactive_scheduler.desktop_enabled:
+            # 刷新积累的数据源卡片（在 AI 消息之前显示）
+            if pending_sources:
+                self._chat_widget.add_mooyu_data_sources(pending_sources)
             self._agent.get_history_manager().save_message(
                 self._agent._session_id, "assistant", f"[主动] {text}"
             )
@@ -2304,6 +2318,24 @@ class MainWindow(QMainWindow):
             self._observation_tip.deleteLater()
             self._observation_tip = None
         self._chat_widget.add_system_tip(f"主动消息生成失败：{err}")
+        # 清理积累的数据源（避免下次误显示过期数据）
+        if self._pending_mooyu_sources:
+            self._pending_mooyu_sources.clear()
+
+    def _on_mooyu_data_sources(self, action_name: str, sources: list):
+        """SlackDuty 摸鱼数据源就绪 → 直接刷到聊天界面。"""
+        self._chat_widget.add_mooyu_data_sources(sources)
+
+    def _on_mooyu_duty_data_source(self, name: str, preview: str, is_error: bool, elapsed_ms: float):
+        """ProactiveDuty 摸鱼数据源跨线程到达 → 积累，等待主消息。"""
+        from utils.mooyu_data import MooyuDataSource, MOOYU_SOURCE_FRIENDLY
+        self._pending_mooyu_sources.append(MooyuDataSource(
+            source_name=name,
+            friendly_name=MOOYU_SOURCE_FRIENDLY.get(name, name),
+            preview=preview,
+            is_error=is_error,
+            elapsed_ms=elapsed_ms,
+        ))
 
     def _on_checklist_proposed(self, items: list):
         """莲心从对话中提取到待办，弹窗确认。"""
