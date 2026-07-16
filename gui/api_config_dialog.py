@@ -1,6 +1,7 @@
 """
 ApiConfigDialog：API Key 配置对话框
-支持填写 DeepSeek API、阿里云语音识别、QQ 桥接的配置信息。
+支持填写 DeepSeek API、QQ 桥接等配置信息。
+语音识别相关配置已统一迁移至「语音转录中心」。
 """
 
 from PyQt5.QtWidgets import (
@@ -14,13 +15,11 @@ from PyQt5.QtGui import QFont
 
 from config import (
     get_api_config, save_api_config,
-    get_aliyun_stt_config, save_aliyun_stt_config,
     get_qq_bridge_config, save_qq_bridge_config,
     get_siliconflow_config, save_siliconflow_config,
     get_qweather_config, save_qweather_config,
     get_tavily_config, save_tavily_config,
     get_firecrawl_config, save_firecrawl_config,
-    get_volcano_stt_config, save_volcano_stt_config,
 
 )
 
@@ -109,7 +108,8 @@ class ApiConfigDialog(QDialog):
         layout.addWidget(title)
 
         desc = QLabel(
-            "配置 DeepSeek API Key、阿里云语音识别和 QQ 桥接的参数。\n"
+            "配置 DeepSeek API Key 和 QQ 桥接等参数。\n"
+            "语音识别相关配置请使用「语音转录中心」管理。\n"
             "所有信息仅保存在本地 data/user_config.json，不会上传到任何服务器。"
         )
         desc.setFont(QFont("Microsoft YaHei UI", 9))
@@ -158,20 +158,10 @@ class ApiConfigDialog(QDialog):
         self._build_tab_deepseek(tab_ds)
         tabs.addTab(tab_ds, "DeepSeek API")
 
-        # Tab 1: 语音识别
-        tab_ali = QWidget()
-        self._build_tab_aliyun(tab_ali)
-        tabs.addTab(tab_ali, "语音识别")
-
-        # Tab 1.5: 火山引擎语音识别
-        tab_volcano = QWidget()
-        self._build_tab_volcano(tab_volcano)
-        tabs.addTab(tab_volcano, "🌋 火山引擎")
-
-        # Tab 2: QQ 聊天
+        # Tab 1: NapCat QQ 聊天
         tab_qq = QWidget()
         self._build_tab_qq(tab_qq)
-        tabs.addTab(tab_qq, "QQ 聊天")
+        tabs.addTab(tab_qq, "NapCat QQ 聊天")
 
         # Tab 3: 视觉理解 (SiliconFlow)
         tab_vision = QWidget()
@@ -545,146 +535,7 @@ class ApiConfigDialog(QDialog):
         self._agnes_key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
         self._show_agnes_btn.setText("隐藏" if checked else "显示")
 
-    # ── Tab: 阿里云语音识别 ─────────────────────────────────
-
-    def _build_tab_aliyun(self, parent: QWidget):
-        layout = QVBoxLayout(parent)
-        layout.setContentsMargins(16, 20, 16, 16)
-        form = QFormLayout()
-        form.setSpacing(16)
-        form.setContentsMargins(0, 0, 0, 0)
-
-        self._ali_access_key_id = QLineEdit()
-        self._ali_access_key_id.setPlaceholderText("LTAI...")
-        self._apply_field_style(self._ali_access_key_id)
-        form.addRow("AccessKey ID:", self._ali_access_key_id)
-
-        self._ali_access_key_secret = QLineEdit()
-        self._ali_access_key_secret.setPlaceholderText("请妥善保管")
-        self._ali_access_key_secret.setEchoMode(QLineEdit.Password)
-        self._apply_field_style(self._ali_access_key_secret)
-        ali_secret_layout = QHBoxLayout()
-        ali_secret_layout.addWidget(self._ali_access_key_secret)
-        self._show_ali_btn = QPushButton("显示")
-        self._show_ali_btn.setFixedSize(52, 32)
-        self._show_ali_btn.setCheckable(True)
-        self._show_ali_btn.setCursor(Qt.PointingHandCursor)
-        self._show_ali_btn.setFont(QFont("Microsoft YaHei UI", 8))
-        self._show_ali_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #ECEEFF;
-                color: #5060DD;
-                border-radius: 6px;
-                border: 1px solid #C8CCEE;
-            }
-            QPushButton:checked {
-                background-color: #5060DD;
-                color: white;
-            }
-            QPushButton:hover { background-color: #DDE0FF; }
-        """)
-        self._show_ali_btn.toggled.connect(self._toggle_ali_secret_visibility)
-        ali_secret_layout.addWidget(self._show_ali_btn)
-        form.addRow("AccessKey Secret:", ali_secret_layout)
-
-        self._ali_app_key = QLineEdit()
-        self._ali_app_key.setPlaceholderText("ZCaEYdFPhr9kuR3V")
-        self._apply_field_style(self._ali_app_key)
-        form.addRow("AppKey:", self._ali_app_key)
-
-        layout.addLayout(form)
-        layout.addStretch()
-
-    # ── Tab: 火山引擎语音识别 ──────────────────────────────
-
-    def _build_tab_volcano(self, parent: QWidget):
-        layout = QVBoxLayout(parent)
-        layout.setContentsMargins(16, 20, 16, 16)
-
-        # 标题
-        title = QLabel("火山引擎 一句话识别")
-        title.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
-        title.setStyleSheet("color: #3A3A5C;")
-        layout.addWidget(title)
-
-        desc = QLabel("免费额度 20,000 次（半年），超出后 ¥1~4.5/小时")
-        desc.setWordWrap(True)
-        desc.setFont(QFont("Microsoft YaHei UI", 9))
-        desc.setStyleSheet("color: #888888;")
-        layout.addWidget(desc)
-
-        spacer = QLabel("")
-        spacer.setFixedHeight(8)
-        layout.addWidget(spacer)
-
-        form = QFormLayout()
-        form.setSpacing(16)
-        form.setContentsMargins(0, 0, 0, 0)
-
-        self._volc_appid = QLineEdit()
-        self._volc_appid.setPlaceholderText("AppID（如 6062204577）")
-        self._apply_field_style(self._volc_appid)
-        form.addRow("App ID:", self._volc_appid)
-
-        self._volc_token = QLineEdit()
-        self._volc_token.setPlaceholderText("Access Token（应用级令牌）")
-        self._volc_token.setEchoMode(QLineEdit.Password)
-        self._apply_field_style(self._volc_token)
-        token_layout = QHBoxLayout()
-        token_layout.addWidget(self._volc_token)
-        self._show_volc_token_btn = QPushButton("显示")
-        self._show_volc_token_btn.setFixedSize(52, 32)
-        self._show_volc_token_btn.setCheckable(True)
-        self._show_volc_token_btn.setCursor(Qt.PointingHandCursor)
-        self._show_volc_token_btn.setFont(QFont("Microsoft YaHei UI", 8))
-        self._show_volc_token_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #ECEEFF; color: #5060DD;
-                border-radius: 6px; border: 1px solid #C8CCEE;
-            }
-            QPushButton:checked { background-color: #5060DD; color: white; }
-            QPushButton:hover { background-color: #DDE0FF; }
-        """)
-        self._show_volc_token_btn.toggled.connect(
-            lambda checked: self._volc_token.setEchoMode(
-                QLineEdit.Normal if checked else QLineEdit.Password
-            )
-        )
-        token_layout.addWidget(self._show_volc_token_btn)
-        form.addRow("Access Token:", token_layout)
-
-        self._volc_cluster = QLineEdit()
-        self._volc_cluster.setPlaceholderText("volcengine_input_common")
-        self._apply_field_style(self._volc_cluster)
-        form.addRow("Cluster:", self._volc_cluster)
-
-        self._volc_secret = QLineEdit()
-        self._volc_secret.setPlaceholderText("Secret Key（可选，仅签名鉴权）")
-        self._volc_secret.setEchoMode(QLineEdit.Password)
-        self._apply_field_style(self._volc_secret)
-        form.addRow("Secret Key:", self._volc_secret)
-
-        layout.addLayout(form)
-
-        # 帮助提示
-        help_text = QLabel(
-            "💡 开通步骤：\n"
-            "1. 登录火山引擎控制台 → 语音技术\n"
-            "2. 左侧「开通管理」→ 开通「一句话识别（中文）」\n"
-            "3. 左侧「应用管理」→ 创建/选择应用 → 复制 AppID 和 Token\n"
-            "4. 在应用详情中确认该服务已关联到此应用\n\n"
-            "配置后即可在全双工语音中使用火山引擎替代本地 Whisper"
-        )
-        help_text.setWordWrap(True)
-        help_text.setFont(QFont("Microsoft YaHei UI", 8))
-        help_text.setStyleSheet(
-            "color: #999999; background-color: #1E1E30;"
-            "padding: 8px; border-radius: 6px;"
-        )
-        layout.addWidget(help_text)
-        layout.addStretch()
-
-    # ── Tab: QQ 聊天 ────────────────────────────────────────
+    # ── Tab: NapCat QQ 聊天 ──────────────────────────────────
 
     def _build_tab_qq(self, parent: QWidget):
         layout = QVBoxLayout(parent)
@@ -1331,10 +1182,6 @@ class ApiConfigDialog(QDialog):
         self._key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
         self._show_btn.setText("隐藏" if checked else "显示")
 
-    def _toggle_ali_secret_visibility(self, checked: bool):
-        self._ali_access_key_secret.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
-        self._show_ali_btn.setText("隐藏" if checked else "显示")
-
     def _toggle_sf_secret_visibility(self, checked: bool):
         self._sf_key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
         self._show_sf_btn.setText("隐藏" if checked else "显示")
@@ -1375,19 +1222,6 @@ class ApiConfigDialog(QDialog):
         checked = self._provider_group.checkedButton()
         if checked:
             self._on_provider_changed(checked)
-
-        # 阿里云 STT 配置
-        ali_cfg = get_aliyun_stt_config()
-        self._ali_access_key_id.setText(ali_cfg.get("access_key_id", ""))
-        self._ali_access_key_secret.setText(ali_cfg.get("access_key_secret", ""))
-        self._ali_app_key.setText(ali_cfg.get("app_key", ""))
-
-        # 火山引擎 STT 配置
-        volc_cfg = get_volcano_stt_config()
-        self._volc_appid.setText(volc_cfg.get("appid", ""))
-        self._volc_token.setText(volc_cfg.get("access_key", ""))
-        self._volc_cluster.setText(volc_cfg.get("cluster", "volcengine_input_common"))
-        self._volc_secret.setText(volc_cfg.get("secret_key", ""))
 
         # QQ 桥接配置
         qq_cfg = get_qq_bridge_config()
@@ -1495,13 +1329,6 @@ class ApiConfigDialog(QDialog):
             "save_dir":           "",
         }
 
-    def _collect_aliyun(self) -> dict:
-        return {
-            "access_key_id": self._ali_access_key_id.text().strip(),
-            "access_key_secret": self._ali_access_key_secret.text().strip(),
-            "app_key": self._ali_app_key.text().strip(),
-        }
-
     def _collect_qq_bridge(self) -> dict:
         return {
             "enabled":    self._auto_enable.isChecked(),
@@ -1527,14 +1354,6 @@ class ApiConfigDialog(QDialog):
             "remind_time": self._qw_remind_time.currentText(),
         }
 
-    def _collect_volcano(self) -> dict:
-        return {
-            "appid":       self._volc_appid.text().strip(),
-            "access_key":  self._volc_token.text().strip(),
-            "cluster":     self._volc_cluster.text().strip() or "volcengine_input_common",
-            "secret_key":  self._volc_secret.text().strip(),
-        }
-
     # ── 保存 ─────────────────────────────────────────────────
 
     def _on_save(self):
@@ -1553,22 +1372,6 @@ class ApiConfigDialog(QDialog):
         agnes_cfg = self._collect_agnes()
         from config import save_agnes_config
         save_agnes_config(agnes_cfg)
-
-        # 阿里云语音识别
-        ali_cfg = self._collect_aliyun()
-        if not ali_cfg["access_key_id"] or not ali_cfg["access_key_secret"] or not ali_cfg["app_key"]:
-            reply = QMessageBox.question(
-                self, "提示",
-                "阿里云语音识别配置不完整，将无法使用待机模式语音输入。\n仍然保存吗？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-            )
-            if reply != QMessageBox.Yes:
-                return
-        save_aliyun_stt_config(ali_cfg["access_key_id"], ali_cfg["access_key_secret"], ali_cfg["app_key"])
-
-        # 火山引擎语音识别
-        volc_cfg = self._collect_volcano()
-        save_volcano_stt_config(volc_cfg)
 
         # QQ 桥接
         qq_cfg = self._collect_qq_bridge()
