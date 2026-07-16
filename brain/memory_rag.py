@@ -86,7 +86,25 @@ def _get_model():
         except ImportError:
             logger.warning("sentence-transformers not installed, RAG disabled")
         except Exception as e:
-            logger.warning(f"Embedding model load failed: {e}")
+            err_str = str(e).lower()
+            # hf-mirror.com 不稳定时自动回退官方 HuggingFace Hub
+            if "hf-mirror" in err_str or "504" in err_str or "502" in err_str or \
+               "timeout" in err_str or "connection" in err_str or "reset" in err_str:
+                logger.warning(f"hf-mirror.com 下载失败，切换官方源重试: {e}")
+                _saved = _os.environ.get("HF_ENDPOINT", "")
+                _os.environ["HF_ENDPOINT"] = "https://huggingface.co"
+                try:
+                    _model = SentenceTransformer(_model_name, device=resolve_device("rag"))
+                    logger.info("Embedding model ready (via official HuggingFace)")
+                except Exception as e2:
+                    logger.warning(f"Embedding model load failed (mirror & official 均失败): {e2}")
+                finally:
+                    if _saved:
+                        _os.environ["HF_ENDPOINT"] = _saved
+                    else:
+                        _os.environ.pop("HF_ENDPOINT", None)
+            else:
+                logger.warning(f"Embedding model load failed: {e}")
         return None
     return _model
 
@@ -131,6 +149,8 @@ def search_similar(
     """
     model = _get_model()
     if model is None:
+        if _load_attempted:
+            logger.debug("RAG search skipped: model unavailable (load previously attempted)")
         return []
 
     q_vec = embed(query)
@@ -243,5 +263,9 @@ def warmup():
     """后台预热 embedding 模型（启动时调用）。"""
     def _load():
         _get_model()
+        if _model is not None:
+            logger.info("RAG embedding model warmed up successfully")
+        else:
+            logger.warning("RAG embedding model warmup failed or unavailable")
     t = threading.Thread(target=_load, daemon=True)
     t.start()
