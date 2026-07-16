@@ -270,25 +270,69 @@ class VoiceDuplexManager:
         except Exception:
             pass
 
-        # ── 第1优先级：FunASR 本地 GPU（免费，低延迟，中文最优）──
-        try:
-            from brain.stt_funasr import transcribe as funasr_transcribe
-            result = funasr_transcribe(wav_bytes)
-            if result and result.strip():
-                logger.info(f"🎯 FunASR: {result}")
-                return result
-        except Exception as e:
-            logger.debug(f"FunASR 不可用: {e}")
-
-        # ── 第2优先级：火山引擎云端（付费，网络依赖）─────────
-        try:
-            from brain.stt_volcano import transcribe as cloud_transcribe
-            result = cloud_transcribe(wav_bytes)
-            if result and result.strip():
-                logger.info(f"☁️ 火山引擎: {result}")
-                return result
-        except Exception as e:
-            logger.debug(f"火山引擎不可用: {e}")
-
+        # ── 动态 STT 引擎调度（根据配置自动选择和降级）───────
+        from config import get_stt_engine_config, detect_best_stt_engine
+        
+        cfg = get_stt_engine_config()
+        
+        # 确定默认引擎（支持 auto 模式）
+        default_engine = cfg.get("default_engine", "auto")
+        if default_engine == "auto":
+            default_engine = detect_best_stt_engine()
+        
+        # 获取引擎优先级列表
+        priority = cfg.get("engine_priority", ["funasr", "volcano", "aliyun", "whisper"])
+        engine_configs = cfg.get("engines", {})
+        auto_fallback = cfg.get("auto_fallback", True)
+        
+        # 确保默认引擎在优先级最前面
+        if default_engine in priority:
+            priority.remove(default_engine)
+            priority.insert(0, default_engine)
+        
+        for engine_name in priority:
+            engine_cfg = engine_configs.get(engine_name, {})
+            
+            # 跳过未启用的引擎
+            if not engine_cfg.get("enabled", False):
+                if engine_name == "funasr":
+                    pass  # FunASR 默认启用，即使配置中未显式设置
+                else:
+                    continue
+            
+            try:
+                result = self._call_stt_engine(engine_name, wav_bytes, engine_cfg)
+                if result and result.strip():
+                    emoji = {"funasr": "🎯", "volcano": "☁️", "aliyun": "🔒", "whisper": "🔧"}
+                    icon = emoji.get(engine_name, "🎤")
+                    logger.info(f"{icon} {engine_name}: {result}")
+                    return result
+            except Exception as e:
+                logger.warning(f"⚠️ {engine_name} 失败: {e}")
+                
+                # 如果不启用自动降级，直接停止
+                if not auto_fallback:
+                    break
+        
         logger.debug("所有 STT 引擎均未返回结果")
         return ""
+    
+    def _call_stt_engine(self, name: str, wav_bytes: bytes, cfg: dict) -> str:
+        """调用指定的 STT 引擎"""
+        if name == "funasr":
+            from brain.stt_funasr import transcribe
+            return transcribe(wav_bytes)
+        
+        elif name == "volcano":
+            from brain.stt_volcano import transcribe
+            return transcribe(wav_bytes)
+        
+        elif name == "aliyun":
+            from brain.stt_aliyun import transcribe
+            return transcribe(wav_bytes, cfg)
+        
+        elif name == "whisper":
+            from brain.stt_whisper import transcribe
+            return transcribe(wav_bytes, cfg)
+        
+        raise ValueError(f"未知引擎: {name}")

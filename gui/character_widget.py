@@ -370,6 +370,8 @@ class CharacterWidget(QWidget):
         grid.addWidget(self._btn_wechat_bridge, 6, 1)
         self._btn_diary = self._create_button("📔 日记本", color="#E67E22")
         grid.addWidget(self._btn_diary, 7, 0)
+        self._btn_voice_stt = self._create_button("🎙️ 语音转录", color="#27AE60")
+        grid.addWidget(self._btn_voice_stt, 7, 1)
         popup_layout.addLayout(grid)
         popup_layout.addStretch()
 
@@ -679,6 +681,9 @@ class CharacterWidget(QWidget):
         return self._btn_wechat_bridge
     def get_diary_button(self):
         return self._btn_diary
+
+    def get_voice_stt_button(self):
+        return self._btn_voice_stt
 
     def _update_status_label(self, state: str):
         text, color = STATE_CONFIG.get(state, ("● 待机中", "#6C7BFF"))

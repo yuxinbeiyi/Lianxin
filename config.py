@@ -1116,3 +1116,134 @@ def get_debug_config() -> dict:
         return _load_full_config().get("debug", {})
     except Exception:
         return {}
+
+
+# ── 语音转录引擎统一配置 ──────────────────────────────────
+_STT_ENGINE_DEFAULTS = {
+    "default_engine": "auto",
+    "auto_fallback": True,
+    "engine_priority": ["funasr", "volcano", "aliyun", "whisper"],
+    "engines": {
+        "funasr": {
+            "enabled": True,
+            "device": "auto",
+            "model_path": "",
+        },
+        "volcano": {
+            "enabled": False,
+            "appid": "",
+            "access_token": "",
+        },
+        "aliyun": {
+            "enabled": False,
+            "access_key_id": "",
+            "access_key_secret": "",
+            "app_key": "",
+        },
+        "whisper": {
+            "enabled": False,
+            "model_size": "base",
+            "language": "zh",
+            "device": "auto",
+        }
+    },
+    "_migrated": False,
+}
+
+
+def get_stt_engine_config() -> dict:
+    """读取语音转录引擎完整配置，缺失字段用默认值补全。"""
+    full = _load_full_config()
+    stt_cfg = full.get("stt_engine", {})
+    
+    def deep_merge(default, current):
+        result = default.copy()
+        for k, v in current.items():
+            if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+                result[k] = deep_merge(result[k], v)
+            else:
+                result[k] = v
+        return result
+    
+    return deep_merge(_STT_ENGINE_DEFAULTS, stt_cfg)
+
+
+def save_stt_engine_config(config: dict):
+    """保存语音转录引擎完整配置。"""
+    full = _load_full_config()
+    full["stt_engine"] = config
+    _save_full_config(full)
+
+
+def detect_best_stt_engine() -> str:
+    """自动检测最佳 STT 引擎（有GPU→FunASR，无GPU→火山引擎）。"""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "funasr"
+    except ImportError:
+        pass
+    
+    vol_cfg = get_stt_engine_config()["engines"]["volcano"]
+    if vol_cfg.get("enabled") and vol_cfg.get("appid"):
+        return "volcano"
+    
+    return "funasr"
+
+
+def migrate_legacy_stt_config():
+    """迁移旧的 STT 配置到新结构。返回 (是否迁移, 迁移信息)。"""
+    cfg = get_stt_engine_config()
+    if cfg.get("_migrated"):
+        return False, "已迁移"
+    
+    old_ali = get_aliyun_stt_config()
+    old_vol = get_volcano_stt_config()
+    
+    has_ali = bool(old_ali.get("access_key_id") and old_ali.get("app_key"))
+    has_vol = bool(old_vol.get("appid") and old_vol.get("access_key"))
+    
+    if not has_ali and not has_vol:
+        cfg["_migrated"] = True
+        save_stt_engine_config(cfg)
+        return False, "无需迁移"
+    
+    new_engines = cfg["engines"].copy()
+    
+    if has_ali:
+        new_engines["aliyun"] = {
+            **new_engines["aliyun"],
+            "enabled": True,
+            "access_key_id": old_ali["access_key_id"],
+            "access_key_secret": old_ali["access_key_secret"],
+            "app_key": old_ali["app_key"],
+        }
+    
+    if has_vol:
+        new_engines["volcano"] = {
+            **new_engines["volcano"],
+            "enabled": True,
+            "appid": old_vol["appid"],
+            "access_token": old_vol.get("access_key", ""),
+        }
+    
+    priority = []
+    if has_vol:
+        priority.append("volcano")
+    if has_ali:
+        priority.append("aliyun")
+    priority.extend([e for e in ["funasr", "whisper"] if e not in priority])
+    
+    cfg["engines"] = new_engines
+    cfg["engine_priority"] = priority
+    cfg["_migrated"] = True
+    
+    save_stt_engine_config(cfg)
+    
+    migrated_items = []
+    if has_ali:
+        migrated_items.append("阿里云STT")
+    if has_vol:
+        migrated_items.append("火山引擎STT")
+    
+    return True, f"已迁移: {', '.join(migrated_items)}"

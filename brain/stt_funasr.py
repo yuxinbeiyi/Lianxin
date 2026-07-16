@@ -158,8 +158,118 @@ def warmup():
             if m:
                 logger.info("🔥 FunASR 预热完成")
             else:
-                logger.warning("⚠️ FunASR 预热返回 None，语音识别可能不可用")
+                logger.warning("⚠️ FunASR 预热返回 NULL，语音识别可能不可用")
         except Exception as e:
             logger.warning(f"⚠️ FunASR 预热失败: {e}")
     t = threading.Thread(target=_load, daemon=True)
     t.start()
+
+
+def check_model_status() -> dict:
+    """
+    检查 FunASR 模型状态（供 UI 选项卡调用）
+    
+    Returns:
+        dict: {
+            "loaded": bool,      # 模型是否已加载
+            "device": str,       # 当前设备 (cuda:0/cpu)
+            "reason": str        # 未加载的原因（如果 loaded=False）
+        }
+    """
+    global _model
+    
+    result = {
+        "loaded": False,
+        "device": "",
+        "reason": ""
+    }
+    
+    # 检查是否已加载
+    if _model is not None:
+        result["loaded"] = True
+        
+        try:
+            from config import resolve_device
+            result["device"] = resolve_device("funasr")
+        except Exception:
+            result["device"] = "unknown"
+        
+        return result
+    
+    # 检查依赖是否安装
+    try:
+        import funasr
+    except ImportError:
+        result["reason"] = "FunASR 库未安装 (pip install funasr)"
+        return result
+    
+    # 检查模型文件是否存在（缓存目录）
+    try:
+        from pathlib import Path
+        import os
+        
+        # 常见的模型缓存路径
+        cache_paths = [
+            Path.home() / ".cache" / "modelscope" / "hub" / "iic" / "SenseVoiceSmall",
+            Path(os.environ.get("MODELSCOPE_CACHE", "")) / "hub" / "iic" / "SenseVoiceSmall",
+            Path(tempfile.gettempdir()) / "modelscope" / "hub" / "iic" / "SenseVoiceSmall",
+        ]
+        
+        for cache_path in cache_paths:
+            if cache_path.exists():
+                result["reason"] = f"模型文件存在于 {cache_path}，但尚未加载到内存"
+                return result
+        
+        result["reason"] = "模型文件未下载（首次使用时会自动下载约200MB）"
+        
+    except Exception as e:
+        result["reason"] = f"检查失败: {e}"
+    
+    return result
+
+
+def download_model():
+    """
+    下载/更新 FunASR SenseVoice-Small 模型（生成器，返回进度百分比）
+    
+    Yields:
+        int: 下载进度 (0-100)
+    
+    Raises:
+        Exception: 下载失败时抛出异常
+    """
+    yield 0
+    
+    try:
+        from funasr import AutoModel
+        from config import resolve_device
+        dev = resolve_device("funasr")
+        
+        yield 10
+        
+        # 强制重新加载模型（会触发下载）
+        global _model, _load_attempted
+        _model = None
+        _load_attempted = False
+        
+        yield 30
+        
+        model = AutoModel(
+            model="iic/SenseVoiceSmall",
+            device=dev,
+            disable_pbar=True,
+            disable_update=False,  # 允许更新检查
+            trust_remote_code=True,
+        )
+        
+        yield 90
+        
+        _model = model
+        _load_attempted = True
+        
+        yield 100
+        
+    except ImportError:
+        raise Exception("FunASR 库未安装，请运行: pip install funasr")
+    except Exception as e:
+        raise Exception(f"模型下载/加载失败: {e}")

@@ -30,6 +30,7 @@ from gui.qq_settings_dialog import QqSettingsDialog
 from gui.wechat_settings_dialog import WeChatSettingsDialog
 from gui.network_settings_dialog import NetworkSettingsDialog
 from gui.capability_center import CapabilityCenter
+from gui.voice_stt_dialog import VoiceSTTDialog
 from brain.auto_task_scheduler import AutoTaskScheduler
 from brain.auto_task_manager import get_auto_task_manager
 from brain.auto_task_executor import execute_auto_task
@@ -800,6 +801,7 @@ class MainWindow(QMainWindow):
         self._char_widget.get_qq_bridge_button().clicked.connect(self._on_qq_bridge_clicked)
         self._char_widget.get_wechat_bridge_button().clicked.connect(self._on_wechat_settings_clicked)
         self._char_widget.get_diary_button().clicked.connect(self._open_diary_dialog)
+        self._char_widget.get_voice_stt_button().clicked.connect(self._show_voice_stt_dialog)
 
         top_layout.addWidget(self._char_widget)
 
@@ -3307,6 +3309,37 @@ class MainWindow(QMainWindow):
     def _refresh_diary_display(self):
         """刷新日记显示（预留）"""
         pass
+
+    def _show_voice_stt_dialog(self):
+        """显示语音转录设置独立弹窗（非模态，不阻塞主界面）"""
+        play_sound("OpenDiary.mp3")
+        
+        # 复用或创建对话框实例（避免重复打开多个窗口）
+        if not hasattr(self, '_voice_stt_dialog') or self._voice_stt_dialog is None:
+            self._voice_stt_dialog = VoiceSTTDialog(self)
+            self._voice_stt_dialog.config_saved.connect(self._on_voice_stt_config_saved)
+        
+        # 使用 show() 而非 exec_()：非模态显示，不阻塞主界面
+        self._voice_stt_dialog.show()
+        self._voice_stt_dialog.raise_()
+        self._voice_stt_dialog.activateWindow()
+
+    def _on_voice_stt_config_saved(self):
+        """语音转录配置保存后的处理"""
+        self._chat_widget.add_system_tip("✅ 语音转录配置已保存，下次启动语音聊天时生效。")
+        
+        # 如果正在运行语音聊天，提示需要重启
+        if hasattr(self, '_voice_duplex') and self._voice_duplex:
+            reply = QMessageBox.question(
+                self,
+                "重启语音",
+                "语音转录配置已更新。\n\n"
+                "是否立即重启语音聊天以应用新配置？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            if reply == QMessageBox.Yes:
+                self._restart_voice_chat()
 
     def regenerate_diary_by_date(self, date_str: str):
         """从设置对话框调用：手动重新生成指定日期的日记"""
