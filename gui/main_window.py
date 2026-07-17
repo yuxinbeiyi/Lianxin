@@ -10,7 +10,10 @@ from typing import Optional
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QDialog, QTextEdit, QMenu, QCheckBox
 )
-from PyQt5.QtCore import Qt, QTimer, QAbstractNativeEventFilter, QPoint, QObject
+from PyQt5.QtCore import (
+    Qt, QTimer, QAbstractNativeEventFilter, QPoint, QObject,
+    QThread, pyqtSignal, QTime,
+)
 from PyQt5.QtGui import QFont, QIcon
 from pathlib import Path
 from brain.agent import AgentCore
@@ -34,16 +37,13 @@ from gui.voice_stt_dialog import VoiceSTTDialog
 from brain.auto_task_scheduler import AutoTaskScheduler
 from brain.auto_task_manager import get_auto_task_manager
 from brain.auto_task_executor import execute_auto_task
-from config import has_api_key, get_qq_bridge_config, get_heartbeat_config, get_wechat_bridge_config
+from config import has_api_key
 from brain.decision import decide
 from workers.agent_worker      import AgentWorker
 from workers.voice_worker      import VoiceWorker, ModelLoader
 from workers.speaker_worker    import SpeakerWorker
-from workers.proactive_worker  import ProactiveWorker
-from workers.heartbeat_worker import HeartbeatWorker
 from workers.standby_worker    import StandbyWorker   # 不再需要 contains_end_phrase, strip_end_phrase
 from brain.voice_duplex        import VoiceDuplexManager
-from workers.slack_worker      import SlackWorker
 from utils.accompany_stats  import AccompanyStats
 
 from utils.proactive_chat import ProactiveChatScheduler
@@ -54,25 +54,11 @@ from utils.alarm_manager import AlarmManager, REPEAT_LABELS
 from utils.todo_manager import TodoManager
 
 from datetime import datetime
-import ctypes
-from ctypes import wintypes
 import sys
 import threading
-import queue
-from datetime import datetime
-from PyQt5.QtCore import QThread, pyqtSignal
 from utils.diary import init_diary_db, DiaryWorker, get_all_diaries
 from gui.diary_dialog import DiaryDialog
 from config import get_diary_config
-
-
-def _get_user_name_from_settings() -> str:
-    try:
-        return get_settings().user_name
-    except Exception:
-        return "主人"
-from datetime import datetime
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QTime
 import pygame
 import random
 from utils.sound import play_sound
@@ -88,7 +74,8 @@ from utils.emotion_manager import parse_emotion_tag, get_random_emotion_image
 from gui.galgame.tachie_window import TachieWindow
 from gui.galgame.galgame_dialog import GalgameDialog
 from gui.galgame.expression_manager import ExpressionManager
-from PyQt5.QtCore import pyqtSignal
+from gui.proactive_controller import ProactivePresentationController
+from gui.bridge_controller import BridgeController
 # ── Win32 全局热键 ───────────────────────────────────────────
 WM_HOTKEY = 0x0312
 _HOTKEY_ID = 1
@@ -148,28 +135,13 @@ class MainWindow(QMainWindow):
         self._agent_worker:      AgentWorker      | None = None
         self._voice_worker:      VoiceWorker      | None = None
         self._speaker_worker:    SpeakerWorker    | None = None
-        self._proactive_worker:  ProactiveWorker  | None = None
         self._ocr_worker = None
         self._generation = 0                                 # 世代计数器，防止旧回复污染
         self._is_recording = False
     
 
-        # ── QQ 桥接 ──────────────────────────────────────────
-        self._qq_bridge = None
-        self._qq_bridge_auto_start = get_qq_bridge_config().get("auto_start", False)
-
-        # ── 微信桥接 ──────────────────────────────────────────
-        self._wechat_bridge = None
-
         # ── 主动聊天调度器 ────────────────────────────────────
         self._proactive_scheduler = ProactiveChatScheduler()
-        self._last_proactive_was_observation = False
-
-        # ── 摸鱼数据源积累器（ProactiveWorker 跨线程积累）──
-        self._pending_mooyu_sources: list = []
-
-        # ── 摸鱼模块 ────────────────────────────────────────
-        self._slack_worker: SlackWorker | None = None
 
 
         # ── 番茄钟模块 ────────────────────────────────────────
@@ -240,6 +212,23 @@ class MainWindow(QMainWindow):
         self._standby_mode = "full_duplex"        # "full_duplex" / "legacy"
 
         self._build_ui()
+        self._bridge_controller = BridgeController(
+            chat_widget=self._chat_widget,
+            qq_button=self._char_widget.get_qq_bridge_button(),
+            warning_func=lambda title, text: QMessageBox.warning(self, title, text),
+        )
+        self._proactive_controller = ProactivePresentationController(
+            scheduler=self._proactive_scheduler,
+            chat_widget=self._chat_widget,
+            history_manager_func=lambda: self._agent.get_history_manager() if self._agent else None,
+            session_id_func=lambda: self._agent._session_id if self._agent else 0,
+            speak_func=self._speak,
+            is_minimized_func=self.isMinimized,
+            flash_taskbar_func=self.flash_taskbar,
+            qq_bridge_func=lambda: self._bridge_controller.qq_bridge,
+            dialog_func=lambda: self._proactive_dialog,
+            next_track_func=self._next_track,
+        )
         import brain.tools as brain_tools
         brain_tools.set_music_control_callback(self._handle_music_control)
         brain_tools.set_music_info_callback(self._handle_music_info)
@@ -309,7 +298,7 @@ class MainWindow(QMainWindow):
             global_settings=self._global_settings,
             session_id_func=lambda: self._agent._session_id if hasattr(self, '_agent') and self._agent else 0,
             history_manager_func=lambda: self._agent.get_history_manager() if hasattr(self, '_agent') and self._agent else None,
-            qq_bridge_func=lambda: self._qq_bridge if hasattr(self, '_qq_bridge') else None,
+            qq_bridge_func=lambda: self._bridge_controller.qq_bridge,
             todo_manager=self._todo_manager,
             agent=lambda: self._agent if hasattr(self, '_agent') else None,
             chat_widget=self._chat_widget,
@@ -326,10 +315,13 @@ class MainWindow(QMainWindow):
         self._duty_scheduler.proactive_observation_text.connect(self._on_observation_result)
         self._duty_scheduler.proactive_observation_image.connect(self._on_observation_image)
         self._duty_scheduler.proactive_behavior_selected.connect(
-            lambda behavior: setattr(self, "_last_proactive_was_observation", behavior == "observe")
+            self._proactive_controller.set_behavior
         )
         self._duty_scheduler.slack_response.connect(self._on_slack_response)
         self._duty_scheduler.slack_error.connect(self._on_slack_error)
+        self._duty_scheduler.slack_action_selected.connect(
+            self._proactive_controller.set_slack_action
+        )
         self._duty_scheduler.heartbeat_response.connect(self._on_heartbeat_response)
         self._duty_scheduler.heartbeat_silent.connect(self._on_heartbeat_finished_silent)
         self._duty_scheduler.reminder_response.connect(self._do_reminder)
@@ -337,8 +329,6 @@ class MainWindow(QMainWindow):
         self._duty_scheduler.mooyu_data_sources.connect(self._on_mooyu_data_sources)
         self._duty_scheduler.mooyu_duty_data_source.connect(self._on_mooyu_duty_data_source)
         self._duty_scheduler.start()
-
-        self._heartbeat_check_worker: HeartbeatWorker | None = None
 
         # ── 主线程心跳看门狗（后台线程实时监控，卡顿时立即抓堆栈）──
         self._heartbeat_time = time.monotonic()
@@ -376,9 +366,10 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(500, self._show_api_config)
 
         # ── QQ 桥接：配置为启用且开启自动启动时才自动连接 ────
-        qq_cfg = get_qq_bridge_config()
-        if qq_cfg.get("auto_start") and qq_cfg.get("qq_account"):
+        if self._bridge_controller.should_auto_start_qq():
             QTimer.singleShot(1000, self._start_qq_bridge)
+        if self._bridge_controller.should_auto_start_wechat():
+            QTimer.singleShot(1200, self._start_wechat_bridge)
 
         # ── 开机自启动：启动网络检测轮询 ────────────────────
         self._autostart_net_attempts = 0
@@ -1773,8 +1764,7 @@ class MainWindow(QMainWindow):
         self._chat_widget.add_system_tip("✅ 配置已更新，莲心已重新连接。")
 
         # QQ 桥接热重载（如果正在运行）
-        if self._qq_bridge and self._qq_bridge.isRunning():
-            self._qq_bridge.reload_bridge_config()
+        self._bridge_controller.reload_qq_bridge_config()
 
     # ── 全局设置 ─────────────────────────────────────────────
 
@@ -2191,173 +2181,41 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         if mode == "bilibili":
-            self._observation_tip = self._chat_widget.add_system_tip("莲心正在B站冲浪…")
+            self._proactive_controller.set_observation_tip(
+                self._chat_widget.add_system_tip("莲心正在B站冲浪…")
+            )
             self._duty_scheduler.manual_trigger("proactive", force_observe="bilibili")
             return
         if not self._proactive_scheduler.observe_enabled:
             self._chat_widget.add_system_tip("请先启用调皮观察功能再使用调试。")
             return
-        self._observation_tip = self._chat_widget.add_system_tip(f"正在{mode}观察中…")
+        self._proactive_controller.set_observation_tip(
+            self._chat_widget.add_system_tip(f"正在{mode}观察中…")
+        )
         self._duty_scheduler.manual_trigger("proactive", force_observe=mode)
-
-    def _launch_proactive_message(self, force_observe: str = ""):
-        """生成一条主动消息。force_observe 为 "screenshot"/"camera"/"shoulder_explore" 时强制走对应观察模式。
-        force_observe 为 "bilibili" 时强制走B站冲浪模式。"""
-        if force_observe == "bilibili":
-            print("[B站冲浪] 创建 ProactiveWorker(bilibili_mode=True)")
-            self._last_proactive_was_observation = False
-            self._proactive_worker = ProactiveWorker(
-                self._agent.get_history_manager(),
-                bilibili_mode=True,
-                parent=self,
-            )
-        elif self._proactive_scheduler.bilibili_enabled and self._proactive_scheduler.should_surf_bilibili() and not force_observe:
-            self._last_proactive_was_observation = False
-            self._proactive_worker = ProactiveWorker(
-                self._agent.get_history_manager(),
-                bilibili_mode=True,
-                parent=self,
-            )
-        else:
-            observe_mode = force_observe or self._proactive_scheduler.should_observe()
-            # 肩载设备在线时，优先使用 shoulder_explore 模式
-            if observe_mode and self._is_shoulder_available():
-                observe_mode = "shoulder_explore"
-            last_obs = self._proactive_scheduler.get_last_observation()
-            self._last_proactive_was_observation = bool(observe_mode)
-
-            self._proactive_worker = ProactiveWorker(
-                self._agent.get_history_manager(),
-                observation_mode=observe_mode,
-                last_observation=last_obs,
-                camera_index=self._proactive_scheduler.camera_index,
-                camera_wait=self._proactive_scheduler.camera_wait,
-                parent=self,
-            )
-        self._proactive_worker.observation_text.connect(
-            self._on_observation_result)
-        self._proactive_worker.observation_image.connect(
-            self._on_observation_image)
-        self._proactive_worker.response_ready.connect(self._on_proactive_response)
-        self._proactive_worker.error_occurred.connect(self._on_proactive_error)
-        self._proactive_worker.start()
 
     def _on_observation_result(self, desc: str):
         """观察完成，保存描述用于短期记忆。"""
-        if desc:
-            self._proactive_scheduler.set_last_observation(desc)
+        self._proactive_controller.handle_observation_result(desc)
 
     def _on_observation_image(self, img_path: str, desc: str):
         """收到观察图片和视觉描述，保存并显示在聊天界面。"""
-        try:
-            # 清除"正在观察中"提示
-            if hasattr(self, '_observation_tip') and self._observation_tip:
-                self._observation_tip.hide()
-                self._observation_tip.deleteLater()
-                self._observation_tip = None        
-            obs_dir = Path.home() / ".lianxin" / "observations"
-            obs_dir.mkdir(parents=True, exist_ok=True)
-            ts = int(time.monotonic() * 1000)
-            ext = Path(img_path).suffix or ".png"
-            dst = obs_dir / f"obs_{ts}{ext}"
-            import shutil
-            shutil.copy2(img_path, dst)
-            # 清理临时文件
-            try:
-                os.remove(img_path)
-            except Exception:
-                pass
-
-            # 清理旧观察图片：保留最近 50 张
-            try:
-                files = sorted(obs_dir.glob("obs_*"), key=lambda p: p.stat().st_mtime, reverse=True)
-                for old in files[50:]:
-                    old.unlink()
-            except Exception:
-                pass
-
-            self._agent.get_history_manager().save_message(
-                self._agent._session_id, "assistant", f"[观察] 莲心看了一眼屏幕"
-            )
-            summary = desc[:100] + "..." if len(desc) > 100 else desc
-            self._chat_widget.add_image_message(str(dst), desc=summary, full_text=desc, is_ai=True)
-        except Exception as e:
-            self._chat_widget.add_system_tip(f"[观察图片显示失败: {e}]")
+        self._proactive_controller.handle_observation_image(img_path, desc)
 
     def _on_proactive_response(self, text: str):
         """主动聊天回复"""
-        # 清除"正在观察中"提示
-        if hasattr(self, '_observation_tip') and self._observation_tip:
-            self._observation_tip.hide()
-            self._observation_tip.deleteLater()
-            self._observation_tip = None
-        if not text:
-            return
-        # 新增：过滤掉【表情：XXX】标签
-        import re
-        text = re.sub(r"[【［\[]表情[：:]\s*[^】\]］\]]*[】\]］\]]?", "", text).strip()
-        text = re.sub(r'\n\s*\n', '\n', text).strip()
-        # 无论最终发往桌面还是仅发往 QQ，本轮数据源都必须在响应完成后
-        # 取出并清空，避免 QQ-only 模式把旧数据带到下一条桌面消息。
-        pending_sources = self._pending_mooyu_sources
-        self._pending_mooyu_sources = []
-
-        # 桌面主动消息
-        if self._proactive_scheduler.desktop_enabled:
-            # 刷新积累的数据源卡片（在 AI 消息之前显示）
-            if pending_sources:
-                self._chat_widget.add_mooyu_data_sources(pending_sources)
-            self._agent.get_history_manager().save_message(
-                self._agent._session_id, "assistant", f"[主动] {text}"
-            )
-            self._chat_widget.add_ai_message(text)
-
-            # 如果窗口最小化，闪烁任务栏图标
-            if self.isMinimized():
-                self.flash_taskbar(flash_count=0)
-
-            self._speak(text)
-
-        # QQ 主动消息（观察消息受 observe_send_to_qq 控制）
-        send_to_qq = self._proactive_scheduler.qq_enabled
-        if self._last_proactive_was_observation and not self._proactive_scheduler.observe_send_to_qq:
-            send_to_qq = False
-        if (send_to_qq
-                and self._qq_bridge
-                and self._qq_bridge.isRunning()):
-            self._qq_bridge.send_to_owner(text)
-                # 刷新B站冲浪数据（如果设置对话框开着）
-        if self._proactive_dialog and self._proactive_dialog.isVisible():
-            try:
-                self._proactive_dialog._refresh_bl_tags()
-                self._proactive_dialog._refresh_bl_history()
-            except Exception:
-                pass
+        self._proactive_controller.handle_proactive_response(text)
 
     def _on_proactive_error(self, err: str):
-        if hasattr(self, '_observation_tip') and self._observation_tip:
-            self._observation_tip.hide()
-            self._observation_tip.deleteLater()
-            self._observation_tip = None
-        self._chat_widget.add_system_tip(f"主动消息生成失败：{err}")
-        # 清理积累的数据源（避免下次误显示过期数据）
-        if self._pending_mooyu_sources:
-            self._pending_mooyu_sources.clear()
+        self._proactive_controller.handle_proactive_error(err)
 
     def _on_mooyu_data_sources(self, action_name: str, sources: list):
-        """SlackDuty 摸鱼数据源就绪 → 直接刷到聊天界面。"""
-        self._chat_widget.add_mooyu_data_sources(sources)
+        self._proactive_controller.handle_mooyu_data_sources(action_name, sources)
 
     def _on_mooyu_duty_data_source(self, name: str, preview: str, is_error: bool, elapsed_ms: float):
-        """ProactiveDuty 摸鱼数据源跨线程到达 → 积累，等待主消息。"""
-        from utils.mooyu_data import MooyuDataSource, MOOYU_SOURCE_FRIENDLY
-        self._pending_mooyu_sources.append(MooyuDataSource(
-            source_name=name,
-            friendly_name=MOOYU_SOURCE_FRIENDLY.get(name, name),
-            preview=preview,
-            is_error=is_error,
-            elapsed_ms=elapsed_ms,
-        ))
+        self._proactive_controller.handle_mooyu_duty_data_source(
+            name, preview, is_error, elapsed_ms
+        )
 
     def _on_checklist_proposed(self, items: list):
         """莲心从对话中提取到待办，弹窗确认。"""
@@ -2388,250 +2246,14 @@ class MainWindow(QMainWindow):
 
     # ── 摸鱼模块 ─────────────────────────────────────────────
 
-    def _launch_slack_message(self, action: str):
-        """启动摸鱼消息生成"""
-        print(f"[摸鱼] 触发动作: {action}")
-        context = self._build_slack_context(action)
-        if context.strip():
-            print(f"[摸鱼] 上下文数据:\n{context}")
-        else:
-            print(f"[摸鱼] 无额外上下文，纯 LLM 生成")
-        self._slack_worker = SlackWorker(action, context, parent=self)
-        self._slack_worker.response_ready.connect(self._on_slack_response)
-        self._slack_worker.error_occurred.connect(self._on_slack_error)
-        self._slack_worker.start()
-
-    def _build_slack_context(self, action: str) -> str:
-        """为摸鱼动作构建上下文"""
-        from utils.diary import get_all_diaries, get_diary_by_date
-        
-        parts = []
-        today = datetime.now().strftime("%Y-%m-%d")
-
-        if action == "supplement_diary":
-            print(f"[摸鱼] 调用工具: get_diary_by_date({today})")
-            diary = get_diary_by_date(today)
-            if diary:
-                print(f"[摸鱼] [OK]找到今天的日记，{len(diary['content'])} 字")
-                parts.append(f"【今天的日记】\n{diary['content'][:500]}")
-            else:
-                print(f"[摸鱼] [WARN]今天还没有日记，无法补充")
-
-        elif action == "review_old_diary":
-            print(f"[摸鱼] 调用工具: get_all_diaries()")
-            diaries = get_all_diaries()
-            if diaries:
-                print(f"[摸鱼] [OK]找到 {len(diaries)} 篇日记，随机选一篇")
-                import random
-                old = random.choice(diaries)
-                parts.append(f"【旧日记 - {old['date']}】\n{old['content'][:500]}")
-            else:
-                print(f"[摸鱼] [WARN]没有旧日记")
-
-        elif action in ("search_old_topic", "random_question"):
-            print(f"[摸鱼] 调用工具: history_manager.get_sessions() + get_messages()")
-            sessions = self._agent.get_history_manager().get_sessions()
-            if sessions:
-                msgs = self._agent.get_history_manager().get_messages(sessions[0]["id"])
-                recent = msgs[-30:] if len(msgs) > 30 else msgs
-                print(f"[摸鱼] [OK]获取最近 {len(recent)} 条对话")
-                user_name = _get_user_name_from_settings()
-                lines = [f"{user_name if m['role'] == 'user' else '莲心'}：{m['content'][:200]}" for m in recent]
-                parts.append("【最近的对话】\n" + "\n".join(lines))
-            else:
-                print(f"[摸鱼] [WARN]没有对话历史")
-
-        elif action == "remind_todo":
-            print(f"[摸鱼] 调用工具: _todo_manager.get_todos(completed=False)")
-            todos = self._todo_manager.get_todos(completed=False)
-            if todos:
-                print(f"[摸鱼] [OK]找到 {len(todos)} 个未完成待办，取前5个")
-                now = datetime.now()
-                today_str = now.strftime("%Y-%m-%d")
-                todo_lines = []
-                for t in todos[:5]:
-                    if hasattr(t, 'due_date') and t.due_date:
-                        todo_lines.append(f"- {t.title}（截止日期：{t.due_date}）")
-                    else:
-                        todo_lines.append(f"- {t.title}")
-                parts.append(f"【当前日期】{today_str}\n【未完成的待办】\n" + "\n".join(todo_lines))
-            else:
-                print(f"[摸鱼] [WARN]没有未完成待办")
-
-        elif action == "weather_chitchat":
-            try:
-                print(f"[摸鱼] 调用工具: get_qweather_config() + get_user_city_from_memory()")
-                from config import get_qweather_config
-                from brain.weather import get_user_city_from_memory, get_full_weather
-                qw_cfg = get_qweather_config()
-                api_key = qw_cfg.get("api_key", "").strip()
-                if api_key:
-                    print(f"[摸鱼] [OK]API Key 已配置")
-                    city = get_user_city_from_memory()
-                    print(f"[摸鱼] 调用工具: get_user_city_from_memory() → {city or '未找到'}")
-                    if city:
-                        print(f"[摸鱼] 调用工具: get_full_weather(city='{city}')")
-                        weather_text = get_full_weather(city, api_key=api_key)
-                        if weather_text and "错误" not in weather_text:
-                            print(f"[摸鱼] [OK]天气获取成功")
-                            parts.append(f"【当前天气】\n{weather_text}")
-                        else:
-                            print(f"[摸鱼] [WARN]天气获取失败")
-                    else:
-                        print(f"[摸鱼] [WARN]未找到用户城市")
-                else:
-                    print(f"[摸鱼] [WARN]未配置和风天气 API Key")
-            except Exception as e:
-                print(f"[摸鱼] [ERR]天气查询异常: {e}")
-
-        elif action == "read_local_files":
-            try:
-                print(f"[摸鱼] 调用工具: get_random_document()")
-                from utils.slack_utils import get_random_document
-                doc = get_random_document()
-                if doc:
-                    print(f"[摸鱼] [OK]找到文件: {doc['name']} ({doc['size_kb']} KB)")
-                    parts.append(
-                        f"【翻到的文件】\n"
-                        f"文件名：{doc['name']}\n"
-                        f"所在文件夹：{doc['folder']}\n"
-                        f"大小：{doc['size_kb']} KB\n"
-                        f"\n内容摘要：\n{doc['snippet']}"
-                    )
-                else:
-                    print(f"[摸鱼] [WARN]没找到可读文件")
-            except Exception as e:
-                print(f"[摸鱼] [ERR]读本地文件异常: {e}")
-
-        elif action == "browser_history":
-            try:
-                print(f"[摸鱼] 调用工具: get_browser_history_snippet()")
-                from utils.slack_utils import get_browser_history_snippet
-                history = get_browser_history_snippet()
-                if history:
-                    print(f"[摸鱼] [OK]获取到浏览器历史记录")
-                    parts.append(f"【浏览器最近访问记录】\n{history}")
-                else:
-                    print(f"[摸鱼] [WARN]浏览器历史为空")
-            except Exception as e:
-                print(f"[摸鱼] [ERR]浏览器历史异常: {e}")
-
-        elif action == "check_cpu_disk":
-            try:
-                print(f"[摸鱼] 调用工具: get_system_status()")
-                from utils.slack_utils import get_system_status
-                status = get_system_status()
-                lines = []
-                if status.get("cpu_percent") is not None:
-                    lines.append(f"CPU：{status['cpu_percent']}%")
-                if status.get("memory_percent") is not None:
-                    lines.append(f"内存：{status['memory_percent']}%")
-                if status.get("top_processes"):
-                    lines.append("高占用进程：" + ", ".join(status["top_processes"]))
-                if status.get("disk_info"):
-                    lines.append(f"磁盘：{status['disk_info']}")
-                if lines:
-                    print(f"[摸鱼] [OK]CPU={status.get('cpu_percent')}%, 内存={status.get('memory_percent')}%")
-                    parts.append("【电脑系统状态】\n" + "\n".join(lines))
-                else:
-                    print(f"[摸鱼] [WARN]系统状态获取失败")
-            except Exception as e:
-                print(f"[摸鱼] [ERR]系统状态异常: {e}")
-
-        elif action == "check_recycle_bin":
-            try:
-                print(f"[摸鱼] 调用工具: get_recycle_bin_info()")
-                from utils.slack_utils import get_recycle_bin_info
-                info = get_recycle_bin_info()
-                if info:
-                    print(f"[摸鱼] [OK]回收站信息获取成功")
-                    parts.append(f"【回收站信息】\n{info}")
-                else:
-                    print(f"[摸鱼] [WARN]回收站信息为空")
-            except Exception as e:
-                print(f"[摸鱼] [ERR]回收站查询异常: {e}")
-
-        elif action == "remind_rest":
-            try:
-                print(f"[摸鱼] 调用工具: psutil.boot_time()")
-                import psutil
-                boot = datetime.fromtimestamp(psutil.boot_time())
-                uptime = datetime.now() - boot
-                hours = int(uptime.total_seconds() / 3600)
-                print(f"[摸鱼] [OK]开机时长: {hours} 小时")
-                parts.append(f"【电脑开机时长】约 {hours} 小时")
-            except Exception as e:
-                print(f"[摸鱼] [WARN]无法获取开机时长: {e}")
-                parts.append("【电脑开机时长】（无法获取）")
-
-        elif action == "remind_water":
-            print(f"[摸鱼] 提醒喝水，无需工具调用")
-            parts.append("【提醒喝水】现在是时候提醒{user_name}喝口水了")
-
-        elif action == "anniversary_remind":
-            try:
-                print(f"[摸鱼] 调用工具: accompany_stats.get_first_meet_date()")
-                first_meet = self._accompany_stats.get_first_meet_date()
-                if first_meet:
-                    days = self._accompany_stats.get_total_days_since_first_meet()
-                    print(f"[摸鱼] [OK]相识日期: {first_meet}，已相伴 {days} 天")
-                    parts.append(f"【相识纪念日】相识日期：{first_meet}，已相伴 {days} 天")
-                else:
-                    print(f"[摸鱼] [WARN]未设置相识日期")
-            except Exception as e:
-                print(f"[摸鱼] [ERR]纪念日查询异常: {e}")
-
-        elif action == "next_song":
-            print(f"[摸鱼] 切歌，无需工具调用")
-            if self.playlist:
-                current = self.playlist[self.current_track_index] if self.current_track_index < len(self.playlist) else ""
-                print(f"[摸鱼] [OK]当前播放: {current}")
-                parts.append(f"【当前播放】{current}")
-            else:
-                print(f"[摸鱼] [WARN]播放列表为空")
-
-        if not parts:
-            return ""
-        return "\n\n".join(parts)
-
     def _on_slack_response(self, text: str):
         """摸鱼消息回复"""
-        if not text:
-            return
-        import re
-        text = re.sub(r"[【［\[]表情[：:]\s*[^】\]］\]]*[】\]］\]]?", "", text).strip()
-        text = re.sub(r'\n\s*\n', '\n', text).strip()
-
-        self._agent.get_history_manager().save_message(
-            self._agent._session_id, "assistant", f"[摸鱼] {text}"
-        )
-        self._chat_widget.add_ai_message(text)
-
-        if self.isMinimized():
-            self.flash_taskbar(flash_count=0)
-
-        self._speak(text)
-
-        # 记录日记补充次数
-        if hasattr(self, '_slack_worker') and self._slack_worker:
-            action = self._slack_worker._action
-            if action == "supplement_diary":
-                self._proactive_scheduler.record_diary_supplement()
-            elif action == "next_song":
-                self._next_track()
+        self._proactive_controller.handle_slack_response(text)
 
     def _on_slack_error(self, err: str):
-        print(f"[摸鱼] 生成失败: {err}")
+        self._proactive_controller.handle_slack_error(err)
 
     # ── 心跳自检 ─────────────────────────────────────────────
-
-    def _reset_heartbeat_timer(self):
-        """每次用户发消息时重置倒计时。"""
-        cfg = get_heartbeat_config()
-        if not cfg.get("enabled", True):
-            return
-        delay_ms = cfg.get("delay_minutes", 5) * 60 * 1000
-        self._heartbeat_check_timer.start(delay_ms)
 
     def _on_emotion_decay_tick(self):
         """情感衰减计时器触发，更新孤独漂移等时间衰减。"""
@@ -2706,13 +2328,6 @@ class MainWindow(QMainWindow):
             "⚠️ 莲心响应超时（3分钟），已自动终止。请重试或检查网络。" if force
             else "⚠️ 莲心响应较慢，已自动结束当前任务。"
         )
-
-    def _on_heartbeat_check(self):
-        """心跳自检触发：检查活跃时段后启动 Worker。"""
-        self._heartbeat_check_worker = HeartbeatWorker(self._agent._session_id)
-        self._heartbeat_check_worker.response_ready.connect(self._on_heartbeat_response)
-        self._heartbeat_check_worker.finished_silent.connect(self._on_heartbeat_finished_silent)
-        self._heartbeat_check_worker.start()
 
     def _on_heartbeat_response(self, text: str):
         """心跳自检有提醒内容，显示给用户。"""
@@ -3271,17 +2886,14 @@ class MainWindow(QMainWindow):
             self._voice_duplex = None
         
         for worker in (self._agent_worker, self._voice_worker,
-                    self._speaker_worker, self._proactive_worker):
+                    self._speaker_worker):
             if worker and worker.isRunning():
                 worker.quit()
                 worker.wait(2000)
 
         self._speaker.stop()
 
-        # ── 停止 QQ 桥接 ────────────────────────────────────
-        if self._qq_bridge and self._qq_bridge.isRunning():
-            self._qq_bridge.stop()
-            self._qq_bridge.wait(3000)
+        self._bridge_controller.shutdown()
 
         # ── 关闭 Galgame 窗口 ──────────────────────────────
         self._setup_galgame_hotkey(register=False)
@@ -3829,8 +3441,7 @@ class MainWindow(QMainWindow):
 
     def _on_qq_settings_finished(self, result: int):
         if result == QDialog.Accepted:
-            if self._qq_bridge and self._qq_bridge.isRunning():
-                self._qq_bridge.reload_timing_config()
+            if self._bridge_controller.reload_qq_timing_config():
                 self._chat_widget.add_system_tip("✅ QQ 聊天参数已更新（即时生效）")
 
        # ── 微信桥接 ─────────────────────────────────────────────
@@ -3843,124 +3454,17 @@ class MainWindow(QMainWindow):
         self._wechat_settings_dialog.raise_()
         self._wechat_settings_dialog.activateWindow()
     def _start_wechat_bridge(self):
-        """创建并启动 WeChatBridgeWorker"""
-        from workers.wechat_bridge_worker import WeChatBridgeWorker
-
-        if self._wechat_bridge and self._wechat_bridge.is_running():
-            return
-
-        cfg = get_wechat_bridge_config()
-        self._wechat_bridge = WeChatBridgeWorker(cfg)
-        self._wechat_bridge.log_message.connect(self._chat_widget.add_system_tip)
-        self._wechat_bridge.connection_changed.connect(self._on_wechat_bridge_status)
-        self._wechat_bridge.start_bridge()
-        self._chat_widget.add_system_tip("🔄 微信桥接启动中...")
+        return self._bridge_controller.start_wechat()
 
     def _stop_wechat_bridge(self):
-        """停止微信桥接"""
-        if self._wechat_bridge and self._wechat_bridge.is_running():
-            self._wechat_bridge.stop_bridge()
-        self._wechat_bridge = None
-        self._chat_widget.add_system_tip("微信桥接已断开")
-
-    def _on_wechat_bridge_status(self, connected: bool):
-        if connected:
-            self._chat_widget.add_system_tip("✅ 微信桥接已连接")
-        else:
-            self._chat_widget.add_system_tip("⚠️ 微信桥接已断开")
+        self._bridge_controller.stop_wechat()
     # ── QQ 桥接方法 ──────────────────────────────────────────
 
     def _start_qq_bridge(self):
-        """创建并启动 QQBridgeWorker"""
-        if self._qq_bridge and self._qq_bridge.isRunning():
-            return  # 已在运行，防止重复启动
-
-        cfg = get_qq_bridge_config()
-        if not cfg.get("qq_account"):
-            QMessageBox.warning(self, "QQ聊天", "未配置 QQ 账号，请先在 user_config.json 中设置 qq_account。")
-            return
-
-        self._char_widget.get_qq_bridge_button().setText("QQ聊天 ◷")
-        self._char_widget.get_qq_bridge_button().setStyleSheet("""
-            QPushButton {
-                background-color: #2D2D3F;
-                color: #A0A0B0;
-                border-radius: 6px;
-                border: 1px solid #3D3D5A;
-            }
-            QPushButton:hover  { background-color: #3D3D55; }
-            QPushButton:pressed{ background-color: #4D4D65; }
-        """)
-
-        from workers.qq_bridge_worker import QQBridgeWorker
-        self._qq_bridge = QQBridgeWorker()
-
-        # 注册 QQ 桥接到 tools 模块（供 send_file_to_qq 等工具使用）
-        import brain.tools
-        brain.tools._register_qq_bridge(self._qq_bridge)
-
-        # QQ 桥接日志 → 后台打印线程（避免 print() 阻塞主线程触发的看门狗误报）
-        self._qq_log_queue = queue.Queue()
-        self._qq_log_thread = threading.Thread(
-            target=self._qq_log_worker, daemon=True
-        )
-        self._qq_log_thread.start()
-        self._qq_bridge.debug_log.connect(self._qq_log_queue.put_nowait)
-
-        self._qq_bridge.connected.connect(self._on_qq_bridge_connected)
-        self._qq_bridge.disconnected.connect(self._on_qq_bridge_disconnected)
-        self._qq_bridge.error_occurred.connect(self._on_qq_bridge_error)
-        self._qq_bridge.start()
-
-    def _qq_log_worker(self):
-        """独立线程：从队列中取出 QQ 桥接日志并输出到控制台。"""
-        while True:
-            msg = self._qq_log_queue.get()
-            if msg is None:
-                break
-            print(f"[QQ桥接] {msg}")
+        return self._bridge_controller.start_qq()
 
     def _stop_qq_bridge(self):
-        """停止 QQBridgeWorker"""
-        if self._qq_bridge and self._qq_bridge.isRunning():
-            self._qq_bridge.stop()
-            self._qq_bridge.wait(3000)
-        self._qq_bridge = None
-        import brain.tools
-        brain.tools._register_qq_bridge(None)
-        self._chat_widget.add_system_tip("QQ 桥接已断开")
-        self._update_qq_bridge_button()
-
-    def _on_qq_bridge_connected(self):
-        self._chat_widget.add_system_tip("✅ QQ 桥接已连接，可通过 QQ 与莲心聊天")
-        self._char_widget.get_qq_bridge_button().setText("QQ聊天 ●")
-        self._char_widget.get_qq_bridge_button().setStyleSheet("""
-            QPushButton {
-                background-color: #EDFFF2;
-                color: #34C759;
-                border-radius: 6px;
-                border: 1px solid #B0ECC4;
-            }
-            QPushButton:hover  { background-color: #D8F5E4; }
-            QPushButton:pressed{ background-color: #C0EBD2; }
-        """)
-
-    def _on_qq_bridge_disconnected(self, reason: str):
-        self._chat_widget.add_system_tip(f"QQ 桥接已断开：{reason}")
-        self._update_qq_bridge_button()
-
-    def _on_qq_bridge_error(self, err: str):
-        self._chat_widget.add_system_tip(f"⚠️ QQ 桥接错误：{err}")
-        self._update_qq_bridge_button()
-
-    def _on_qq_settings_clicked(self):
-        """打开 QQ 聊天参数设置对话框。"""
-        if self._qq_settings_dialog is None:
-            self._qq_settings_dialog = QqSettingsDialog(self)
-            self._qq_settings_dialog.finished.connect(self._on_qq_settings_finished)
-        self._qq_settings_dialog.show()
-        self._qq_settings_dialog.raise_()
-        self._qq_settings_dialog.activateWindow()
+        self._bridge_controller.stop_qq()
         
     def _toggle_maximize(self):
         if self.isMaximized():
@@ -3971,62 +3475,7 @@ class MainWindow(QMainWindow):
             self._btn_maximize.setText("❐")
 
     def _update_qq_bridge_button(self):
-        """根据 QQ 桥接状态更新按钮外观"""
-        btn = self._char_widget.get_qq_bridge_button()
-        connected = self._qq_bridge is not None and self._qq_bridge.isRunning()
-        from config import get_qq_bridge_config
-        enabled = get_qq_bridge_config().get("enabled", False)
-        if connected:
-            btn.setText("✅ QQ聊天")
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #1A3D2A;
-                    color: white;
-                    border-radius: 16px;
-                    border: none;
-                    padding: 6px 12px;
-                }
-                QPushButton:hover {
-                    background-color: #153322;
-                }
-                QPushButton:pressed {
-                    background-color: #0F281A;
-                }
-            """)
-        elif enabled:
-            btn.setText("🔌 QQ聊天")
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #2980B9;
-                    color: white;
-                    border-radius: 16px;
-                    border: none;
-                    padding: 6px 12px;
-                }
-                QPushButton:hover {
-                    background-color: #2471A3;
-                }
-                QPushButton:pressed {
-                    background-color: #1F618D;
-                }
-            """)
-        else:
-            btn.setText("🐧 QQ聊天")
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #2980B9;
-                    color: white;
-                    border-radius: 16px;
-                    border: none;
-                    padding: 6px 12px;
-                }
-                QPushButton:hover {
-                    background-color: #2471A3;
-                }
-                QPushButton:pressed {
-                    background-color: #1F618D;
-                }
-            """)
+        self._bridge_controller.update_qq_button()
 
 
 class _ImageVisionWorker(QThread):

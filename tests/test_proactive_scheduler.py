@@ -108,6 +108,42 @@ class ProactiveBehaviorSchedulerTests(unittest.TestCase):
         duty = ProactiveDuty()
         duty._wire_worker(SlackWorker("random_question", "context"))
 
+    def test_unified_duty_exposes_selected_slack_action(self):
+        class SignalStub:
+            def __init__(self):
+                self.values = []
+
+            def emit(self, *values):
+                self.values.append(values)
+
+        scheduler = make_scheduler()
+        signal = SignalStub()
+        duty_scheduler = SimpleNamespace(
+            proactive_behavior_selected=SignalStub(),
+            slack_action_selected=signal,
+            mooyu_data_sources=SignalStub(),
+        )
+        state = SimpleNamespace(
+            proactive_scheduler=scheduler,
+            history_manager=None,
+            is_shoulder_available=lambda: False,
+            last_user_message_time=0,
+            now=1000,
+            todo_manager=None,
+            agent=None,
+            chat_widget=None,
+            proactive_dialog=None,
+        )
+        duty = ProactiveDuty()
+        duty._scheduler = duty_scheduler
+
+        worker = duty._create_worker(
+            state, force_behavior="slack", force_action="remind_water"
+        )
+
+        self.assertIsInstance(worker, SlackWorker)
+        self.assertEqual([("remind_water",)], signal.values)
+
 
 if __name__ == "__main__":
     unittest.main()

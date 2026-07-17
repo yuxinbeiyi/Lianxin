@@ -147,6 +147,7 @@ class DutyScheduler(QObject):
 
     slack_response = pyqtSignal(str)                  # message text
     slack_error = pyqtSignal(str)                     # error text
+    slack_action_selected = pyqtSignal(str)           # 摸鱼动作名
 
     heartbeat_response = pyqtSignal(str)              # reminder text
     heartbeat_silent = pyqtSignal()                   # nothing to report
@@ -357,6 +358,7 @@ class ProactiveDuty(Duty):
                 return None
             context, sources = SlackDuty()._build_context(action, state)
             self._current_action = action
+            self._scheduler.slack_action_selected.emit(action)
             if sources:
                 self._scheduler.mooyu_data_sources.emit(action, sources)
             worker = SlackWorker(action, context)

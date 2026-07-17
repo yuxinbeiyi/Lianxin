@@ -16,7 +16,7 @@ class QqSettingsDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._mw = parent  # MainWindow 引用
+        self._bridge_controller = getattr(parent, "_bridge_controller", None)
         self.setWindowTitle("QQ 聊天")
         self.setMinimumSize(440, 480)
         self.resize(460, 520)
@@ -310,15 +310,17 @@ class QqSettingsDialog(QDialog):
 
     def _on_bridge_toggle(self):
         """启动/停止 QQ 桥接。"""
-        if self._mw._qq_bridge and self._mw._qq_bridge.isRunning():
-            self._mw._stop_qq_bridge()
+        if self._bridge_controller is None:
+            return
+        if self._bridge_controller.is_qq_running():
+            self._bridge_controller.stop_qq()
         else:
-            self._mw._start_qq_bridge()
+            self._bridge_controller.start_qq()
         self._refresh_bridge_section()
 
     def _refresh_bridge_section(self):
         """刷新桥接状态显示。"""
-        if self._mw._qq_bridge and self._mw._qq_bridge.isRunning():
+        if self._bridge_controller and self._bridge_controller.is_qq_connected():
             self._bridge_status.setText("QQ 桥接: ● 已连接")
             self._bridge_status.setStyleSheet("color: #34C759;")
             self._btn_bridge_toggle.setText("断开")
@@ -353,4 +355,3 @@ class QqSettingsDialog(QDialog):
         cfg = get_qq_bridge_config()
         cfg["auto_start"] = self._auto_start_cb.isChecked()
         save_qq_bridge_config(cfg)
-        self._mw._qq_bridge_auto_start = self._auto_start_cb.isChecked()

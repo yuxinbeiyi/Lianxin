@@ -21,7 +21,7 @@ class WeChatSettingsDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._mw = parent  # MainWindow 引用
+        self._bridge_controller = getattr(parent, "_bridge_controller", None)
         self.setWindowTitle("微信聊天")
         self.setMinimumSize(460, 620)
         self.resize(480, 650)
@@ -361,9 +361,9 @@ class WeChatSettingsDialog(QDialog):
 
     def _refresh_bridge_section(self):
         """更新桥接状态显示。"""
-        if self._mw is None:
+        if self._bridge_controller is None:
             return
-        running = hasattr(self._mw, '_wechat_bridge') and self._mw._wechat_bridge is not None and self._mw._wechat_bridge.is_running()
+        running = self._bridge_controller.is_wechat_running()
         if running:
             self._bridge_status.setText("微信桥接: 已连接")
             self._btn_bridge_toggle.setText("断开")
@@ -373,13 +373,13 @@ class WeChatSettingsDialog(QDialog):
 
     def _on_bridge_toggle(self):
         """点击连接/断开按钮。"""
-        if self._mw is None:
+        if self._bridge_controller is None:
             return
-        running = hasattr(self._mw, '_wechat_bridge') and self._mw._wechat_bridge is not None and self._mw._wechat_bridge.is_running()
+        running = self._bridge_controller.is_wechat_running()
         if running:
-            self._mw._wechat_bridge.stop_bridge()
+            self._bridge_controller.stop_wechat()
         else:
-            self._mw._start_wechat_bridge()
+            self._bridge_controller.start_wechat()
         self._refresh_bridge_section()
 
     def _on_apply(self):
@@ -389,7 +389,7 @@ class WeChatSettingsDialog(QDialog):
         bridge_cfg = self._collect_bridge_config()
         save_wechat_bridge_config(bridge_cfg)
 
-        if self._mw and hasattr(self._mw, '_wechat_bridge') and self._mw._wechat_bridge:
-            self._mw._wechat_bridge.reload_config()
+        if self._bridge_controller:
+            self._bridge_controller.reload_wechat_config()
 
         self.accept()
