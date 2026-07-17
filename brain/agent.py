@@ -144,7 +144,9 @@ def _dump_prompt_debug(messages: list, all_tools: list,
 
 class AgentCore:
     def __init__(self, session_id: int = None, user_desc: str = None,
-                 disable_tools: bool = False, track_emotion: bool = True):
+                 disable_tools: bool = False, track_emotion: bool = True,
+                 source_channel: str = "desktop", participant_id: str = "",
+                 owner_scope: bool = True):
         
         self._cancel_event = threading.Event()
 
@@ -177,6 +179,9 @@ class AgentCore:
         # 工具权限和情感跟踪是两个独立维度。纯聊天可以禁用工具，
         # 但仍应让问候、道歉、夸奖等真实互动影响情感状态。
         self._track_emotion = track_emotion
+        self._source_channel = source_channel
+        self._participant_id = str(participant_id)
+        self._owner_scope = bool(owner_scope)
         self._last_emotion = None     # 本轮回复的情绪标签（供 GUI 选图用）
         self._last_raw_response = None  # 本轮回复原始文本（含标签）
         self._last_reasoning = None    # 本轮回复的 COT 推理链
@@ -188,12 +193,15 @@ class AgentCore:
 
         # 会话历史持久化
         self._history_mgr = HistoryManager()
+        self._history_mgr.sync_legacy_channel_maps()
         self._last_reply_time = self._load_last_reply_time()
 
 
         # ── 自动记忆提取跟踪（从配置读取） ──────────────────
         self._extraction_counter = 0   # 对话轮次计数
         self._last_extraction_idx = 0  # history 中已提取到哪条消息
+        self._extraction_inflight = False
+        self._extraction_lock = threading.Lock()
         try:
             mem_cfg = get_memory_config()
             self._auto_extract = mem_cfg.get("auto_extract", True)
@@ -230,32 +238,47 @@ class AgentCore:
                 for m in raw_msgs
             ]
             self._session_titled = True
+            self._history_mgr.update_session_metadata(
+                session_id, channel=source_channel,
+                participant_id=self._participant_id, owner_scope=self._owner_scope,
+            )
         else:
-            # ── 未指定：沿用现有逻辑，恢复上次全局会话或新建
-            # 注意：如果上次会话是 QQ 桥接专用会话，桌面端不应加载它
-            # 否则桌面端会混入 QQ 聊天记录，且两边同时读写同一 session 会加剧锁冲突
-            qq_ids = _get_qq_session_ids()
-            last_id = self._history_mgr.get_last_session_id()
-            if last_id is not None and last_id not in qq_ids:
-                self._session_id = last_id
-                raw_msgs = self._history_mgr.get_messages(last_id)
-                self.history = [
-                    {"role": m["role"], "content": m["content"]}
-                    for m in raw_msgs
-                ]
-                self._session_titled = True
-            else:
-                # 无历史会话 或 最后一个会话是 QQ 桥接会话：新建桌面专用会话
-                self._session_id = self._history_mgr.new_session()
+            # 非桌面端必须创建独立会话，禁止复用最后一个桌面会话。
+            if source_channel != "desktop":
+                self._session_id = self._history_mgr.new_session(
+                    channel=source_channel, participant_id=self._participant_id,
+                    owner_scope=self._owner_scope,
+                )
                 self._session_titled = False
+            else:
+                # 桌面端按最后活动时间恢复，而不是按 session id/创建时间恢复。
+                qq_ids = _get_qq_session_ids()
+                last_id = self._history_mgr.get_latest_session_id(
+                    channel="desktop", owner_only=True,
+                    exclude_session_ids=qq_ids,
+                )
+                if last_id is not None:
+                    self._session_id = last_id
+                    raw_msgs = self._history_mgr.get_messages(last_id)
+                    self.history = [
+                        {"role": m["role"], "content": m["content"]}
+                        for m in raw_msgs
+                    ]
+                    self._session_titled = True
+                else:
+                    self._session_id = self._history_mgr.new_session(
+                        channel="desktop", owner_scope=True,
+                    )
+                    self._session_titled = False
+
+        # 已恢复的历史不应再次进入自动提取队列。
+        self._last_extraction_idx = len(self.history)
 
         # 启动时构建完整的 System Prompt（包含时间和记忆，只做一次）
         self._system_prompt = self._build_system_prompt_once()
 
         # ── 加载上一会话的压缩摘要 ──────────────────────────
         self._prev_session_summary = self._load_previous_session_summary()
-        if self._prev_session_summary:
-            self._system_prompt += f"\n\n{self._prev_session_summary}"
 
         # ── 会话内滑动窗口摘要（Token 优化，仅云端模式生效） ──
         self._conversation_summary = ""
@@ -369,7 +392,7 @@ class AgentCore:
         self._history_mgr.save_message(self._session_id, "assistant", display_response)
 
         # ── 自动记忆提取（后台执行，间隔由配置决定） ────────
-        if self._auto_extract and not effective_disable:
+        if self._auto_extract:
             self._extraction_counter += 1
             if self._extraction_counter >= self._extract_interval:
                 self._extraction_counter = 0
@@ -405,10 +428,15 @@ class AgentCore:
         """在后台线程中自动提取记忆（不阻塞对话）。本地模型跳过（不擅长 JSON 格式化输出）。"""
         if self._use_local:
             return
-        start_idx = self._last_extraction_idx
-        recent = self.history[start_idx:]
-        if len(recent) < 3:
-            return
+        with self._extraction_lock:
+            if self._extraction_inflight:
+                return
+            start_idx = self._last_extraction_idx
+            end_idx = len(self.history)
+            recent = list(self.history[start_idx:end_idx])
+            if len(recent) < 3:
+                return
+            self._extraction_inflight = True
 
         def _do_extract():
             # 构建对话文本（分类提取和五元组提取共用）
@@ -421,8 +449,13 @@ class AgentCore:
                     lines.append(f"[{role}]: {content}")
             text = "\n".join(lines)
             if len(text) < 30:
+                with self._extraction_lock:
+                    self._last_extraction_idx = max(self._last_extraction_idx, end_idx)
+                    self._extraction_inflight = False
                 return
 
+            classification_ok = False
+            graph_ok = False
             # ── 分类记忆提取（独立 try，失败不影响五元组提取） ──
             try:
                 prompt = build_extraction_prompt(text)
@@ -448,11 +481,13 @@ class AgentCore:
                     cat = mem.get("category", "knowledge")
                     content = mem.get("content", "").strip()
                     if content and cat in ALL_CATEGORIES:
-                        _memory_add(content, cat, source="auto_extracted")
+                        _memory_add(
+                            content, cat, source="auto_extracted",
+                            source_session_id=self._session_id,
+                            source_channel=self._source_channel,
+                        )
                         added += 1
-
-                if added > 0:
-                    self._last_extraction_idx = len(self.history)
+                classification_ok = True
             except Exception:
                 pass
 
@@ -461,9 +496,16 @@ class AgentCore:
                 try:
                     from brain.quintuple_extractor import extract_and_store_with_config
                     extract_and_store_with_config(text, self._model, self._api_key, self._api_base)
+                    graph_ok = True
                 except Exception as e:
                     import logging
                     logging.getLogger("Agent").warning(f"五元组提取失败: {e}")
+
+            with self._extraction_lock:
+                graph_required = self._graph_enabled and self._auto_extract_quintuples
+                if classification_ok and (not graph_required or graph_ok):
+                    self._last_extraction_idx = max(self._last_extraction_idx, end_idx)
+                self._extraction_inflight = False
 
         threading.Thread(target=_do_extract, daemon=True).start()
 
@@ -512,12 +554,19 @@ class AgentCore:
         return False
     def new_session(self):
         """开启全新会话：重置内存历史，在数据库创建新 session。"""
+        previous_session_id = self._session_id
         self.history = []
-        self._session_id = self._history_mgr.new_session()
+        self._session_id = self._history_mgr.new_session(
+            channel=self._source_channel,
+            participant_id=self._participant_id,
+            owner_scope=self._owner_scope,
+        )
         self._session_titled = False
         self._conversation_summary = ""
         self._summarized_history_idx = 0
         self._last_reply_time = None
+        self._last_extraction_idx = 0
+        self._prev_session_summary = self._build_session_handoff(previous_session_id)
 
 
 
@@ -576,50 +625,45 @@ class AgentCore:
         return full_prompt
 
     def _load_previous_session_summary(self) -> str | None:
-        """加载上一会话的压缩摘要。使用本地小模型压缩，失败静默跳过。"""
-        if self._use_local:
+        """为新空会话加载最近活跃的同一用户会话交接信息。"""
+        if not self._owner_scope:
             return None
         try:
-            # 获取上一个不同 session_id 的会话
-            sessions = self._history_mgr.get_sessions()
-            if len(sessions) < 2:
+            # 恢复已有会话时，其自身 history 已包含上下文，无需额外注入。
+            if self.history:
                 return None
-            # 找到当前 session 的前一个
-            prev = None
-            for s in sessions:
-                if s["id"] == self._session_id and prev is not None:
-                    break
-                if s["id"] != self._session_id:
-                    prev = s
-            if prev is None:
+            previous_id = self._history_mgr.get_latest_session_id(
+                channel=self._source_channel, owner_only=self._owner_scope,
+                exclude_session_ids={self._session_id},
+            )
+            if previous_id is None:
                 return None
-
-            msgs = self._history_mgr.get_messages(prev["id"], limit=40)
-            if not msgs or len(msgs) < 6:
-                return None
-
-            lines = []
-            for m in msgs:
-                role = "用户" if m["role"] == "user" else "莲心"
-                content = m["content"][:300]
-                if content.strip():
-                    lines.append(f"[{role}]: {content}")
-            history_text = "\n".join(lines)
-
-            from brain.context_compressor import compress_previous_session, _ollama_available
-            summary = None
-            # 快速检测 Ollama 是否可用，不可用则跳过压缩
-            if self._use_local and _ollama_available():
-                summary = compress_previous_session(
-                    history_text,
-                    model="ollama/my-qwen",
-                    api_base=self._api_base,
-                )
-                if summary:
-                    logger.info(f"[记忆] 已加载上一会话摘要 (session {prev['id']} → {self._session_id})")
-            return summary
+            return self._build_session_handoff(previous_id)
         except Exception:
             return None
+
+    def _build_session_handoff(self, session_id: int) -> str | None:
+        """构建带真实时间和来源的轻量会话交接上下文。"""
+        session = self._history_mgr.get_session(session_id)
+        if not session:
+            return None
+        summary = (session.get("summary") or "").strip()
+        msgs = self._history_mgr.get_messages(session_id, limit=12)
+        if not summary and not msgs:
+            return None
+        lines = [
+            "【上一段会话交接】",
+            f"来源：{session.get('channel', 'desktop')}；最后活动：{session.get('updated_at', '')}",
+        ]
+        if summary:
+            lines.append(f"摘要：{summary}")
+        for msg in msgs[-6:]:
+            speaker = "用户" if msg.get("role") == "user" else "莲心"
+            content = (msg.get("content") or "").strip()[:240]
+            if content:
+                lines.append(f"[{msg.get('timestamp', '')} {speaker}] {content}")
+        lines.append("以上仅用于承接最近会话；涉及更早内容时应查询会话历史。")
+        return "\n".join(lines)
 
     def _get_lunar_info(self, dt: datetime) -> str:
         """获取农历日期信息。"""
@@ -714,17 +758,26 @@ class AgentCore:
             if not msgs:
                 return None
 
+            # 自动承接只使用近期跨端记录；更早内容由显式历史搜索处理。
+            last_timestamp = msgs[-1].get("timestamp", "")
+            try:
+                last_dt = datetime.strptime(last_timestamp, "%Y-%m-%d %H:%M:%S")
+                if (datetime.now() - last_dt).days >= 7:
+                    return None
+            except (TypeError, ValueError):
+                return None
+
             lines = []
             for m in msgs:
                 speaker = "你" if m["role"] == "assistant" else "用户"
                 content = m["content"][:200]
-                lines.append(f"{speaker}：{content}")
+                lines.append(f"[{m.get('timestamp', '')}] {speaker}：{content}")
 
             print(f"[跨端记忆] ✓ {source_name} session_id={target_id}，注入 {len(msgs)} 条")
             return (
                 f"【以下是你和用户在{source_name}最近的对话记录——这是实际发生过的对话，不是参考信息】\n"
                 + "\n".join(lines)
-                + f"\n【以上为{source_name}对话记录，当用户问的问题与这些记录相关时，应优先使用这些记录中的信息回答】"
+                + f"\n【以上为{source_name}近期记录。请严格依据时间判断新旧；用户未询问跨端内容时不要优先于当前端记录。】"
             )
         except Exception as e:
             print(f"[跨端记忆] 获取失败: {e}")
@@ -1274,6 +1327,10 @@ class AgentCore:
         # ── 注入实时时间信息（自适应精度：间隔>15分钟用分钟级，否则小时级） ──
         messages.append(self._build_realtime_message())
 
+        current_user_turns = sum(1 for m in self.history if m.get("role") == "user")
+        if self._prev_session_summary and current_user_turns <= 4:
+            messages.append({"role": "system", "content": self._prev_session_summary})
+
         # ── 日记智能回忆：命中触发词自动搜索注入 ──────────────
         if not self._use_local:
             level = self._should_search_diary(user_message) # type: ignore
@@ -1490,7 +1547,8 @@ class AgentCore:
 
         _search_fatigue_count = 0            # 连续搜索轮计数
         _SEARCH_READ_TOOLS = {
-            "search_files_everything", "search_graph_memory", "search_cross_session",
+            "search_files_everything", "search_graph_memory", "search_conversation_history",
+            "search_cross_session",
             "search_code", "glob_files", "list_directory",
             "read_file", "read_file_chunk", "read_file_lines",
             "get_file_info_everything", "grep_file", "web_search",

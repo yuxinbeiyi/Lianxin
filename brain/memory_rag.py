@@ -5,6 +5,7 @@ sentence-transformers 本地 embedding → 语义搜索 → 注入聊天气泡
 
 import logging
 import threading
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
@@ -163,17 +164,19 @@ def search_similar(
 
         if category:
             rows = conn.execute(
-                """SELECT id, content, category, source, strength, embedding
+                """SELECT id, content, category, source, strength, embedding,
+                          created_at, updated_at, source_channel
                    FROM memory_facts
-                   WHERE embedding IS NOT NULL AND category = ?
+                   WHERE embedding IS NOT NULL AND category = ? AND status='active'
                    ORDER BY strength DESC""",
                 (category,)
             ).fetchall()
         else:
             rows = conn.execute(
-                """SELECT id, content, category, source, strength, embedding
+                """SELECT id, content, category, source, strength, embedding,
+                          created_at, updated_at, source_channel
                    FROM memory_facts
-                   WHERE embedding IS NOT NULL
+                   WHERE embedding IS NOT NULL AND status='active'
                    ORDER BY strength DESC"""
             ).fetchall()
 
@@ -189,11 +192,25 @@ def search_similar(
             mem_vec = np.frombuffer(emb, dtype=np.float32)
             sim = float(np.dot(q_vec, mem_vec))
             if sim >= threshold:
-                results.append((sim, {
+                timestamp = r["updated_at"] or r["created_at"] or ""
+                recency = 0.0
+                try:
+                    age_days = max(0, (datetime.now() - datetime.strptime(
+                        timestamp, "%Y-%m-%d %H:%M:%S"
+                    )).days)
+                    recency = max(0.0, 1.0 - age_days / 180.0)
+                except (TypeError, ValueError):
+                    pass
+                strength_score = min(max(int(r["strength"] or 1), 1), 5) / 5.0
+                combined = sim * 0.85 + recency * 0.10 + strength_score * 0.05
+                results.append((combined, {
                     "content": r["content"],
                     "category": r["category"],
                     "source": r["source"],
                     "strength": r["strength"],
+                    "semantic_similarity": sim,
+                    "updated_at": timestamp,
+                    "source_channel": r["source_channel"],
                 }))
 
         results.sort(key=lambda x: x[0], reverse=True)
@@ -221,7 +238,12 @@ def format_rag_context(memories: list[tuple[float, dict]]) -> str:
         return ""
     lines = ["【你可能记得的相关信息】"]
     for sim, mem in memories:
-        lines.append(f"· {mem['content']} (相关度:{sim:.0%})")
+        source = mem.get("source_channel") or mem.get("source") or "unknown"
+        updated = mem.get("updated_at") or "时间未知"
+        semantic = mem.get("semantic_similarity", sim)
+        lines.append(
+            f"· {mem['content']} (语义相关:{semantic:.0%}, 更新:{updated}, 来源:{source})"
+        )
     return "\n".join(lines)
 
 
@@ -235,7 +257,8 @@ def reindex_all_facts():
             from brain.graph_memory import _get_conn
             conn = _get_conn()
             rows = conn.execute(
-                "SELECT id, content FROM memory_facts WHERE embedding IS NULL"
+                """SELECT id, content FROM memory_facts
+                   WHERE embedding IS NULL AND status='active'"""
             ).fetchall()
             if not rows:
                 return
@@ -247,7 +270,9 @@ def reindex_all_facts():
             )
             for r, vec in zip(rows, vecs):
                 conn.execute(
-                    "UPDATE memory_facts SET embedding = ? WHERE id = ?",
+                    """UPDATE memory_facts SET embedding = ?,
+                       embedding_model='BAAI/bge-small-zh-v1.5', embedding_version=1
+                       WHERE id = ?""",
                     (vec.astype(np.float32).tobytes(), r["id"])
                 )
             conn.commit()

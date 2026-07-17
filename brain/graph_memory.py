@@ -75,6 +75,35 @@ def _init_tables(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE memory_facts ADD COLUMN embedding BLOB")
     except Exception:
         pass  # 列已存在
+    for sql in (
+        "ALTER TABLE memory_facts ADD COLUMN updated_at TEXT DEFAULT ''",
+        "ALTER TABLE memory_facts ADD COLUMN occurred_at TEXT DEFAULT ''",
+        "ALTER TABLE memory_facts ADD COLUMN source_session_id INTEGER",
+        "ALTER TABLE memory_facts ADD COLUMN source_channel TEXT DEFAULT ''",
+        "ALTER TABLE memory_facts ADD COLUMN embedding_model TEXT DEFAULT ''",
+        "ALTER TABLE memory_facts ADD COLUMN embedding_version INTEGER DEFAULT 1",
+        "ALTER TABLE memory_facts ADD COLUMN status TEXT DEFAULT 'active'",
+        "ALTER TABLE memory_facts ADD COLUMN valid_from TEXT DEFAULT ''",
+        "ALTER TABLE memory_facts ADD COLUMN valid_to TEXT DEFAULT ''",
+        "ALTER TABLE graph_edges ADD COLUMN updated_at TEXT DEFAULT ''",
+        "ALTER TABLE graph_edges ADD COLUMN status TEXT DEFAULT 'active'",
+        "ALTER TABLE graph_edges ADD COLUMN source_session_id INTEGER",
+        "ALTER TABLE graph_edges ADD COLUMN source_channel TEXT DEFAULT ''",
+    ):
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+    conn.execute(
+        """UPDATE memory_facts SET updated_at=created_at
+           WHERE updated_at IS NULL OR updated_at=''"""
+    )
+    conn.execute(
+        """UPDATE graph_edges SET updated_at=created_at
+           WHERE updated_at IS NULL OR updated_at=''"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_facts_status ON memory_facts(status)")
+    conn.commit()
 
 
 def _get_or_create_entity(conn: sqlite3.Connection, name: str, entity_type: str) -> int:
@@ -113,7 +142,9 @@ def store_quintuple(head: str, head_type: str, relation: str,
     cur = conn.execute(
         """INSERT INTO graph_edges(head_id, head_type, relation, tail_id, tail_type, source)
            VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(head_id, relation, tail_id) DO UPDATE SET strength = strength + 1""",
+           ON CONFLICT(head_id, relation, tail_id) DO UPDATE SET
+               strength = CASE WHEN excluded.source='auto' THEN strength ELSE strength + 1 END,
+               updated_at = datetime('now','localtime')""",
         (hid, head_type, relation, tid, tail_type, source)
     )
     conn.commit()
@@ -570,7 +601,8 @@ CATEGORY_DESCRIPTIONS = {
 
 
 def add_fact(content: str, category: str = "knowledge",
-             source: str = "user_saved") -> int:
+             source: str = "user_saved", source_session_id: int | None = None,
+             source_channel: str = "", occurred_at: str = "") -> int:
     """插入一条分类事实。自动生成 embedding 向量。同分类下内容重复则 strength+1。"""
     content = content.strip()
     if not content:
@@ -588,10 +620,25 @@ def add_fact(content: str, category: str = "knowledge",
             sim, existing = similar
             # 保留更完整的内容，强度叠加
             keep_content = content if len(content) >= len(existing["content"]) else existing["content"]
+            new_embedding = None
+            try:
+                from brain.memory_rag import embed_bytes
+                new_embedding = embed_bytes(keep_content)
+            except Exception:
+                pass
             conn.execute(
                 """UPDATE memory_facts SET content=?, strength=strength+?,
-                   source='merged' WHERE content=? AND category=?""",
-                (keep_content, existing["strength"], existing["content"], category)
+                   source='merged', embedding=COALESCE(?, embedding),
+                   embedding_model=CASE WHEN ? IS NOT NULL THEN 'BAAI/bge-small-zh-v1.5' ELSE embedding_model END,
+                   updated_at=datetime('now','localtime'), source_session_id=COALESCE(?, source_session_id),
+                   source_channel=CASE WHEN ?<>'' THEN ? ELSE source_channel END,
+                   occurred_at=CASE WHEN ?<>'' THEN ? ELSE occurred_at END,
+                   status='active'
+                   WHERE content=? AND category=?""",
+                (keep_content, 0 if source == "auto_extracted" else 1,
+                 new_embedding, new_embedding, source_session_id,
+                 source_channel, source_channel, occurred_at, occurred_at,
+                 existing["content"], category)
             )
             conn.commit()
             logging.getLogger("MemoryDedup").info(
@@ -615,21 +662,27 @@ def add_fact(content: str, category: str = "knowledge",
 
     if emb_bytes:
         conn.execute(
-            """INSERT INTO memory_facts(content, category, source, embedding)
-               VALUES (?, ?, ?, ?)
+            """INSERT INTO memory_facts
+               (content, category, source, embedding, embedding_model, updated_at,
+                occurred_at, source_session_id, source_channel, status)
+               VALUES (?, ?, ?, ?, 'BAAI/bge-small-zh-v1.5', datetime('now','localtime'), ?, ?, ?, 'active')
                ON CONFLICT(content, category) DO UPDATE SET
-               strength = strength + 1,
-               source = excluded.source""",
-            (content, category, source, emb_bytes)
+               strength = strength + CASE WHEN excluded.source='auto_extracted' THEN 0 ELSE 1 END,
+               source = excluded.source, embedding=excluded.embedding,
+               embedding_model=excluded.embedding_model,
+               updated_at=datetime('now','localtime'), status='active'""",
+            (content, category, source, emb_bytes, occurred_at, source_session_id, source_channel)
         )
     else:
         conn.execute(
-            """INSERT INTO memory_facts(content, category, source)
-               VALUES (?, ?, ?)
+            """INSERT INTO memory_facts
+               (content, category, source, updated_at, occurred_at,
+                source_session_id, source_channel, status)
+               VALUES (?, ?, ?, datetime('now','localtime'), ?, ?, ?, 'active')
                ON CONFLICT(content, category) DO UPDATE SET
-               strength = strength + 1,
-               source = excluded.source""",
-            (content, category, source)
+               strength = strength + CASE WHEN excluded.source='auto_extracted' THEN 0 ELSE 1 END,
+               source = excluded.source, updated_at=datetime('now','localtime'), status='active'""",
+            (content, category, source, occurred_at, source_session_id, source_channel)
         )
     conn.commit()
 
@@ -681,16 +734,16 @@ def search_facts(keyword: str, category: str | None = None) -> list[dict]:
         rows = conn.execute(
             """SELECT id, content, category, source, strength, created_at
                FROM memory_facts
-               WHERE content LIKE ? AND category = ?
-               ORDER BY strength DESC LIMIT 30""",
+               WHERE content LIKE ? AND category = ? AND status='active'
+               ORDER BY updated_at DESC, strength DESC LIMIT 30""",
             (q, category)
         ).fetchall()
     else:
         rows = conn.execute(
             """SELECT id, content, category, source, strength, created_at
                FROM memory_facts
-               WHERE content LIKE ?
-               ORDER BY strength DESC LIMIT 30""",
+               WHERE content LIKE ? AND status='active'
+               ORDER BY updated_at DESC, strength DESC LIMIT 30""",
             (q,)
         ).fetchall()
     return [dict(r) for r in rows]
@@ -706,17 +759,27 @@ def update_facts(old_keyword: str, new_content: str,
 
     conn = _get_conn()
     q = "%" + old_keyword + "%"
+    new_embedding = None
+    try:
+        from brain.memory_rag import embed_bytes
+        new_embedding = embed_bytes(new_content)
+    except Exception:
+        pass
     if category:
         cur = conn.execute(
-            """UPDATE memory_facts SET content=?, source='user_saved'
+            """UPDATE memory_facts SET content=?, source='user_saved',
+               embedding=?, embedding_model=?, updated_at=datetime('now','localtime'), status='active'
                WHERE content LIKE ? AND category=?""",
-            (new_content, q, category)
+            (new_content, new_embedding,
+             'BAAI/bge-small-zh-v1.5' if new_embedding else '', q, category)
         )
     else:
         cur = conn.execute(
-            """UPDATE memory_facts SET content=?, source='user_saved'
+            """UPDATE memory_facts SET content=?, source='user_saved',
+               embedding=?, embedding_model=?, updated_at=datetime('now','localtime'), status='active'
                WHERE content LIKE ?""",
-            (new_content, q)
+            (new_content, new_embedding,
+             'BAAI/bge-small-zh-v1.5' if new_embedding else '', q)
         )
     conn.commit()
     return cur.rowcount
@@ -759,16 +822,16 @@ def unified_search(keyword: str, category: str | None = None) -> dict:
         fact_rows = conn.execute(
             """SELECT id, content, category, source, strength, created_at
                FROM memory_facts
-               WHERE content LIKE ? AND category = ?
-               ORDER BY strength DESC LIMIT 20""",
+               WHERE content LIKE ? AND category = ? AND status='active'
+               ORDER BY updated_at DESC, strength DESC LIMIT 20""",
             (q, category)
         ).fetchall()
     else:
         fact_rows = conn.execute(
             """SELECT id, content, category, source, strength, created_at
                FROM memory_facts
-               WHERE content LIKE ?
-               ORDER BY strength DESC LIMIT 20""",
+               WHERE content LIKE ? AND status='active'
+               ORDER BY updated_at DESC, strength DESC LIMIT 20""",
             (q,)
         ).fetchall()
 

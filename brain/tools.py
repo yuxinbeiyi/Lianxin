@@ -1053,7 +1053,41 @@ TOOL_DEFINITIONS = [
         }
     },
 
-    # ==================== 跨端搜索工具 ====================
+    # ==================== 统一会话历史搜索 ====================
+    {
+        "type": "function",
+        "function": {
+            "name": "search_conversation_history",
+            "description": (
+                "搜索真实聊天记录。当用户问最近、昨天、之前聊了什么时必须使用。"
+                "mode=recent 按消息实际时间回顾，不需要关键词；mode=keyword 搜索具体内容。"
+                "只有用户明确指定QQ或桌面端时才限制channels，否则搜索主人全部授权端。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "关键词；recent模式可留空"},
+                    "mode": {
+                        "type": "string", "enum": ["recent", "keyword"],
+                        "description": "最近回顾用recent，查具体内容用keyword，默认recent"
+                    },
+                    "time_range": {
+                        "type": "string", "enum": ["today", "yesterday", "7d", "30d", "all"],
+                        "description": "时间范围；最近默认7d"
+                    },
+                    "channels": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["desktop", "qq_private", "qq_group", "wechat_private", "wechat_group"]},
+                        "description": "可选来源端；未明确指定端时不要填写"
+                    },
+                    "limit": {"type": "integer", "description": "最多返回消息数，默认20，最大50"}
+                },
+                "additionalProperties": False
+            }
+        }
+    },
+
+    # ==================== 旧跨端搜索兼容工具 ====================
     {
         "type": "function",
         "function": {
@@ -2129,7 +2163,21 @@ def save_memory(fact: str, category: str | None = None) -> str:
     if date_tag not in fact:
         fact = f"{fact} {date_tag}"
 
-    entry_id = _memory_add(fact, category, source="user_saved")
+    source_session_id = None
+    source_channel = ""
+    ctx = getattr(_tool_context, "cross_session", None)
+    if ctx is not None:
+        source_session_id = ctx.get("session_id")
+        try:
+            session = ctx["history_mgr"].get_session(source_session_id)
+            source_channel = (session or {}).get("channel", "")
+        except Exception:
+            pass
+    _memory_add(
+        fact, category, source="user_saved",
+        source_session_id=source_session_id,
+        source_channel=source_channel, occurred_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    )
     return f"好的，我记住了（分类：{category}）：{fact}"
 
 
@@ -3976,6 +4024,26 @@ def set_diary_message_source(source):
     _diary_message_source = source
 
 
+def get_diary_messages_for_current_context() -> list:
+    """优先从当前工具上下文聚合主人当天的全部会话。"""
+    ctx = getattr(_tool_context, "cross_session", None)
+    if ctx is not None:
+        try:
+            from datetime import datetime
+            today = datetime.now().strftime("%Y-%m-%d")
+            rows = ctx["history_mgr"].get_messages_by_date(today, owner_only=True)
+            return [
+                {"role": row.get("role", "user"), "content": row.get("content", ""),
+                 "timestamp": row.get("timestamp", "")}
+                for row in rows
+            ]
+        except Exception:
+            pass
+    if _diary_message_source is not None:
+        return _diary_message_source()
+    return []
+
+
 def set_music_control_callback(callback):
     global _music_control_callback
     _music_control_callback = callback
@@ -4101,6 +4169,55 @@ def search_cross_session(keyword: str, limit: int = 5) -> str:
 
     except Exception as e:
         return f"跨端搜索失败：{e}"
+
+
+def search_conversation_history(query: str = "", mode: str = "recent",
+                                time_range: str = "7d", channels=None,
+                                limit: int = 20) -> str:
+    """按真实时间和来源搜索主人的统一会话历史。"""
+    ctx = getattr(_tool_context, "cross_session", None)
+    if ctx is None:
+        return "聊天历史搜索失败：无法获取当前会话上下文。"
+    if mode not in ("recent", "keyword"):
+        mode = "recent"
+    if time_range not in ("today", "yesterday", "7d", "30d", "all"):
+        time_range = "7d"
+    if mode == "keyword" and not query.strip():
+        return "关键词搜索需要提供具体关键词。"
+    allowed_channels = {
+        "desktop", "qq_private", "qq_group", "wechat_private", "wechat_group"
+    }
+    selected_channels = None
+    if isinstance(channels, list):
+        selected_channels = [c for c in channels if c in allowed_channels] or None
+
+    try:
+        history_mgr = ctx["history_mgr"]
+        current_session_id = int(ctx["session_id"])
+        rows = history_mgr.search_conversation_history(
+            query=query, mode=mode, time_range=time_range,
+            channels=selected_channels, owner_only=True,
+            limit=min(max(int(limit), 1), 50),
+        )
+        # 当前问题在工具执行前已经入库，不应作为“历史结果”返回。
+        if rows and rows[-1].get("session_id") == current_session_id \
+                and rows[-1].get("role") == "user":
+            rows.pop()
+        if not rows:
+            scope = "、".join(selected_channels) if selected_channels else "已授权的主人会话"
+            return f"在{scope}的{time_range}范围内没有找到对应聊天记录。"
+
+        lines = [f"找到 {len(rows)} 条真实聊天记录（按时间顺序）："]
+        for row in rows:
+            speaker = "莲心" if row.get("role") == "assistant" else "用户"
+            content = (row.get("content") or "").strip()[:300]
+            lines.append(
+                f"[{row.get('timestamp', '')} | {row.get('channel', 'unknown')} | {speaker}] {content}"
+            )
+        lines.append("请依据时间回答；不要把更早记录描述成最近发生。")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"聊天历史搜索失败：{e}"
 
 
 # ── 技能系统工具函数 ─────────────────────────────────────────
@@ -4885,6 +5002,10 @@ TOOL_EXECUTORS = {
     "send_file_to_qq": lambda inp: send_file_to_qq(inp["path"], inp.get("name", "")),
     "capture_from_camera": lambda inp: capture_from_camera(),
     "capture_desktop": lambda inp: capture_desktop(),
+    "search_conversation_history": lambda inp: search_conversation_history(
+        inp.get("query", ""), inp.get("mode", "recent"),
+        inp.get("time_range", "7d"), inp.get("channels"), inp.get("limit", 20)
+    ),
     "search_cross_session": lambda inp: search_cross_session(inp["keyword"], inp.get("limit", 5)),
     "toggle_proactive_chat": lambda inp: toggle_proactive_chat(inp["action"]),
     "list_skills":   lambda inp: _list_skills(),

@@ -530,6 +530,9 @@ class CharacterWidget(QWidget):
                 on_finished()
             return
         if self._playing_arms_cross:
+            # 动画不能阻断业务回调。回复展示会自行切换说话状态。
+            if on_finished:
+                on_finished()
             return
         if self.anim_machine.current_mode == "thinking":
             self.anim_machine.trigger_event("stop_thinking")
@@ -575,8 +578,12 @@ class CharacterWidget(QWidget):
 
     def play_arms_cross(self, on_finished=None):
         if self._avatar_mode == "static":
+            if on_finished:
+                on_finished()
             return
         if self._playing_arms_cross:
+            if on_finished:
+                on_finished()
             return
         self._playing_arms_cross = True
         self._arms_cross_speech_pending = False

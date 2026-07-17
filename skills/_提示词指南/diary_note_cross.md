@@ -13,5 +13,6 @@ triggers: ["日记", "备忘", "之前聊过", "跨端", "QQ", "电脑上说过"
 - 整理：organize_note — AI 智能整理。禁止未调工具就假装看过。
 
 ## 跨端搜索
-- 问另一端聊过什么→ search_cross_session(keyword="关键词")
-- 自动判断桌面端/QQ端，搜索另一端历史。禁止凭空回答。
+- 问最近/昨天/之前聊过什么 → search_conversation_history(mode="recent", time_range="对应时间范围")
+- 明确问另一端聊过什么 → search_conversation_history，并用 channels 限定 desktop 或 qq_private。
+- `search_cross_session` 仅作为旧兼容入口。禁止凭空回答。

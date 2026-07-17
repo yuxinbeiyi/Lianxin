@@ -111,10 +111,6 @@ def _write_diary(message_count: int = None, force: bool = False) -> str:
     from config import get_diary_config
     from utils.diary import generate_diary_content, save_diary, has_diary_for_date
 
-    msg_source = _brain_tools._diary_message_source
-    if msg_source is None:
-        return "无法获取聊天记录：日记消息源未设置。请从桌面端或QQ端调用此功能。"
-
     today_str = datetime.now().strftime("%Y-%m-%d")
     if not force and has_diary_for_date(today_str):
         return f"今天（{today_str}）已经有一篇日记了。如果你确实想重新生成，请明确告诉我'重新写日记'或'覆盖今天的日记'，我会帮你重写。"
@@ -123,7 +119,7 @@ def _write_diary(message_count: int = None, force: bool = False) -> str:
     max_msgs = message_count or cfg.get("max_messages", 30)
     direction = cfg.get("direction", "latest")
 
-    messages = msg_source()
+    messages = _brain_tools.get_diary_messages_for_current_context()
     if not messages:
         return "今天还没有任何聊天记录，无法生成日记。等聊了一会儿再试试吧～"
 

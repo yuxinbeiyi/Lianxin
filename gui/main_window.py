@@ -1191,19 +1191,36 @@ class MainWindow(QMainWindow):
         self._input_panel.hide_interrupt_bar()
         self._chat_widget.finalize_tool_groups()
         self._duty_scheduler.set_agent_busy(False)
+        # 回复展示属于业务链路，不能因动画回调缺失而永久丢失。
+        # deliver_once 同时防止动画正常完成后与超时兜底重复展示。
+        delivery_state = {"done": False}
+
+        def deliver_once():
+            if delivery_state["done"]:
+                return
+            delivery_state["done"] = True
+            self._continue_response(text)
+
+        def delivery_fallback():
+            if not delivery_state["done"]:
+                print("[GUI] 动画完成回调超时，兜底显示 AI 回复", flush=True)
+                deliver_once()
+
+        # 正常停止思考约 2 秒，抱胸动画约 10 秒；15 秒只作为异常兜底。
+        QTimer.singleShot(15_000, delivery_fallback)
         # 先结束思考（如果是非待机模式，会播放放下手机动画；如果是待机模式，则什么都不做）
         if self._standby_state != "STANDBY":
             # 非待机模式，使用原有的思考结束逻辑（等待打字动画结束）
             def after_thinking():
                 if self._pending_arms_cross:
                     self._pending_arms_cross = False
-                    self._char_widget.play_arms_cross(on_finished=lambda: self._continue_response(text))
+                    self._char_widget.play_arms_cross(on_finished=deliver_once)
                 else:
-                    self._continue_response(text)
+                    deliver_once()
             self._char_widget.stop_thinking(on_finished=after_thinking)
         else:
             # 待机模式下，直接触发说话动画（会等待当前倾听动画播放完）
-            self._continue_response(text)
+            deliver_once()
 
 
     def _continue_response(self, text: str):
@@ -3343,16 +3360,11 @@ class MainWindow(QMainWindow):
 
     def regenerate_diary_by_date(self, date_str: str):
         """从设置对话框调用：手动重新生成指定日期的日记"""
-        # 需要从对话历史中获取该日期的消息
         mgr = self._agent.get_history_manager()
-        session_id = self._agent._session_id
-        all_messages = mgr.get_messages(session_id)
-        
-        # 筛选指定日期的消息
+        all_messages = mgr.get_messages_by_date(date_str, owner_only=True)
         date_messages = [
             {"role": m["role"], "content": m["content"]}
             for m in all_messages
-            if m["timestamp"].startswith(date_str)
         ]
         
         if not date_messages:
@@ -3380,14 +3392,11 @@ class MainWindow(QMainWindow):
     def _get_today_messages(self):
         today_str = datetime.now().strftime("%Y-%m-%d")
         mgr = self._agent.get_history_manager()
-        session_id = self._agent._session_id
-        all_messages = mgr.get_messages(session_id)
-        today_messages = [
+        all_messages = mgr.get_messages_by_date(today_str, owner_only=True)
+        return [
             {"role": m["role"], "content": m["content"]}
             for m in all_messages
-            if m["timestamp"].startswith(today_str)
         ]
-        return today_messages
 
     def _write_diary_if_needed(self, force=False):
         """如果当天没有日记（或者force=True且确认覆盖），则生成日记"""

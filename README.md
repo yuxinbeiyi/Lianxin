@@ -107,6 +107,8 @@
 - **faiss-cpu** 向量索引，毫秒级语义搜索
 - 记忆搜索结果自动注入聊天气泡，让莲心"想起来"说过的话
 - 与五元组图记忆、分类事实记忆互补，构成三引擎记忆体系
+- **统一情景记忆检索**：按真实消息时间、来源端和主人范围回顾最近/昨天/历史聊天
+- 新窗口自动承接最近活跃会话，桌面、QQ、微信会话按参与者隔离
 
 ### 💻 代码智能
 
@@ -590,7 +592,8 @@ python main.py --autostart
 | `control_music` / `get_music_playlist` / `get_music_status` | 音乐盒控制 |
 | `read_diary` / `write_diary` | 日记读写 |
 | `read_note` / `organize_note` | 备忘本 |
-| `search_cross_session` | 跨会话/跨设备搜索 |
+| `search_conversation_history` | 按时间、关键词、来源端统一搜索真实聊天记录 |
+| `search_cross_session` | 旧版跨端关键词搜索（兼容入口） |
 | `send_file_to_qq` | QQ 文件发送 |
 
 </details>

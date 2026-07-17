@@ -15,6 +15,7 @@ import time
 import random
 import logging
 import threading
+from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass
 from datetime import datetime
@@ -28,6 +29,7 @@ from config import (
 
 
 logger = logging.getLogger("WeChatBridge")
+_SESSION_MAP_PATH = Path(__file__).parent.parent / "memory" / "wechat_session_map.json"
 
 @dataclass
 class WeChatMessage:
@@ -51,6 +53,8 @@ class WeChatBridgeWorker(QObject):
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
         self._callback = callback_callback
+        self._agents: Dict[str, object] = {}
+        self._session_map = self._load_session_map()
 
         # 加载防封配置
         cfg = get_wechat_timing_config()
@@ -215,6 +219,50 @@ class WeChatBridgeWorker(QObject):
             return f"{msg.room_id}:{msg.sender_id}"
         return f"private:{msg.sender_id}"
 
+    def _load_session_map(self) -> dict[str, int]:
+        try:
+            if _SESSION_MAP_PATH.exists():
+                data = json.loads(_SESSION_MAP_PATH.read_text(encoding="utf-8"))
+                return {str(k): int(v) for k, v in data.items()}
+        except Exception as e:
+            logger.warning(f"[微信桥接] 会话映射加载失败: {e}")
+        return {}
+
+    def _save_session_map(self) -> None:
+        try:
+            _SESSION_MAP_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _SESSION_MAP_PATH.write_text(
+                json.dumps(self._session_map, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning(f"[微信桥接] 会话映射保存失败: {e}")
+
+    def _get_or_create_agent(self, msg: WeChatMessage, session_key: str, prompt_extra: str):
+        from brain.agent import AgentCore
+        with self._lock:
+            if session_key in self._agents:
+                return self._agents[session_key]
+            is_owner = self._is_owner(msg.sender_id)
+            source_channel = "wechat_group" if msg.room_id else "wechat_private"
+            kwargs = dict(
+                user_desc=prompt_extra,
+                disable_tools=not is_owner,
+                track_emotion=is_owner,
+                source_channel=source_channel,
+                participant_id=msg.sender_id,
+                owner_scope=is_owner,
+            )
+            session_id = self._session_map.get(session_key)
+            if session_id is not None:
+                agent = AgentCore(session_id=session_id, **kwargs)
+            else:
+                agent = AgentCore(**kwargs)
+                self._session_map[session_key] = agent._session_id
+                self._save_session_map()
+            self._agents[session_key] = agent
+            return agent
+
     def _build_system_prompt(self, msg: WeChatMessage, is_owner: bool) -> str:
         """构建微信场景的system prompt。"""
         base = (
@@ -341,13 +389,9 @@ class WeChatBridgeWorker(QObject):
     def _generate_reply(self, msg: WeChatMessage, session_key: str, prompt_extra: str):
         """调用 AgentCore 生成回复，然后分段返回。"""
         from flask import jsonify   # type: ignore
-        from brain.agent import AgentCore
         try:
-            # 微信桥接可能同时服务多个联系人。只有主人会话可以修改
-            # 全局的“莲心与主人”情感状态，避免其他联系人投毒。
-            agent = AgentCore(track_emotion=self._is_owner(msg.sender_id))
-            if prompt_extra:
-                agent._system_prompt += "\n\n" + prompt_extra
+            # 每个微信联系人/群成员使用稳定且隔离的持久会话。
+            agent = self._get_or_create_agent(msg, session_key, prompt_extra)
 
             full_text = agent.chat(msg.content)
             full_text = self._filter_content(full_text)

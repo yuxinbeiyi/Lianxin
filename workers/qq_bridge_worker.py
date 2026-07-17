@@ -706,6 +706,8 @@ class QQBridgeWorker(QThread):
                 if forced == "write_diary":
                     self._send_quick_reply(msg, "正在整理今天的聊天记录，请稍候…大概需要十秒钟左右(｀・ω・´)")
                 try:
+                    from brain.tools import set_cross_session_context
+                    set_cross_session_context(agent._session_id, agent.get_history_manager())
                     result = execute_tool(forced, args)
                     response = _strip_roleplay(str(result))
                     self._update_shoulder_state(forced, args)
@@ -1031,6 +1033,7 @@ class QQBridgeWorker(QThread):
 
             # ── 查找该 QQ 用户是否已有关联的 DB session ──
             db_session_id = self._session_map.get(session_key)
+            source_channel = "qq_group" if is_group else "qq_private"
 
             if db_session_id is not None:
                 # 已有映射：恢复该会话
@@ -1039,6 +1042,9 @@ class QQBridgeWorker(QThread):
                     user_desc=user_desc,
                     disable_tools=disable_tools,
                     track_emotion=is_owner,
+                    source_channel=source_channel,
+                    participant_id=user_id,
+                    owner_scope=is_owner,
                 )
                 self._log(f"[*] 恢复会话: {session_key} (session_id={db_session_id})")
             else:
@@ -1047,6 +1053,9 @@ class QQBridgeWorker(QThread):
                     user_desc=user_desc,
                     disable_tools=disable_tools,
                     track_emotion=is_owner,
+                    source_channel=source_channel,
+                    participant_id=user_id,
+                    owner_scope=is_owner,
                 )
                 db_session_id = agent._session_id
                 self._session_map[session_key] = db_session_id
@@ -1516,7 +1525,8 @@ class QQBridgeWorker(QThread):
             if forced:
                 args = self._extract_tool_args(forced, cmd_text)
                 try:
-                    from brain.tools import execute_tool
+                    from brain.tools import execute_tool, set_cross_session_context
+                    set_cross_session_context(agent._session_id, agent.get_history_manager())
                     result = execute_tool(forced, args)
                     response = str(result)
                     self._update_shoulder_state(forced, args)
@@ -1726,6 +1736,8 @@ class QQBridgeWorker(QThread):
                 tool_calls_made.append(forced)
                 self._is_direct_cmd = True
                 try:
+                    from brain.tools import set_cross_session_context
+                    set_cross_session_context(agent._session_id, agent.get_history_manager())
                     result = execute_tool(forced, args)
                     response = _strip_roleplay(str(result))
                     self._update_shoulder_state(forced, args)
