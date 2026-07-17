@@ -115,26 +115,10 @@ class QqSettingsDialog(QDialog):
         layout.addWidget(grp_reply)
 
         # ── 分段发送 ────────────────────────────────────────
-        grp_seg = QGroupBox("分段发送")
+        grp_seg = QGroupBox("语义分段发送")
         seg_layout = QVBoxLayout(grp_seg)
         seg_layout.setSpacing(14)
         seg_layout.setContentsMargins(12, 16, 12, 12)
-
-        row4 = QHBoxLayout()
-        row4.addWidget(QLabel("分段阈值"))
-        self._seg_min = QSpinBox()
-        self._seg_min.setRange(20, 500)
-        self._seg_min.setSingleStep(10)
-        self._seg_min.setSuffix(" 字")
-        row4.addWidget(self._seg_min)
-        row4.addWidget(QLabel("~"))
-        self._seg_max = QSpinBox()
-        self._seg_max.setRange(20, 500)
-        self._seg_max.setSingleStep(10)
-        self._seg_max.setSuffix(" 字")
-        row4.addWidget(self._seg_max)
-        row4.addStretch()
-        seg_layout.addLayout(row4)
 
         row5 = QHBoxLayout()
         row5.addWidget(QLabel("段间间隔"))
@@ -254,8 +238,6 @@ class QqSettingsDialog(QDialog):
         self._speed_min.setValue(self._config["type_speed_min"])
         self._speed_max.setValue(self._config["type_speed_max"])
         self._min_interval.setValue(self._config["min_reply_interval"])
-        self._seg_min.setValue(self._config["segment_threshold_min"])
-        self._seg_max.setValue(self._config["segment_threshold_max"])
         self._seg_interval_min.setValue(self._config["segment_interval_min"])
         self._seg_interval_max.setValue(self._config["segment_interval_max"])
         self._global_min.setValue(self._config["global_send_interval_min"])
@@ -277,8 +259,6 @@ class QqSettingsDialog(QDialog):
             "type_speed_min": self._speed_min.value(),
             "type_speed_max": self._speed_max.value(),
             "min_reply_interval": self._min_interval.value(),
-            "segment_threshold_min": self._seg_min.value(),
-            "segment_threshold_max": self._seg_max.value(),
             "segment_interval_min": self._seg_interval_min.value(),
             "segment_interval_max": self._seg_interval_max.value(),
             "global_send_interval_min": self._global_min.value(),

@@ -3523,75 +3523,8 @@ class SegmentSender(QObject):
         self._cancelled = False
 
     def _split_text(self):
-        text = self._full_text
-        segments = []
-        temp = []
-        in_code = False
-        lines = text.split('\n')
-
-        for line in lines:
-            if line.strip().startswith('```'):
-                if in_code:
-                    temp.append(line)
-                    segments.append(('\n'.join(temp), True))
-                    temp = []
-                else:
-                    if temp:
-                        segments.append(('\n'.join(temp), False))
-                        temp = []
-                    temp.append(line)
-                in_code = not in_code
-            elif in_code:
-                temp.append(line)
-            else:
-                temp.append(line)
-        if temp:
-            segments.append(('\n'.join(temp), in_code))
-
-        result = []
-        for seg, is_code in segments:
-            if is_code:
-                result.append(seg)
-                continue
-            seg = seg.strip()
-            if not seg:
-                continue
-            paragraphs = [p.strip() for p in seg.split('\n\n') if p.strip()]
-            for p in paragraphs:
-                if len(p) <= 80:
-                    result.append(p)
-                else:
-                    sentences = self._split_sentences(p)
-                    result.extend(sentences)
-
-        merged = []
-        current = ""
-        for s in result:
-            if not current:
-                current = s
-            elif len(current) + len(s) < 60:
-                current += " " + s
-            else:
-                merged.append(current.strip())
-                current = s
-        if current:
-            merged.append(current.strip())
-
-        return [s for s in merged if s]
-
-    def _split_sentences(self, text):
-        import re
-        splits = re.split(r'([。！？!?]+)', text)
-        sentences = []
-        current = ""
-        for part in splits:
-            current += part
-            if part in ('。', '！', '？', '!', '?', '。！', '！？'):
-                sentences.append(current.strip())
-                current = ""
-        if current.strip():
-            sentences.append(current.strip())
-        return sentences
+        from utils.text_segmentation import split_semantic_text
+        return split_semantic_text(self._full_text)
 
     def start(self):
         if not self._segments:

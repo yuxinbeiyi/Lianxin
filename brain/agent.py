@@ -321,7 +321,8 @@ class AgentCore:
             disable_tools: bool = False,
             interrupt_queue=None,
             on_interrupt=None,
-            on_progress=None) -> str:
+            on_progress=None,
+            response_guard=None) -> str:
         """
         处理用户消息并返回 AI 回复。
 
@@ -330,6 +331,7 @@ class AgentCore:
             interrupt_queue:   queue.Queue | None，用户中途插话的消息队列。
             on_interrupt:      callable(msg) -> str，处理插话的 LLM 回调。
             on_progress:       callable(text)，报告进度回复的回调。
+            response_guard:    callable() -> bool，False 时丢弃已过期回复且不写入历史。
         """
         # 清除上次探索留存的观察数据，防止脏数据导致"探索被截断"误报
         try:
@@ -368,6 +370,13 @@ class AgentCore:
             display_response = response_text
         self._last_emotion = emotion  # 供 GUI 读取，用于选图
         self._last_raw_response = response_text  # 保留以备他用
+
+        # 跨线程渠道可在生成期间收到更新请求。旧回复不应进入对话历史，
+        # 否则用户没看到的内容会污染下一轮上下文与记忆提取。
+        if response_guard is not None and not response_guard():
+            self._last_emotion = None
+            self._last_raw_response = None
+            return ""
 
         # ── 情感系统：分析本轮交互 ────────────────────────────
         if self._track_emotion:

@@ -285,10 +285,13 @@ class QQBridgeWorker(QThread):
         self._segment_queue = []    # 待发送的分段文本列表
         self._segment_msg = None    # 分段对应的原始消息（用于构建回复）
         self._segment_user = ""     # 分段对应的用户 ID
+        self._segment_session_key = ""  # 分段所属会话，避免其他会话误打断
         self._segment_active = False  # 是否有分段正在后台发送中
         self._segment_has_sent = False  # 后台是否已发出至少一段（用于群聊 @ 判断）
         self._segment_clear_count = 0  # 队列被清空的次数（用于检测旧分段是否应丢弃）
         self._segment_lock = Lock()   # 分段状态的互斥锁
+        self._request_generations = {}  # session_key -> 最新请求代数
+        self._request_generation_lock = Lock()
 
 # ── 肩部云台状态缓存（用于自然语言角度注入） ──────
         self._shoulder_state = {"pan": None, "tilt": None}
@@ -465,6 +468,9 @@ class QQBridgeWorker(QThread):
                     self._log_group_context(group_id, name, raw_text.strip()[:200])
             return
 
+        # 新消息一旦被接受，就立即废弃同会话尚未发完的旧回复。
+        request_generation = self._begin_request(session_key)
+
         # ── 分段接收期间，其他用户的消息排队等候 ──────────
         with self._pending_lock:
             if self._pending_buffer and session_key not in self._pending_buffer:
@@ -543,7 +549,10 @@ class QQBridgeWorker(QThread):
         text_stripped = text.strip()
         if "【指令】" not in text_stripped and self._has_pending_suffix(text_stripped):
             # 去掉末尾"。。"后缓存，等后续合并
-            self._handle_pending_segment(session_key, text_stripped[:-2].rstrip(), msg, user_id)
+            self._handle_pending_segment(
+                session_key, text_stripped[:-2].rstrip(), msg, user_id,
+                request_generation,
+            )
             return
 
         # 检查该会话是否有缓存的分段待合并
@@ -551,7 +560,7 @@ class QQBridgeWorker(QThread):
             pending = self._pending_buffer.pop(session_key, None)
         if pending:
             pending["fragments"].append(text_stripped)
-            self._process_merged_segments(pending, session_key)
+            self._process_merged_segments(pending, session_key, request_generation)
             return
 
         # ── 暗号：解除限制（仅对主人有效） ──────────────────
@@ -719,7 +728,13 @@ class QQBridgeWorker(QThread):
                 # 【指令】但未匹配工具 → 去掉前缀后走模型正常回复
                 self._log(f"[指令] 未匹配工具，转模型处理")
                 try:
-                    response = _strip_roleplay(agent.chat(cmd_text, on_tool_call=_on_tool_call))
+                    response = _strip_roleplay(agent.chat(
+                        cmd_text,
+                        on_tool_call=_on_tool_call,
+                        response_guard=lambda: self._is_request_current(
+                            session_key, request_generation
+                        ),
+                    ))
                 except Exception as e:
                     response = f"（莲心思考时出了点小问题… {e}）"
                     self._log(f"[!] AgentCore 错误: {e}")
@@ -754,7 +769,14 @@ class QQBridgeWorker(QThread):
                     self._log(f"[路由] [{session_key}] 角色扮演模式（纯聊天）")
                 else:
                     self._log(f"[路由] [{session_key}] 全 Agent 模式（含工具）")
-                response = _strip_roleplay(agent.chat(text, on_tool_call=_on_tool_call, disable_tools=is_chat))
+                response = _strip_roleplay(agent.chat(
+                    text,
+                    on_tool_call=_on_tool_call,
+                    disable_tools=is_chat,
+                    response_guard=lambda: self._is_request_current(
+                        session_key, request_generation
+                    ),
+                ))
             except Exception as e:
                 response = f"（莲心思考时出了点小问题… {e}）"
                 self._log(f"[!] AgentCore 错误: {e}")
@@ -770,6 +792,10 @@ class QQBridgeWorker(QThread):
         # ── 解析并剥离情绪标签（response 返回干净文本，情绪存于 self） ──
         response = self._parse_qq_emotion(response, agent)
 
+        if not self._is_request_current(session_key, request_generation):
+            self._log(f"[打断] [{session_key}] 丢弃已过期的旧回复")
+            return
+
         # ── 思考延迟（8~15 秒，模拟人类思考） ────────────────
         if not self._is_direct_cmd:
             think = random.uniform(*self._think_delay)
@@ -777,6 +803,10 @@ class QQBridgeWorker(QThread):
             self._sleep_with_check(think)
         else:
             self._is_direct_cmd = False  # 用完清除标志
+
+        if not self._is_request_current(session_key, request_generation):
+            self._log(f"[打断] [{session_key}] 思考期间收到新消息，旧回复不再发送")
+            return
 
         # ── 语音回复分支 ─────────────────────────────────────
         voice_handled = False
@@ -793,6 +823,9 @@ class QQBridgeWorker(QThread):
         if not voice_handled:
             # ── 分段处理回复（文字）─────────────────────────
             segments = self._split_response(response)
+            if not segments:
+                self._log(f"[回复] [{session_key}] 空回复，跳过发送")
+                return
 
             if len(segments) <= 1:
                 typing_time = self._calc_typing_time(segments[0])
@@ -801,6 +834,10 @@ class QQBridgeWorker(QThread):
                     self._sleep_with_check(typing_time)
                 else:
                     self._is_direct_cmd = False
+
+                if not self._is_request_current(session_key, request_generation):
+                    self._log(f"[打断] [{session_key}] 打字期间收到新消息，旧回复不再发送")
+                    return
 
                 reply_msg = _build_reply_msg(segments[0], msg, self._bot_qq)
                 self._send_msg({
@@ -819,14 +856,7 @@ class QQBridgeWorker(QThread):
                 self._log(f"[分段] [{session_key}] {len(segments)} 段，共 {len(response)} 字")
 
                 # 中断正在进行的旧分段 + 排队新分段（原子操作）
-                with self._segment_lock:
-                    self._segment_queue.clear()
-                    self._segment_has_sent = False
-                    self._segment_clear_count += 1
-                    self._segment_queue = segments
-                    self._segment_msg = msg
-                    self._segment_user = user_id
-                    self._segment_active = True
+                self._queue_segmented_response(segments, msg, user_id, session_key)
 
                 self._last_reply_time[session_key] = time.monotonic()
                 self._daily_counts[user_id] = self._daily_counts.get(user_id, 0) + 1
@@ -957,7 +987,7 @@ class QQBridgeWorker(QThread):
             qq_platform_note = (
                 "\n\n【QQ平台聊天规范】\n"
                 "- 这是在QQ平台上聊天，对方的手机屏幕有限，请尽量让回复简洁。\n"
-                "- 如果内容较长（超过100~150字），系统会自动拆分成多条短消息发送。\n"
+                "- 如果内容较长，系统会按完整段落和句子自动拆分成多条消息发送。\n"
                 "- 你每段消息末尾若带有「..」标记，表示你还有话没说完。\n"
                 "- 若对方中途发来新消息，系统会中断剩余分段并优先回复对方。"
                 "\n\n【聊天风格铁则】\n"
@@ -1591,7 +1621,8 @@ class QQBridgeWorker(QThread):
         """检查消息末尾是否有"。。"标记（表示还有话没说完）"""
         return text.rstrip().endswith("。。")
 
-    def _handle_pending_segment(self, session_key: str, text: str, msg: dict, user_id: str):
+    def _handle_pending_segment(self, session_key: str, text: str, msg: dict,
+                                user_id: str, request_generation: int):
         """缓存一段待接收的文本片段，等待后续合并"""
         with self._pending_lock:
             # 检查是否有其他用户的 pending 会话
@@ -1604,6 +1635,7 @@ class QQBridgeWorker(QThread):
 
             if session_key in self._pending_buffer:
                 self._pending_buffer[session_key]["fragments"].append(text)
+                self._pending_buffer[session_key]["generation"] = request_generation
                 n = len(self._pending_buffer[session_key]["fragments"])
                 self._log(f"[分段] [{session_key}] 已缓存第 {n} 段（共 {len(text)} 字）")
             else:
@@ -1611,6 +1643,7 @@ class QQBridgeWorker(QThread):
                     "fragments": [text],
                     "original_msg": msg,
                     "user_id": user_id,
+                    "generation": request_generation,
                 }
                 self._log(f"[分段] [{session_key}] 开始等待后续片段（第1段，{len(text)} 字）")
 
@@ -1635,9 +1668,12 @@ class QQBridgeWorker(QThread):
 
         if pending:
             self._log(f"[分段] [{session_key}] 等待超时 ({SEGMENT_WAIT_TIMEOUT}s)，自动合并处理")
-            self._process_merged_segments(pending, session_key)
+            self._process_merged_segments(
+                pending, session_key, pending.get("generation", 0)
+            )
 
-    def _process_merged_segments(self, pending: dict, session_key: str):
+    def _process_merged_segments(self, pending: dict, session_key: str,
+                                 request_generation: int):
         """合并分段文本后走正常处理流程"""
         merged_text = "\n".join(pending["fragments"])
         msg = pending["original_msg"]
@@ -1745,7 +1781,13 @@ class QQBridgeWorker(QThread):
                     response = f"（{forced} 执行失败：{e}）"
             else:
                 try:
-                    response = _strip_roleplay(agent.chat(cmd_text, on_tool_call=_on_tool_call))
+                    response = _strip_roleplay(agent.chat(
+                        cmd_text,
+                        on_tool_call=_on_tool_call,
+                        response_guard=lambda: self._is_request_current(
+                            session_key, request_generation
+                        ),
+                    ))
                 except Exception as e:
                     response = f"（莲心思考时出了点小问题… {e}）"
         else:
@@ -1756,7 +1798,14 @@ class QQBridgeWorker(QThread):
                     self._log(f"[路由] [{session_key}] 角色扮演模式（纯聊天，分段合并）")
                 else:
                     self._log(f"[路由] [{session_key}] 全 Agent 模式（含工具，分段合并）")
-                response = _strip_roleplay(agent.chat(merged_text, on_tool_call=_on_tool_call, disable_tools=is_chat))
+                response = _strip_roleplay(agent.chat(
+                    merged_text,
+                    on_tool_call=_on_tool_call,
+                    disable_tools=is_chat,
+                    response_guard=lambda: self._is_request_current(
+                        session_key, request_generation
+                    ),
+                ))
             except Exception as e:
                 response = f"（莲心思考时出了点小问题… {e}）"
 
@@ -1769,6 +1818,11 @@ class QQBridgeWorker(QThread):
         # ── 解析并剥离情绪标签（合并路径） ──
         response = self._parse_qq_emotion(response, agent)
 
+        if not self._is_request_current(session_key, request_generation):
+            self._log(f"[打断] [{session_key}] 丢弃已过期的合并消息回复")
+            self._after_pending_flush()
+            return
+
         # ── 思考延迟 ─────────────────────────────────────
         if not self._is_direct_cmd:
             think = random.uniform(*self._think_delay)
@@ -1776,6 +1830,11 @@ class QQBridgeWorker(QThread):
             self._sleep_with_check(think)
         else:
             self._is_direct_cmd = False
+
+        if not self._is_request_current(session_key, request_generation):
+            self._log(f"[打断] [{session_key}] 思考期间收到新消息，合并回复不再发送")
+            self._after_pending_flush()
+            return
 
         # ── 语音回复分支 ─────────────────────────────────
         voice_handled = False
@@ -1792,6 +1851,10 @@ class QQBridgeWorker(QThread):
         if not voice_handled:
             # ── 分段发送回复（文字）─────────────────────────
             segments = self._split_response(response)
+            if not segments:
+                self._log(f"[回复] [{session_key}] 空回复，跳过发送")
+                self._after_pending_flush()
+                return
             if len(segments) <= 1:
                 typing_time = self._calc_typing_time(segments[0])
                 if not self._is_direct_cmd:
@@ -1799,6 +1862,10 @@ class QQBridgeWorker(QThread):
                     self._sleep_with_check(typing_time)
                 else:
                     self._is_direct_cmd = False
+                if not self._is_request_current(session_key, request_generation):
+                    self._log(f"[打断] [{session_key}] 打字期间收到新消息，合并回复不再发送")
+                    self._after_pending_flush()
+                    return
                 reply_msg = _build_reply_msg(segments[0], msg, self._bot_qq)
                 self._send_msg({
                     "message_type": msg.get("message_type"),
@@ -1812,14 +1879,7 @@ class QQBridgeWorker(QThread):
                 self._send_qq_emotion_image(msg)
             else:
                 # 中断正在进行的旧分段 + 排队新分段（原子操作）
-                with self._segment_lock:
-                    self._segment_queue.clear()
-                    self._segment_has_sent = False
-                    self._segment_clear_count += 1
-                    self._segment_queue = segments
-                    self._segment_msg = msg
-                    self._segment_user = user_id
-                    self._segment_active = True
+                self._queue_segmented_response(segments, msg, user_id, session_key)
 
         # 记录每日计数
         if not voice_handled:
@@ -1856,7 +1916,6 @@ class QQBridgeWorker(QThread):
         timing = get_qq_timing_config()
         self._think_delay = (timing["think_delay_min"], timing["think_delay_max"])
         self._type_speed = (timing["type_speed_min"], timing["type_speed_max"])
-        self._segment_threshold = (timing["segment_threshold_min"], timing["segment_threshold_max"])
         self._segment_interval = (timing["segment_interval_min"], timing["segment_interval_max"])
         self._segment_pending = ".."
         self._global_send_interval = (timing["global_send_interval_min"], timing["global_send_interval_max"])
@@ -2151,6 +2210,44 @@ class QQBridgeWorker(QThread):
 
     # ── 分段发送后台线程 ──────────────────────────────────
 
+    def _begin_request(self, session_key: str) -> int:
+        """登记新请求并立即打断同会话尚未发完的旧回复。"""
+        with self._request_generation_lock:
+            generation = self._request_generations.get(session_key, 0) + 1
+            self._request_generations[session_key] = generation
+        self._interrupt_segment_delivery(session_key)
+        return generation
+
+    def _is_request_current(self, session_key: str, generation: int) -> bool:
+        with self._request_generation_lock:
+            return self._request_generations.get(session_key, 0) == generation
+
+    def _interrupt_segment_delivery(self, session_key: str) -> bool:
+        """清除同会话旧分段，并使已弹出的旧分段代数失效。"""
+        with self._segment_lock:
+            if not self._segment_active or self._segment_session_key != session_key:
+                return False
+            remaining = len(self._segment_queue)
+            self._segment_queue.clear()
+            self._segment_active = False
+            self._segment_has_sent = False
+            self._segment_session_key = ""
+            self._segment_clear_count += 1
+        self._log(f"[打断] [{session_key}] 新消息到达，丢弃旧回复剩余 {remaining} 段")
+        return True
+
+    def _queue_segmented_response(self, segments: list[str], msg: dict,
+                                  user_id: str, session_key: str):
+        with self._segment_lock:
+            self._segment_queue.clear()
+            self._segment_has_sent = False
+            self._segment_clear_count += 1
+            self._segment_queue = list(segments)
+            self._segment_msg = msg
+            self._segment_user = user_id
+            self._segment_session_key = session_key
+            self._segment_active = True
+
     def _segment_worker(self):
         """后台线程：逐段发送长回复，并在新消息到达时中断。"""
         while self._running:
@@ -2213,6 +2310,7 @@ class QQBridgeWorker(QThread):
                     self._segment_queue.clear()
                     self._segment_active = False
                     self._segment_has_sent = False
+                    self._segment_session_key = ""
                 break
 
             self._log(f"[分段] 已发 ({len(segment)}字){' 未完..' if not is_last else ' 完毕'}")
@@ -2222,6 +2320,7 @@ class QQBridgeWorker(QThread):
                 with self._segment_lock:
                     self._segment_active = False
                     self._segment_has_sent = False
+                    self._segment_session_key = ""
                 # 分段发送完毕，检查是否需要发送表情包图片
                 self._send_qq_emotion_image(msg_ctx)
             else:
@@ -3073,65 +3172,8 @@ class QQBridgeWorker(QThread):
     # ── 文本分段与打字时间计算 ────────────────────────────
 
     def _split_response(self, text: str) -> list:
-        """
-        将长文本按语义边界拆分为多段。
-        优先按段落 → 句子 → 逗号 → 强制分割。
-        """
-        threshold = random.randint(*self._segment_threshold)
-
-        if len(text) <= threshold:
-            return [text]
-
-        segments = []
-        remaining = text.strip()
-
-        while remaining:
-            if len(remaining) <= threshold:
-                # 这一行为空"段"检查
-                if remaining.strip():
-                    segments.append(remaining)
-                break
-
-            # 1) 按段落拆分（双换行）
-            split_pos = remaining.rfind('\n\n', 0, threshold)
-            if split_pos > threshold * 0.4:
-                segments.append(remaining[:split_pos].strip())
-                remaining = remaining[split_pos:].strip()
-                threshold = random.randint(*self._segment_threshold)
-                continue
-
-            # 2) 按中文句末标点
-            found = False
-            for delim in ['。', '！', '？', '!', '?', '.\n']:
-                split_pos = remaining.rfind(delim, 0, threshold)
-                if split_pos > threshold * 0.4:
-                    segments.append(remaining[:split_pos + len(delim)].strip())
-                    remaining = remaining[split_pos + len(delim):].strip()
-                    threshold = random.randint(*self._segment_threshold)
-                    found = True
-                    break
-            if found:
-                continue
-
-            # 3) 按逗号
-            for delim in ['，', '、', ',', '；', ';']:
-                split_pos = remaining.rfind(delim, 0, threshold)
-                if split_pos > threshold * 0.3:
-                    segments.append(remaining[:split_pos + len(delim)].strip())
-                    remaining = remaining[split_pos + len(delim):].strip()
-                    threshold = random.randint(*self._segment_threshold)
-                    found = True
-                    break
-            if found:
-                continue
-
-            # 4) 强制按字数切分
-            segments.append(remaining[:threshold].strip())
-            remaining = remaining[threshold:].strip()
-            threshold = random.randint(*self._segment_threshold)
-
-        # 过滤空段
-        return [s for s in segments if s.strip()]
+        from utils.text_segmentation import split_semantic_text
+        return split_semantic_text(text)
 
     def _calc_typing_time(self, text: str) -> float:
         """根据文本长度计算模拟打字耗时（秒）。"""
