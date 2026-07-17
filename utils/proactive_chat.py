@@ -44,13 +44,19 @@ class ProactiveChatScheduler:
         self._settings: dict = {}
         self._load_settings()
 
-        # 运行时状态（不持久化）
-        self._last_fire_time: datetime | None = None      # 上次发出主动消息的时间
+        # 调度状态：成功时间跨重启保留，用户活跃推迟只在本次运行有效。
+        try:
+            self._last_fire_time = datetime.fromisoformat(
+                self._settings.get("_last_global_success", "")
+            )
+        except (TypeError, ValueError):
+            self._last_fire_time = None
         self._defer_until: datetime | None = None          # 因用户活跃而推迟到的时间
 
     # ── 持久化 ────────────────────────────────────────────────
 
     def _load_settings(self):
+        defaults = self._default_settings()
         try:
             if _SETTINGS_PATH.exists():
                 data = json.loads(_SETTINGS_PATH.read_text(encoding="utf-8"))
@@ -58,10 +64,14 @@ class ProactiveChatScheduler:
                 # 兼容旧版本：enabled → desktop_enabled
                 if "enabled" in self._settings and "desktop_enabled" not in self._settings:
                     self._settings["desktop_enabled"] = self._settings.pop("enabled")
+                # 新字段只补缺省值，不覆盖用户已有配置。
+                for key, value in defaults.items():
+                    if key not in self._settings:
+                        self._settings[key] = value.copy() if isinstance(value, dict) else value
                 return
         except Exception:
             pass
-        self._settings = self._default_settings()
+        self._settings = defaults
 
     def _default_settings(self) -> dict:
         return {
@@ -71,6 +81,25 @@ class ProactiveChatScheduler:
             "min_interval_minutes": DEFAULT_MIN_INTERVAL_MINUTES,
             "user_defer_minutes": DEFAULT_USER_ACTIVITY_DEFER_MINUTES,
             "qq_enabled": False,
+            # 统一行为调度：达到触发条件后只选择并执行一种行为
+            "normal_enabled": True,
+            "behavior_weights": {
+                "normal": 30,
+                "observe": 25,
+                "bilibili": 20,
+                "slack": 25,
+            },
+            "behavior_cooldowns": {
+                "normal": 30,
+                "observe": 60,
+                "bilibili": 180,
+                "slack": 45,
+            },
+            "avoid_behavior_repeat": True,
+            "fallback_on_failure": True,
+            "_behavior_last_success": {},
+            "_behavior_history": [],
+            "_last_global_success": "",
             # 观察设置
             "observe_enabled": False,
             "screenshot_prob": 30,
@@ -86,6 +115,7 @@ class ProactiveChatScheduler:
             "bilibili_tag_cooldown_hours": 48,
             # 摸鱼设置
             "slack_enabled": False,
+            "slack_idle_minutes": 20,
 
             "slack_supplement_diary": True,
             "slack_review_old_diary": True,
@@ -170,6 +200,100 @@ class ProactiveChatScheduler:
     @qq_enabled.setter
     def qq_enabled(self, val: bool):
         self._settings["qq_enabled"] = val
+
+    @property
+    def normal_enabled(self) -> bool:
+        return self._settings.get("normal_enabled", True)
+
+    @normal_enabled.setter
+    def normal_enabled(self, val: bool):
+        self._settings["normal_enabled"] = bool(val)
+
+    @property
+    def behavior_weights(self) -> dict[str, int]:
+        defaults = self._default_settings()["behavior_weights"]
+        stored = self._settings.get("behavior_weights", {})
+        return {name: max(0, min(100, int(stored.get(name, value))))
+                for name, value in defaults.items()}
+
+    @behavior_weights.setter
+    def behavior_weights(self, val: dict[str, int]):
+        current = self.behavior_weights
+        for name in current:
+            if name in val:
+                current[name] = max(0, min(100, int(val[name])))
+        self._settings["behavior_weights"] = current
+
+    @property
+    def behavior_cooldowns(self) -> dict[str, int]:
+        defaults = self._default_settings()["behavior_cooldowns"]
+        stored = self._settings.get("behavior_cooldowns", {})
+        return {name: max(0, min(1440, int(stored.get(name, value))))
+                for name, value in defaults.items()}
+
+    @behavior_cooldowns.setter
+    def behavior_cooldowns(self, val: dict[str, int]):
+        current = self.behavior_cooldowns
+        for name in current:
+            if name in val:
+                current[name] = max(0, min(1440, int(val[name])))
+        self._settings["behavior_cooldowns"] = current
+
+    @property
+    def avoid_behavior_repeat(self) -> bool:
+        return self._settings.get("avoid_behavior_repeat", True)
+
+    @avoid_behavior_repeat.setter
+    def avoid_behavior_repeat(self, val: bool):
+        self._settings["avoid_behavior_repeat"] = bool(val)
+
+    @property
+    def fallback_on_failure(self) -> bool:
+        return self._settings.get("fallback_on_failure", True)
+
+    @fallback_on_failure.setter
+    def fallback_on_failure(self, val: bool):
+        self._settings["fallback_on_failure"] = bool(val)
+
+    def is_behavior_ready(self, behavior: str, now: datetime | None = None) -> bool:
+        """检查单类行为冷却；没有成功执行记录时立即可选。"""
+        stamp = self._settings.get("_behavior_last_success", {}).get(behavior, "")
+        if not stamp:
+            return True
+        try:
+            last = datetime.fromisoformat(stamp)
+        except (TypeError, ValueError):
+            return True
+        cooldown = self.behavior_cooldowns.get(behavior, 0)
+        return ((now or datetime.now()) - last).total_seconds() >= cooldown * 60
+
+    def choose_behavior(self, candidates: list[str]) -> str:
+        """从已经通过可用性检查的行为中按权重选择一种。"""
+        candidates = list(dict.fromkeys(candidates))
+        if not candidates:
+            return ""
+        weights = self.behavior_weights
+        effective = [float(weights.get(name, 0)) for name in candidates]
+        history = self._settings.get("_behavior_history", [])
+        if self.avoid_behavior_repeat and history:
+            last = history[-1]
+            if last in candidates and len(candidates) > 1:
+                effective[candidates.index(last)] *= 0.15
+        if sum(effective) <= 0:
+            return ""
+        return random.choices(candidates, weights=effective, k=1)[0]
+
+    def record_behavior_success(self, behavior: str):
+        """只有界面实际收到非空消息后才记录全局和单行为冷却。"""
+        now = datetime.now()
+        self._last_fire_time = now
+        self._settings["_last_global_success"] = now.isoformat(timespec="seconds")
+        last_success = self._settings.setdefault("_behavior_last_success", {})
+        last_success[behavior] = now.isoformat(timespec="seconds")
+        history = self._settings.setdefault("_behavior_history", [])
+        history.append(behavior)
+        del history[:-12]
+        self.save_settings()
 
     # ── 观察设置 ────────────────────────────────────────────────
 
@@ -283,6 +407,14 @@ class ProactiveChatScheduler:
     @slack_enabled.setter
     def slack_enabled(self, val: bool):
         self._settings["slack_enabled"] = val
+
+    @property
+    def slack_idle_minutes(self) -> int:
+        return max(0, min(240, int(self._settings.get("slack_idle_minutes", 20))))
+
+    @slack_idle_minutes.setter
+    def slack_idle_minutes(self, val: int):
+        self._settings["slack_idle_minutes"] = max(0, min(240, int(val)))
 
     @property
     def slack_supplement_diary(self) -> bool:
@@ -456,24 +588,20 @@ class ProactiveChatScheduler:
     # ── 观察触发判断 ──────────────────────────────────────────────
 
     def should_observe(self) -> str:
-        """判断本次主动Chat是否应该先执行观察。
-        返回 "screenshot" / "camera" / ""（不观察）。
-        观察依赖桌面端环境（截图/摄像头），仅 desktop 启用时才触发。
-        """
+        """按来源权重选择截图或摄像头；观察行为本身由统一调度器选择。"""
         if not self.observe_enabled:
             return ""
         if not self.desktop_enabled:
             return ""
-
-        # 截图概率判定
-        if self.screenshot_prob > 0 and random.randint(1, 100) <= self.screenshot_prob:
-            return "screenshot"
-
-        # 摄像头概率判定
-        if self.camera_prob > 0 and random.randint(1, 100) <= self.camera_prob:
-            return "camera"
-
-        return ""
+        modes = []
+        weights = []
+        if self.screenshot_prob > 0:
+            modes.append("screenshot")
+            weights.append(self.screenshot_prob)
+        if self.camera_prob > 0:
+            modes.append("camera")
+            weights.append(self.camera_prob)
+        return random.choices(modes, weights=weights, k=1)[0] if modes else ""
 
     # ── 调度逻辑 ──────────────────────────────────────────────
 

@@ -143,6 +143,7 @@ class DutyScheduler(QObject):
     proactive_error = pyqtSignal(str)                 # error text
     proactive_observation_text = pyqtSignal(str)      # observation description
     proactive_observation_image = pyqtSignal(str, str) # image_path, description
+    proactive_behavior_selected = pyqtSignal(str)     # normal | observe | bilibili | slack
 
     slack_response = pyqtSignal(str)                  # message text
     slack_error = pyqtSignal(str)                     # error text
@@ -297,7 +298,7 @@ class DutyScheduler(QObject):
 # ═══════════════════════════════════════════════════════════════
 
 class ProactiveDuty(Duty):
-    """主动聊天 + 观察 + B站冲浪。"""
+    """主动聊天、观察、B站冲浪和摸鱼的统一抽签入口。"""
 
     def __init__(self):
         super().__init__("proactive", "主动聊天", tick_interval_seconds=300)
@@ -319,19 +320,50 @@ class ProactiveDuty(Duty):
             return False
         return ps.should_fire()
 
+    def manual_trigger(self, state: SchedulerState, **kwargs):
+        """手动调试绕过概率和冷却，但仍只执行一种行为。"""
+        kwargs["ignore_cooldowns"] = True
+        self._execute(state, **kwargs)
+
     def _create_worker(self, state: SchedulerState, **kwargs):
         from workers.proactive_worker import ProactiveWorker
 
         force_observe = kwargs.get("force_observe", "")
+        force_behavior = kwargs.get("force_behavior", "")
         ps = state.proactive_scheduler
         hm = state.history_manager
+        if force_observe:
+            force_behavior = "bilibili" if force_observe == "bilibili" else "observe"
 
-        if force_observe == "bilibili":
+        candidates = kwargs.get("candidates") or self._eligible_behaviors(
+            state, ignore_cooldowns=kwargs.get("ignore_cooldowns", False)
+        )
+        behavior = force_behavior or ps.choose_behavior(candidates)
+        if not behavior:
+            return None
+
+        self._current_state = state
+        self._current_behavior = behavior
+        self._remaining_behaviors = [item for item in candidates if item != behavior]
+        self._observation_succeeded = False
+        self._scheduler.proactive_behavior_selected.emit(behavior)
+
+        if behavior == "bilibili":
             worker = ProactiveWorker(hm, bilibili_mode=True)
-        elif ps.bilibili_enabled and ps.should_surf_bilibili() and not force_observe:
-            worker = ProactiveWorker(hm, bilibili_mode=True)
+        elif behavior == "slack":
+            from workers.slack_worker import SlackWorker
+            action = kwargs.get("force_action", "") or ps.should_slack()
+            if not action:
+                return None
+            context, sources = SlackDuty()._build_context(action, state)
+            self._current_action = action
+            if sources:
+                self._scheduler.mooyu_data_sources.emit(action, sources)
+            worker = SlackWorker(action, context)
         else:
-            observe_mode = force_observe or ps.should_observe()
+            observe_mode = (force_observe or ps.should_observe()) if behavior == "observe" else ""
+            if behavior == "observe" and not observe_mode and not state.is_shoulder_available():
+                return None
             if observe_mode and state.is_shoulder_available():
                 observe_mode = "shoulder_explore"
             last_obs = ps.get_last_observation()
@@ -342,31 +374,98 @@ class ProactiveDuty(Duty):
                 camera_index=ps.camera_index,
                 camera_wait=ps.camera_wait,
             )
-        self._was_observation = (force_observe != "bilibili") and (not getattr(worker, '_bilibili_mode', False))
         return worker
 
+    @staticmethod
+    def _bilibili_available() -> bool:
+        try:
+            from utils.bilibili_history import get_bilibili_history
+            return get_bilibili_history().can_search()
+        except Exception:
+            return False
+
+    def _eligible_behaviors(self, state: SchedulerState,
+                            ignore_cooldowns: bool = False) -> list[str]:
+        ps = state.proactive_scheduler
+        candidates = []
+        ready = lambda name: ignore_cooldowns or ps.is_behavior_ready(name)
+        if ps.normal_enabled and ready("normal"):
+            candidates.append("normal")
+        if (ps.observe_enabled and ps.desktop_enabled
+                and (ps.screenshot_prob > 0 or ps.camera_prob > 0 or state.is_shoulder_available())
+                and ready("observe")):
+            candidates.append("observe")
+        if (ps.bilibili_enabled and ready("bilibili")
+                and (ignore_cooldowns or self._bilibili_available())):
+            candidates.append("bilibili")
+        slack_idle_ready = (not state.last_user_message_time or
+                            state.now - state.last_user_message_time >= ps.slack_idle_minutes * 60)
+        if (ps.slack_enabled and slack_idle_ready and ps.get_enabled_slack_actions()
+                and ready("slack")):
+            candidates.append("slack")
+        return candidates
+
     def _wire_worker(self, worker):
-        scheduler = self._scheduler
         worker.response_ready.connect(self._on_response)
         worker.error_occurred.connect(self._on_error)
-        worker.observation_text.connect(self._on_obs_text)
-        worker.observation_image.connect(self._on_obs_image)
+        if hasattr(worker, "observation_text"):
+            worker.observation_text.connect(self._on_obs_text)
+        if hasattr(worker, "observation_image"):
+            worker.observation_image.connect(self._on_obs_image)
         # 摸鱼数据源透明信号（跨线程，Qt 自动队列）
-        worker.data_source_called.connect(self._on_data_source)
+        if hasattr(worker, "data_source_called"):
+            worker.data_source_called.connect(self._on_data_source)
 
     def _on_response(self, text: str):
         self.status.is_running = False
-        self.status.last_result = "success" if text else "skipped"
+        behavior = getattr(self, "_current_behavior", "normal")
+        if behavior == "observe" and not self._observation_succeeded:
+            text = ""
+        if not text:
+            self.status.last_result = "skipped"
+            if self._try_fallback():
+                return
+            return
+        self.status.last_result = "success"
         self.status.success_count += 1
-        self._scheduler.proactive_response.emit(text)
+        self._scheduler._proactive_scheduler.record_behavior_success(behavior)
+        if behavior == "slack":
+            self._scheduler.slack_response.emit(text)
+        else:
+            self._scheduler.proactive_response.emit(text)
 
     def _on_error(self, err: str):
         self.status.is_running = False
         self.status.last_result = "failed"
         self.status.fail_count += 1
+        if self._try_fallback():
+            return
         self._scheduler.proactive_error.emit(err)
 
+    def _try_fallback(self) -> bool:
+        ps = self._scheduler._proactive_scheduler
+        remaining = getattr(self, "_remaining_behaviors", [])
+        state = getattr(self, "_current_state", None)
+        if not ps or not ps.fallback_on_failure or not remaining or state is None:
+            return False
+        # 每轮最多回退一次，避免接口或设备异常造成连续请求。
+        old_worker = self._worker
+        if old_worker is not None:
+            retired = getattr(self, "_retired_workers", [])
+            retired.append(old_worker)
+            self._retired_workers = retired
+            old_worker.finished.connect(lambda: self._release_worker(old_worker))
+        self._execute(state, candidates=remaining, fallback_on_failure=False)
+        self._remaining_behaviors = []
+        return self.status.is_running
+
+    def _release_worker(self, worker):
+        retired = getattr(self, "_retired_workers", [])
+        if worker in retired:
+            retired.remove(worker)
+
     def _on_obs_text(self, desc: str):
+        self._observation_succeeded = bool(desc)
         self._scheduler.proactive_observation_text.emit(desc)
 
     def _on_obs_image(self, img_path: str, desc: str):
@@ -391,7 +490,7 @@ class ProactiveDuty(Duty):
 # ═══════════════════════════════════════════════════════════════
 
 class SlackDuty(Duty):
-    """摸鱼消息。仅在 ProactiveDuty 未触发时尝试。"""
+    """摸鱼上下文构建兼容类；自动调度已并入 ProactiveDuty。"""
 
     def __init__(self):
         super().__init__("slack", "摸鱼消息", tick_interval_seconds=300)
@@ -403,17 +502,7 @@ class SlackDuty(Duty):
         return ps._settings.get("slack_enabled", False)
 
     def _should_fire(self, state: SchedulerState) -> bool:
-        if state.agent_busy:
-            return False
-        ps = state.proactive_scheduler
-        if ps is None:
-            return False
-        if not self._scheduler._check_emotional_gate():
-            return False
-        # 仅在 proactive 未触发时尝试
-        if ps.should_fire():
-            return False
-        return ps.should_slack_fire()
+        return False
 
     def _create_worker(self, state: SchedulerState, **kwargs):
         from workers.slack_worker import SlackWorker

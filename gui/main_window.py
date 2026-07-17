@@ -300,7 +300,7 @@ class MainWindow(QMainWindow):
 
         # ── 统一后台职责调度器（替代 3 个独立 QTimer）─────────
         from utils.duty_scheduler import (
-            DutyScheduler, ProactiveDuty, SlackDuty, HeartbeatDuty, SmartReminderDuty, register_duty
+            DutyScheduler, ProactiveDuty, HeartbeatDuty, SmartReminderDuty, register_duty
         )
         self._duty_scheduler = DutyScheduler(self)
         self._duty_scheduler.setup(
@@ -318,7 +318,6 @@ class MainWindow(QMainWindow):
             proactive_dialog=None,  # set later when proactive_dialog is created
         )
         register_duty(self._duty_scheduler, ProactiveDuty())
-        register_duty(self._duty_scheduler, SlackDuty())
         register_duty(self._duty_scheduler, HeartbeatDuty())
         register_duty(self._duty_scheduler, SmartReminderDuty())
 
@@ -326,6 +325,9 @@ class MainWindow(QMainWindow):
         self._duty_scheduler.proactive_error.connect(self._on_proactive_error)
         self._duty_scheduler.proactive_observation_text.connect(self._on_observation_result)
         self._duty_scheduler.proactive_observation_image.connect(self._on_observation_image)
+        self._duty_scheduler.proactive_behavior_selected.connect(
+            lambda behavior: setattr(self, "_last_proactive_was_observation", behavior == "observe")
+        )
         self._duty_scheduler.slack_response.connect(self._on_slack_response)
         self._duty_scheduler.slack_error.connect(self._on_slack_error)
         self._duty_scheduler.heartbeat_response.connect(self._on_heartbeat_response)
@@ -2176,7 +2178,9 @@ class MainWindow(QMainWindow):
     def _on_proactive_debug_observe(self, mode: str):
         """调试观察：强制走截图/摄像头/B站冲浪模式，或摸鱼调试。"""
         if mode.startswith("slack:"):
-            self._duty_scheduler.manual_trigger("slack", force_action=mode[6:])
+            self._duty_scheduler.manual_trigger(
+                "proactive", force_behavior="slack", force_action=mode[6:]
+            )
             return
         try:
             statuses = self._duty_scheduler.get_all_statuses()
@@ -2287,7 +2291,6 @@ class MainWindow(QMainWindow):
             self._observation_tip.hide()
             self._observation_tip.deleteLater()
             self._observation_tip = None
-        self._proactive_scheduler.notify_fired()
         if not text:
             return
         # 新增：过滤掉【表情：XXX】标签

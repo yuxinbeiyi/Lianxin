@@ -95,7 +95,7 @@ class _HourRow(QWidget):
 
 
 class ProactiveDialog(QDialog):
-    """主动聊天 + 调皮观察 设置对话框（双选项卡）。"""
+    """统一主动行为调度设置。"""
 
     debug_trigger = pyqtSignal()
     debug_observe_signal = pyqtSignal(str)
@@ -106,8 +106,8 @@ class ProactiveDialog(QDialog):
         self._hour_rows: list[_HourRow] = []
 
         self.setWindowTitle("主动聊天设置")
-        self.resize(520, 680)
-        self.setMinimumSize(460, 480)
+        self.resize(700, 720)
+        self.setMinimumSize(620, 520)
         self.setWindowFlags(Qt.Window)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
@@ -134,7 +134,7 @@ class ProactiveDialog(QDialog):
         
         root.addWidget(title)
 
-        desc = QLabel("莲心会在设定的时间段内随机主动给你发消息。")
+        desc = QLabel("达到触发条件后，莲心会按权重随机选择一种主动行为。")
         desc.setFont(QFont("Microsoft YaHei UI", 9))
         
         root.addWidget(desc)
@@ -148,7 +148,7 @@ class ProactiveDialog(QDialog):
         """)
         root.addWidget(tab, 1)
 
-        # ────── Tab 1: 主动聊天 ──────
+        # ────── Tab 1: 总体调度 ──────
         chat_tab = QWidget()
         chat_layout = QVBoxLayout(chat_tab)
         chat_layout.setSpacing(8)
@@ -159,9 +159,17 @@ class ProactiveDialog(QDialog):
         chat_scroll.setWidgetResizable(True)
         chat_scroll.setWidget(chat_tab)
         chat_scroll.setStyleSheet("QScrollArea { border: none; }")
-        tab.addTab(chat_scroll, "主动聊天")
+        tab.addTab(chat_scroll, "总体调度")
 
-        # ────── Tab 2: 调皮观察 ──────
+        # ────── Tab 2: 普通聊天 ──────
+        normal_tab = QWidget()
+        normal_layout = QVBoxLayout(normal_tab)
+        normal_layout.setSpacing(8)
+        normal_layout.setContentsMargins(8, 8, 8, 8)
+        self._build_normal_tab(normal_layout)
+        tab.addTab(normal_tab, "普通聊天")
+
+        # ────── Tab 3: 调皮观察 ──────
         obs_tab = QWidget()
         obs_layout = QVBoxLayout(obs_tab)
         obs_layout.setSpacing(8)
@@ -174,7 +182,7 @@ class ProactiveDialog(QDialog):
         obs_scroll.setStyleSheet("QScrollArea { border: none; }")
         tab.addTab(obs_scroll, "调皮观察")
 
-        # ────── Tab 3: B站冲浪 ──────
+        # ────── Tab 4: B站冲浪 ──────
         bl_tab = QWidget()
         bl_layout = QVBoxLayout(bl_tab)
         bl_layout.setSpacing(8)
@@ -187,7 +195,7 @@ class ProactiveDialog(QDialog):
         bl_scroll.setStyleSheet("QScrollArea { border: none; }")
         tab.addTab(bl_scroll, "B站冲浪")
 
-        # ────── Tab 4: 莲心摸鱼设置 ──────
+        # ────── Tab 5: 莲心摸鱼 ──────
         slack_tab = QWidget()
         slack_layout = QVBoxLayout(slack_tab)
         slack_layout.setSpacing(8)
@@ -198,7 +206,7 @@ class ProactiveDialog(QDialog):
         slack_scroll.setWidgetResizable(True)
         slack_scroll.setWidget(slack_tab)
         slack_scroll.setStyleSheet("QScrollArea { border: none; }")
-        tab.addTab(slack_scroll, "莲心摸鱼设置")
+        tab.addTab(slack_scroll, "莲心摸鱼")
 
         # ── 底部按钮 ──
         btn_row = QHBoxLayout()
@@ -284,6 +292,49 @@ class ProactiveDialog(QDialog):
         self._qq_cb.setFixedSize(20, 20)
         qq_row.addWidget(self._qq_cb)
         layout.addLayout(qq_row)
+
+        behavior_group = QGroupBox("行为随机权重")
+        behavior_group.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
+        behavior_inner = QVBoxLayout(behavior_group)
+        behavior_hint = QLabel("百分比是四类行为都可用时的配置占比；实际只在可用且不在冷却中的行为间重新归一化。")
+        behavior_hint.setWordWrap(True)
+        behavior_hint.setStyleSheet("color: #777788;")
+        behavior_inner.addWidget(behavior_hint)
+        self._behavior_weight_sliders = {}
+        self._behavior_weight_labels = {}
+        for key, title in (("normal", "普通聊天"), ("observe", "调皮观察"),
+                           ("bilibili", "B站冲浪"), ("slack", "莲心摸鱼")):
+            row = QHBoxLayout()
+            label = QLabel(title)
+            label.setFixedWidth(72)
+            row.addWidget(label)
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(0, 100)
+            slider.valueChanged.connect(self._update_behavior_distribution)
+            row.addWidget(slider, 1)
+            value_label = QLabel("0")
+            value_label.setFixedWidth(72)
+            value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            row.addWidget(value_label)
+            behavior_inner.addLayout(row)
+            self._behavior_weight_sliders[key] = slider
+            self._behavior_weight_labels[key] = value_label
+        layout.addWidget(behavior_group)
+
+        policy_group = QGroupBox("选择策略")
+        policy_inner = QVBoxLayout(policy_group)
+        self._avoid_repeat_cb = QCheckBox("降低与上一次相同行为的权重")
+        self._fallback_cb = QCheckBox("行为失败或无内容时，回退尝试另一种行为")
+        policy_inner.addWidget(self._avoid_repeat_cb)
+        policy_inner.addWidget(self._fallback_cb)
+        layout.addWidget(policy_group)
+
+        recent_group = QGroupBox("最近成功行为")
+        recent_inner = QVBoxLayout(recent_group)
+        self._recent_behavior_label = QLabel("暂无记录")
+        self._recent_behavior_label.setWordWrap(True)
+        recent_inner.addWidget(self._recent_behavior_label)
+        layout.addWidget(recent_group)
 
         # 频率滑块
         freq_group = QGroupBox("每日消息频率")
@@ -468,6 +519,38 @@ class ProactiveDialog(QDialog):
         hour_inner.addWidget(scroll, 1)
         layout.addWidget(hour_group, 1)
 
+    def _build_normal_tab(self, layout: QVBoxLayout):
+        hint = QLabel("不调用观察、B站或摸鱼工具，直接结合近期对话发起自然聊天。")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        self._normal_enable_cb = QCheckBox("启用普通主动聊天")
+        self._normal_enable_cb.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        layout.addWidget(self._normal_enable_cb)
+        self._add_behavior_cooldown(layout, "normal")
+        layout.addStretch(1)
+
+    def _add_behavior_cooldown(self, layout: QVBoxLayout, behavior: str):
+        if not hasattr(self, "_behavior_cooldown_spins"):
+            self._behavior_cooldown_spins = {}
+        row = QHBoxLayout()
+        row.addWidget(QLabel("该行为成功后的冷却时间"))
+        row.addStretch()
+        spin = QSpinBox()
+        spin.setRange(0, 1440)
+        spin.setSuffix(" 分钟")
+        spin.setFixedWidth(110)
+        row.addWidget(spin)
+        layout.addLayout(row)
+        self._behavior_cooldown_spins[behavior] = spin
+
+    def _update_behavior_distribution(self):
+        if not hasattr(self, "_behavior_weight_sliders"):
+            return
+        total = sum(slider.value() for slider in self._behavior_weight_sliders.values())
+        for key, slider in self._behavior_weight_sliders.items():
+            percent = slider.value() * 100 / total if total else 0
+            self._behavior_weight_labels[key].setText(f"{slider.value()} / {percent:.0f}%")
+
     # ────────── 调皮观察选项卡 ────────────────────────────
 
     def _build_observe_tab(self, layout: QVBoxLayout):
@@ -499,9 +582,11 @@ class ProactiveDialog(QDialog):
         line.setStyleSheet("color: #E0E0E8;")
         layout.addWidget(line)
 
-        # 截图概率
+        self._add_behavior_cooldown(layout, "observe")
+
+        # 观察来源权重
         scr_row = QHBoxLayout()
-        scr_lbl = QLabel("截图概率（每小时）")
+        scr_lbl = QLabel("截图来源权重")
         scr_lbl.setFont(QFont("Microsoft YaHei UI", 9))
         
         scr_row.addWidget(scr_lbl)
@@ -511,18 +596,18 @@ class ProactiveDialog(QDialog):
         self._scr_slider.setFixedWidth(140)
         self._scr_slider.setFixedHeight(18)
         self._scr_slider.valueChanged.connect(
-            lambda v: self._scr_val_lbl.setText(f"{v}%"))
+            lambda v: self._scr_val_lbl.setText(str(v)))
         scr_row.addWidget(self._scr_slider)
-        self._scr_val_lbl = QLabel("30%")
+        self._scr_val_lbl = QLabel("30")
         self._scr_val_lbl.setFixedWidth(36)
         self._scr_val_lbl.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
         self._scr_val_lbl.setStyleSheet("color: #FF6B8A;")
         scr_row.addWidget(self._scr_val_lbl)
         layout.addLayout(scr_row)
 
-        # 摄像头概率
+        # 摄像头来源权重
         cam_row = QHBoxLayout()
-        cam_lbl = QLabel("摄像头概率（每小时）")
+        cam_lbl = QLabel("摄像头来源权重")
         cam_lbl.setFont(QFont("Microsoft YaHei UI", 9))
          
         cam_row.addWidget(cam_lbl)
@@ -532,9 +617,9 @@ class ProactiveDialog(QDialog):
         self._cam_slider.setFixedWidth(140)
         self._cam_slider.setFixedHeight(18)
         self._cam_slider.valueChanged.connect(
-            lambda v: self._cam_val_lbl.setText(f"{v}%"))
+            lambda v: self._cam_val_lbl.setText(str(v)))
         cam_row.addWidget(self._cam_slider)
-        self._cam_val_lbl = QLabel("15%")
+        self._cam_val_lbl = QLabel("15")
         self._cam_val_lbl.setFixedWidth(36)
         self._cam_val_lbl.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
         self._cam_val_lbl.setStyleSheet("color: #FF6B8A;")
@@ -657,6 +742,18 @@ class ProactiveDialog(QDialog):
         enable_row.addWidget(self._slack_enable_cb)
         enable_row.addStretch()
         layout.addLayout(enable_row)
+
+        self._add_behavior_cooldown(layout, "slack")
+
+        idle_row = QHBoxLayout()
+        idle_row.addWidget(QLabel("用户安静至少"))
+        idle_row.addStretch()
+        self._slack_idle_spin = QSpinBox()
+        self._slack_idle_spin.setRange(0, 240)
+        self._slack_idle_spin.setSuffix(" 分钟")
+        self._slack_idle_spin.setFixedWidth(110)
+        idle_row.addWidget(self._slack_idle_spin)
+        layout.addLayout(idle_row)
 
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
@@ -859,30 +956,12 @@ class ProactiveDialog(QDialog):
         toggle_row.addWidget(self._bl_enable_cb)
         layout.addLayout(toggle_row)
 
+        self._add_behavior_cooldown(layout, "bilibili")
+
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setStyleSheet("color: #E0E0E8;")
         layout.addWidget(line)
-
-        # 触发概率
-        prob_row = QHBoxLayout()
-        prob_lbl = QLabel("触发概率")
-        prob_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-        prob_row.addWidget(prob_lbl)
-        prob_row.addStretch()
-        self._bl_prob_slider = QSlider(Qt.Horizontal)
-        self._bl_prob_slider.setRange(0, 100)
-        self._bl_prob_slider.setFixedWidth(140)
-        self._bl_prob_slider.setFixedHeight(18)
-        self._bl_prob_slider.valueChanged.connect(
-            lambda v: self._bl_prob_val.setText(f"{v}%"))
-        prob_row.addWidget(self._bl_prob_slider)
-        self._bl_prob_val = QLabel("40%")
-        self._bl_prob_val.setFixedWidth(36)
-        self._bl_prob_val.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
-        self._bl_prob_val.setStyleSheet("color: #FF6B8A;")
-        prob_row.addWidget(self._bl_prob_val)
-        layout.addLayout(prob_row)
 
         line2 = QFrame()
         line2.setFrameShape(QFrame.HLine)
@@ -1295,6 +1374,20 @@ class ProactiveDialog(QDialog):
         self._freq_slider.setValue(self._scheduler.frequency)
         self._interval_spin.setValue(self._scheduler.min_interval_minutes)
         self._defer_spin.setValue(self._scheduler.user_defer_minutes)
+        self._normal_enable_cb.setChecked(self._scheduler.normal_enabled)
+        for key, value in self._scheduler.behavior_weights.items():
+            self._behavior_weight_sliders[key].setValue(value)
+        for key, value in self._scheduler.behavior_cooldowns.items():
+            self._behavior_cooldown_spins[key].setValue(value)
+        self._avoid_repeat_cb.setChecked(self._scheduler.avoid_behavior_repeat)
+        self._fallback_cb.setChecked(self._scheduler.fallback_on_failure)
+        self._update_behavior_distribution()
+        names = {"normal": "普通聊天", "observe": "调皮观察",
+                 "bilibili": "B站冲浪", "slack": "莲心摸鱼"}
+        history = self._scheduler._settings.get("_behavior_history", [])[-4:]
+        self._recent_behavior_label.setText(
+            "  →  ".join(names.get(item, item) for item in history) if history else "暂无记录"
+        )
         weights = self._scheduler.weights
         for h, row in enumerate(self._hour_rows):
             if h < len(weights):
@@ -1303,9 +1396,9 @@ class ProactiveDialog(QDialog):
         # 观察设置
         self._observe_cb.setChecked(self._scheduler.observe_enabled)
         self._scr_slider.setValue(self._scheduler.screenshot_prob)
-        self._scr_val_lbl.setText(f"{self._scheduler.screenshot_prob}%")
+        self._scr_val_lbl.setText(str(self._scheduler.screenshot_prob))
         self._cam_slider.setValue(self._scheduler.camera_prob)
-        self._cam_val_lbl.setText(f"{self._scheduler.camera_prob}%")
+        self._cam_val_lbl.setText(str(self._scheduler.camera_prob))
         self._cam_wait_spin.setValue(self._scheduler.camera_wait)
         self._obs_qq_cb.setChecked(self._scheduler.observe_send_to_qq)
 
@@ -1320,14 +1413,13 @@ class ProactiveDialog(QDialog):
 
         # 加载 B站设置
         self._bl_enable_cb.setChecked(self._scheduler.bilibili_enabled)
-        self._bl_prob_slider.setValue(self._scheduler.bilibili_probability)
-        self._bl_prob_val.setText(f"{self._scheduler.bilibili_probability}%")
         from utils.bilibili_history import get_bilibili_history
         self._refresh_bl_tags()
         self._refresh_bl_history()
 
         # 加载 摸鱼设置
         self._slack_enable_cb.setChecked(self._scheduler.slack_enabled)
+        self._slack_idle_spin.setValue(self._scheduler.slack_idle_minutes)
     
         self._slack_cbs["slack_supplement_diary"].setChecked(self._scheduler.slack_supplement_diary)
         self._slack_cbs["slack_review_old_diary"].setChecked(self._scheduler.slack_review_old_diary)
@@ -1345,11 +1437,23 @@ class ProactiveDialog(QDialog):
         self._slack_cbs["slack_next_song"].setChecked(self._scheduler.slack_next_song)
 
     def _on_save(self):
+        if sum(slider.value() for slider in self._behavior_weight_sliders.values()) == 0:
+            QMessageBox.warning(self, "无法保存", "四类主动行为的权重不能同时为 0。")
+            return
         self._scheduler.desktop_enabled = self._enable_cb.isChecked()
         self._scheduler.qq_enabled = self._qq_cb.isChecked()
         self._scheduler.frequency = self._freq_slider.value()
         self._scheduler.min_interval_minutes = self._interval_spin.value()
         self._scheduler.user_defer_minutes = self._defer_spin.value()
+        self._scheduler.normal_enabled = self._normal_enable_cb.isChecked()
+        self._scheduler.behavior_weights = {
+            key: slider.value() for key, slider in self._behavior_weight_sliders.items()
+        }
+        self._scheduler.behavior_cooldowns = {
+            key: spin.value() for key, spin in self._behavior_cooldown_spins.items()
+        }
+        self._scheduler.avoid_behavior_repeat = self._avoid_repeat_cb.isChecked()
+        self._scheduler.fallback_on_failure = self._fallback_cb.isChecked()
         self._scheduler.weights = [row.get_value() for row in self._hour_rows]
 
         self._scheduler.observe_enabled = self._observe_cb.isChecked()
@@ -1362,9 +1466,9 @@ class ProactiveDialog(QDialog):
             self._scheduler.camera_index = idx
 
         self._scheduler.bilibili_enabled = self._bl_enable_cb.isChecked()
-        self._scheduler.bilibili_probability = self._bl_prob_slider.value()
 
         self._scheduler.slack_enabled = self._slack_enable_cb.isChecked()
+        self._scheduler.slack_idle_minutes = self._slack_idle_spin.value()
 
         self._scheduler.slack_supplement_diary = self._slack_cbs["slack_supplement_diary"].isChecked()
         self._scheduler.slack_review_old_diary = self._slack_cbs["slack_review_old_diary"].isChecked()
