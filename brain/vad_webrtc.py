@@ -1,7 +1,7 @@
 # E:\Desktop\莲心AI\brain\vad_webrtc.py
 # WebRTC VAD 语音活动检测器
 # 替代 Silero VAD，零模型文件，零路径依赖，纯 pip 安装
-# pip install webrtcvad
+# pip install webrtcvad-wheels
 
 import io
 import struct
@@ -64,8 +64,25 @@ class WebRTCVADWorker(threading.Thread):
             self._vad = webrtcvad.Vad(self.vad_aggressiveness)
             logger.info("✅ WebRTC VAD 就绪")
             return True
-        except ImportError:
-            logger.error("❌ webrtcvad 未安装，请执行: pip install webrtcvad")
+        except ModuleNotFoundError as e:
+            if e.name == "webrtcvad":
+                logger.error(
+                    "❌ WebRTC VAD 未安装，请使用当前 Python 执行: "
+                    "python -m pip install webrtcvad-wheels"
+                )
+            else:
+                logger.error(
+                    "❌ WebRTC VAD 导入失败：缺少依赖 %s。"
+                    "请执行: python -m pip install --upgrade webrtcvad-wheels",
+                    e.name,
+                )
+            return False
+        except ImportError as e:
+            logger.error(
+                "❌ WebRTC VAD 导入失败: %s。"
+                "请确认 webrtcvad-wheels 与当前 Python 版本/架构匹配",
+                e,
+            )
             return False
         except Exception as e:
             logger.error(f"❌ WebRTC VAD 初始化失败: {e}")
@@ -74,7 +91,7 @@ class WebRTCVADWorker(threading.Thread):
     # ── 主循环 ──────────────────────────────────────
 
     def run(self):
-        if not self._load_vad():
+        if self._vad is None and not self._load_vad():
             return
 
         self._running = True

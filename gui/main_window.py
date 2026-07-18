@@ -2474,7 +2474,16 @@ class MainWindow(QMainWindow):
             if detected:
                 self._chat_widget.add_system_tip(
                     "🎧 检测到耳机 — 莲心说话时你可以直接开口打断~")
-            self._voice_duplex.start()
+            if not self._voice_duplex.start():
+                self._voice_duplex = None
+                self._standby_state = "IDLE"
+                self._char_widget.exit_standby()
+                self._update_standby_button()
+                self._chat_widget.add_system_tip(
+                    "⚠️ 语音聊天启动失败：WebRTC VAD 不可用。"
+                    "请查看终端中的具体依赖错误。"
+                )
+                return
             self._update_standby_button()
             # 提示音：麦克风就绪，可以说话了
             QTimer.singleShot(500, self._play_speak_cue)

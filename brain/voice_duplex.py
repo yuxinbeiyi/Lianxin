@@ -182,20 +182,27 @@ class VoiceDuplexManager:
             if time.time() < self._vad_cooldown_until:
                 return  # TTS 刚结束 → 冷却期内丢弃延迟的回声尾帧
         self._audio_queue.put(wav_bytes)
-        self._audio_queue.put(wav_bytes)
 
     # ── 启动/停止 ─────────────────────────────────────
 
-    def start(self):
+    def start(self) -> bool:
+        """启动全双工语音。VAD 不可用时保持 STOPPED 并返回 False。"""
         if self._vad_worker is not None:
-            return
+            return True
 
-        self._vad_worker = WebRTCVADWorker(
+        worker = WebRTCVADWorker(
             input_device_index=self._input_device_index,
             on_voice_start=self._on_voice_start,
             on_voice_end=self._on_voice_end,
         )
-        self._vad_worker.start()
+        # 同步预检，避免后台线程立即退出但 UI 仍显示“聆听中”。
+        if not worker._load_vad():
+            logger.error("❌ 全双工语音启动失败：WebRTC VAD 不可用")
+            self._set_state(STATE_STOPPED)
+            return False
+
+        self._vad_worker = worker
+        worker.start()
         self._set_state(STATE_LISTENING)
 
         # 后台预热 FunASR 模型（不阻塞聆听）
@@ -208,6 +215,7 @@ class VoiceDuplexManager:
         # STT 处理线程（只转录，不做 LLM/TTS）
         threading.Thread(target=self._process_loop, daemon=True).start()
         logger.info("✅ 全双工语音已启动")
+        return True
 
     def stop(self):
         self._set_state(STATE_STOPPED)
