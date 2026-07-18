@@ -365,6 +365,7 @@ class CharacterWidget(QWidget):
         self._btn_memory = self._create_button("🧠  棱镜记忆系统", "#77839A")
         self._btn_network = self._create_button("🌐  网络设置", "#4C95D9")
         self._btn_capability = self._create_button("🧩  能力中枢", "#9670C9")
+        self._btn_persona = self._create_button("🎭  人格枢控", "#7C72D8")
         self._btn_proactive = self._create_button("💬  主动聊天", "#52B788")
         self._btn_qq_bridge = self._create_button("🐧  QQ 聊天", "#4B8FD1")
         self._btn_wechat_bridge = self._create_button("💬  微信聊天", "#36A66D")
@@ -401,6 +402,7 @@ class CharacterWidget(QWidget):
         self._add_function_group(scroll_layout, "莲心", (
             self._btn_emotion, self._btn_memory,
             self._btn_proactive, self._btn_capability,
+            self._btn_persona,
         ))
         self._add_function_group(scroll_layout, "感知与声音", (
             self._btn_camera, self._btn_sound,
@@ -764,6 +766,8 @@ class CharacterWidget(QWidget):
 
     def get_capability_button(self):
         return self._btn_capability
+    def get_persona_button(self):
+        return self._btn_persona
     def get_proactive_button(self):
         return self._btn_proactive
     def get_qq_bridge_button(self):

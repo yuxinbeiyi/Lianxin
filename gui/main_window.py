@@ -161,6 +161,7 @@ class MainWindow(QMainWindow):
         self._proactive_dialog = None
         self._network_settings_dialog = None
         self._capability_center_dialog = None
+        self._persona_hub = None
         self._settings_dialog = None
         self._emotion_debug_dialog = None
         self._diary_dialog = None
@@ -793,6 +794,7 @@ class MainWindow(QMainWindow):
         self._char_widget.get_memory_button().clicked.connect(self._on_memory_settings)
         self._char_widget.get_network_button().clicked.connect(self._show_network_settings)
         self._char_widget.get_capability_button().clicked.connect(self._show_capability_center)
+        self._char_widget.get_persona_button().clicked.connect(self._show_persona_hub)
         self._char_widget.get_proactive_button().clicked.connect(self._on_proactive_clicked)
         self._char_widget.get_qq_bridge_button().clicked.connect(self._on_qq_bridge_clicked)
         self._char_widget.get_wechat_bridge_button().clicked.connect(self._on_wechat_settings_clicked)
@@ -1762,6 +1764,37 @@ class MainWindow(QMainWindow):
         self._capability_center_dialog.show()
         self._capability_center_dialog.raise_()
         self._capability_center_dialog.activateWindow()
+
+    def _show_persona_hub(self):
+        """打开可窗口化、最大化和全屏的人格枢控。"""
+        from utils.sound import play_sound
+        from gui.persona_hub import PersonaHub
+        play_sound("ButtonAll.mp3")
+        if self._persona_hub is None:
+            self._persona_hub = PersonaHub(self)
+            self._persona_hub.persona_activated.connect(self._on_persona_activated)
+        if self._persona_hub.isMinimized():
+            self._persona_hub.showNormal()
+        else:
+            self._persona_hub.show()
+        self._persona_hub.raise_()
+        self._persona_hub.activateWindow()
+
+    def _on_persona_activated(self, profile_name: str, start_new_conversation: bool):
+        """人格从下一条请求生效；可选创建干净的新会话。"""
+        if start_new_conversation:
+            from brain.task_tracker import reset_task_tracker
+            reset_task_tracker()
+            self._agent.new_session()
+            self._chat_widget.clear_messages()
+            self._chat_widget.add_system_tip(
+                f"—— 已激活人格“{profile_name}”，并开启全新对话 ——"
+            )
+            self._duty_scheduler.on_session_started()
+        else:
+            self._chat_widget.add_system_tip(
+                f"—— 已激活人格“{profile_name}”，将从下一条消息生效 ——"
+            )
 
     def _on_api_config_saved(self):
         self._agent = AgentCore()

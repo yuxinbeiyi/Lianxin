@@ -318,6 +318,23 @@ class ObservationModeWorker(QThread):
             return _truncate(description)
 
         try:
+            from brain.persona.runtime import (
+                capture_persona_snapshot, compose_scene_prompt
+            )
+            snapshot = capture_persona_snapshot()
+            legacy_system = (
+                "你是莲心，刚刚通过肩载摄像头看了一眼周围环境。\n"
+                "用可爱简短的语气说一句话。要求：\n"
+                "- 控制在 300 字以内，越短越好\n"
+                "- 保留视觉识别的核心内容（人物/物体/场景/动作）\n"
+                "- 语气活泼好奇，可以加颜文字 (｀・ω・´)\n"
+                f"- 称呼用户为'{get_user_name()}'\n"
+                "- 直接说看到的内容，不要'我看到了'开头\n"
+                "- 每次描述角度不同，不重复说法"
+            )
+            system_prompt = compose_scene_prompt(
+                legacy_system, user_name=get_user_name(), snapshot=snapshot
+            )
             client = OpenAI(api_key=api_key, base_url=base_url)
             resp = client.chat.completions.create(
                 model=model,
@@ -325,16 +342,7 @@ class ObservationModeWorker(QThread):
                 messages=[
                     {
                         "role": "system",
-                        "content": (
-                            "你是莲心，刚刚通过肩载摄像头看了一眼周围环境。\n"
-                            "用可爱简短的语气说一句话。要求：\n"
-                            "- 控制在 300 字以内，越短越好\n"
-                            "- 保留视觉识别的核心内容（人物/物体/场景/动作）\n"
-                            "- 语气活泼好奇，可以加颜文字 (｀・ω・´)\n"
-                            f"- 称呼用户为'{get_user_name()}'\n"
-                            "- 直接说看到的内容，不要'我看到了'开头\n"
-                            "- 每次描述角度不同，不重复说法"
-                        ),
+                        "content": system_prompt,
                     },
                     {"role": "user", "content": f"画面内容：{description}"},
                 ],

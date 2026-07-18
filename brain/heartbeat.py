@@ -13,7 +13,7 @@ from typing import Optional
 
 import litellm
 
-from config import get_api_config, get_heartbeat_config
+from config import get_api_config, get_heartbeat_config, get_user_name
 
 logger = logging.getLogger("Heartbeat")
 
@@ -117,10 +117,16 @@ def perform_heartbeat(recent_messages: list[dict]) -> Optional[str]:
     if not recent_messages:
         return None
 
+    from brain.persona.runtime import (
+        active_assistant_name, capture_persona_snapshot, compose_scene_prompt
+    )
+    persona_snapshot = capture_persona_snapshot()
+    assistant_name = active_assistant_name(persona_snapshot)
+
     # 构建最近对话文本
     lines = []
     for msg in recent_messages[-30:]:  # 最多取最近 30 条
-        role = "用户" if msg.get("role") == "user" else "莲心"
+        role = "用户" if msg.get("role") == "user" else assistant_name
         content = msg.get("content", "")
         if content:
             lines.append(f"[{role}]: {content}")
@@ -140,7 +146,11 @@ def perform_heartbeat(recent_messages: list[dict]) -> Optional[str]:
         api_cfg.get("base_url", ""),
     )
 
-    system_text = _HEARTBEAT_SYSTEM
+    system_text = compose_scene_prompt(
+        _HEARTBEAT_SYSTEM,
+        user_name=get_user_name(),
+        snapshot=persona_snapshot,
+    )
     user_text = f"{_HEARTBEAT_USER}\n\n{checklist_text}\n\n【最近对话记录】\n{conversation_text[:4000]}"
 
     try:

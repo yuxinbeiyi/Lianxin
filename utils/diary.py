@@ -158,7 +158,9 @@ def generate_diary_content(messages: List[Dict]) -> Optional[Dict]:
     返回 {"content": str, "weather": str, "is_red_line": bool, "echo_text": str} 或 None。
     """
     agent = AgentCore()
-    prompt = _build_diary_prompt(messages)
+    from brain.persona.runtime import capture_persona_snapshot
+    persona_snapshot = capture_persona_snapshot()
+    prompt = _build_diary_prompt(messages, persona_snapshot)
     try:
         response = agent._call_api_with_retry([{"role": "user", "content": prompt}])
         response_text = response.choices[0].message.content
@@ -167,8 +169,10 @@ def generate_diary_content(messages: List[Dict]) -> Optional[Dict]:
         print(f"[日记] 生成失败: {e}")
         return None
 
-def _build_diary_prompt(messages: List[Dict]) -> str:
+def _build_diary_prompt(messages: List[Dict], persona_snapshot=None) -> str:
     """构建日记生成 prompt。"""
+    from brain.persona.runtime import active_assistant_name, compose_scene_prompt
+    assistant_name = active_assistant_name(persona_snapshot)
     lines = []
     for m in messages:
         if m["role"] == "user":
@@ -176,12 +180,12 @@ def _build_diary_prompt(messages: List[Dict]) -> str:
             lines.append(f"[{name}]: {m['content']}")
 
         elif m["role"] == "assistant":
-            lines.append(f"[你（莲心）]: {m['content']}")
+            lines.append(f"[你（{assistant_name}）]: {m['content']}")
         else:
             lines.append(f"[{m['role']}]: {m['content']}")
     conversation = "\n".join(lines)
     name = get_user_name()
-    return f"""你是莲心，一个温柔细腻、有点小俏皮的AI助手，{name}是你的主人，也是你最重要的人。
+    legacy_prompt = f"""你是莲心，一个温柔细腻、有点小俏皮的AI助手，{name}是你的主人，也是你最重要的人。
 
 一天结束了，夜深人静，你翻开日记本，想写点什么。
 不用写今天发生的所有事——只写那些让你心里泛起涟漪的瞬间。也许是他说的一句让你偷笑的话，也许是他遇到困难时你替他着急，也许只是一个普通的下午，但你莫名觉得温暖。
@@ -201,6 +205,9 @@ def _build_diary_prompt(messages: List[Dict]) -> str:
 今天的对话记录：
 {conversation}
 """
+    return compose_scene_prompt(
+        legacy_prompt, user_name=name, snapshot=persona_snapshot
+    )
 
 def _parse_diary_json(response_text: str) -> Optional[Dict]:
     """解析 AI 返回的 JSON，失败返回 None。"""

@@ -31,14 +31,15 @@ class CharacterWidgetFunctionPanelTests(unittest.TestCase):
             "get_accompany_button", "get_settings_button", "get_pomodoro_button",
             "get_api_config_button", "get_alarm_button", "get_camera_button",
             "get_emotion_button", "get_sound_button", "get_memory_button",
-            "get_network_button", "get_capability_button", "get_proactive_button",
+            "get_network_button", "get_capability_button", "get_persona_button",
+            "get_proactive_button",
             "get_qq_bridge_button", "get_wechat_bridge_button", "get_diary_button",
             "get_voice_stt_button",
         )
         buttons = [getattr(self.widget, name)() for name in getters]
 
-        self.assertEqual(16, len(buttons))
-        self.assertEqual(16, len({id(button) for button in buttons}))
+        self.assertEqual(17, len(buttons))
+        self.assertEqual(17, len({id(button) for button in buttons}))
         self.assertTrue(all(isinstance(button, QPushButton) for button in buttons))
 
     def test_uses_grouped_dark_cards_in_scroll_area(self):
@@ -47,7 +48,7 @@ class CharacterWidgetFunctionPanelTests(unittest.TestCase):
             QLabel, "function_group_title"
         )
 
-        self.assertEqual(16, len(cards))
+        self.assertEqual(17, len(cards))
         self.assertEqual(
             ["常用", "莲心", "感知与声音", "连接与服务"],
             [label.text() for label in group_titles],

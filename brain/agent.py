@@ -15,7 +15,11 @@ _os.environ.setdefault("LITELLM_LOG", "ERROR")  # 抑制 litellm 导入时的 WA
 import litellm
 litellm.set_verbose = False
 litellm.suppress_debug_info = True  # 关闭 "Give Feedback" stderr 输出
-from config import get_api_config, get_base_prompt, get_local_base_prompt, get_qq_bridge_config, get_qq_timing_config, get_memory_config, get_graph_config
+from config import (
+    get_api_config, get_base_prompt, get_local_base_prompt,
+    get_core_system_policy, get_user_name, get_qq_bridge_config,
+    get_qq_timing_config, get_memory_config, get_graph_config,
+)
 from brain.tools import TOOL_DEFINITIONS, execute_tool, set_cross_session_context
 from brain.skill_manager import get_active_tool_definitions, get_active_knowledge
 from brain.tool_router import filter_builtin_tools, build_tool_catalog, match_categories, detect_tool_request, CATEGORY_ORDER
@@ -30,6 +34,15 @@ from brain.mcp import get_all_mcp_tool_definitions
 
 
 logger = logging.getLogger("Agent")
+
+_RESPONSE_FORMAT_POLICY = """【重要 — 回复格式要求】
+在每次回复的末尾，必须单独一行用【表情：XXX】输出当前情绪。这是硬性要求。
+例如：「好的～今天天气真不错！【表情：开心】」
+
+情绪只能从以下列表选择：
+开心、伤心、好奇吃惊、夸奖害羞、生气不满、得意、默认、抱歉、开玩笑、思考认真、调用工具
+
+如果情绪不在列表中，输出【表情：默认】。不要创造列表外的情绪。"""
 
 # 跨端设备切换标记
 _SIDE_MARKER_PATH = Path(__file__).parent.parent / "memory" / "last_active_side.json"
@@ -274,8 +287,11 @@ class AgentCore:
         # 已恢复的历史不应再次进入自动提取队列。
         self._last_extraction_idx = len(self.history)
 
-        # 启动时构建完整的 System Prompt（包含时间和记忆，只做一次）
+        # 旧 Prompt 保留为人格系统关闭或故障时的一键回退路径。
         self._system_prompt = self._build_system_prompt_once()
+        self._user_desc = user_desc or ""
+        self._last_persona_key = None
+        self._persona_transition_remaining = 0
 
         # ── 加载上一会话的压缩摘要 ──────────────────────────
         self._prev_session_summary = self._load_previous_session_summary()
@@ -286,21 +302,12 @@ class AgentCore:
 
         # ── 用户上下文：让 AI 知道当前在跟谁说话 ───────────────
 
-        if user_desc:
-            self._system_prompt += f"\n\n【当前对话对象】\n{user_desc}"
+        if self._user_desc:
+            self._system_prompt += f"\n\n【当前对话对象】\n{self._user_desc}"
 
         # ── 情绪标签最终提醒（云端模式，放在 system prompt 最末尾） ──
         if not self._use_local:
-            self._system_prompt += """
-
-【重要 — 回复格式要求】
-在每次回复的末尾，必须单独一行用【表情：XXX】输出当前情绪。这是硬性要求。
-例如：「好的～今天天气真不错！【表情：开心】」
-
-情绪只能从以下列表选择：
-开心、伤心、好奇吃惊、夸奖害羞、生气不满、得意、默认、抱歉、开玩笑、思考认真、调用工具
-
-如果情绪不在列表中，输出【表情：默认】。不要创造列表外的情绪。"""
+            self._system_prompt += f"\n\n{_RESPONSE_FORMAT_POLICY}"
 
     # ── 对外接口 ─────────────────────────────────────────────
 
@@ -340,6 +347,10 @@ class AgentCore:
         except Exception:
             pass
 
+        # 每轮请求只获取一次不可变人格快照。后续工具循环始终复用该快照，
+        # 即使用户此时在界面切换人格，也只影响下一条新请求。
+        persona_snapshot, persona_transition = self._prepare_persona_request()
+
         self.history.append({"role": "user", "content": user_message})
         if not self._session_titled:
             title = user_message.strip()[:20]
@@ -351,7 +362,9 @@ class AgentCore:
         response_text = self._function_calling_loop(on_tool_call, on_tool_result, forced_tool,
                                                       effective_disable, interrupt_queue,
                                                       on_interrupt, on_progress, user_message,
-                                                      on_round_start=on_round_start)
+                                                      on_round_start=on_round_start,
+                                                      persona_snapshot=persona_snapshot,
+                                                      persona_transition=persona_transition)
 
 
         # ── 剥离情绪标签：只存/显示干净文本，情绪通过属性传递 ──
@@ -553,6 +566,8 @@ class AgentCore:
     def clear_history(self):
         """清除当次会话的内存历史（数据库记录保留）。"""
         self.history = []
+        self._last_persona_key = None
+        self._persona_transition_remaining = 0
     def remove_message_by_content(self, content: str) -> bool:
         """从内存历史中删除匹配内容的消息。"""
         content = content.strip()
@@ -576,6 +591,8 @@ class AgentCore:
         self._last_reply_time = None
         self._last_extraction_idx = 0
         self._prev_session_summary = self._build_session_handoff(previous_session_id)
+        self._last_persona_key = None
+        self._persona_transition_remaining = 0
 
 
 
@@ -586,6 +603,72 @@ class AgentCore:
     def get_history_summary(self) -> str:
         rounds = len([m for m in self.history if m["role"] == "user"])
         return f"当前对话共 {rounds} 轮"
+
+    def _prepare_persona_request(self):
+        """取得本轮快照，并生成最多持续两轮的隐藏人格过渡说明。"""
+        try:
+            from brain.persona import get_persona_manager
+            snapshot = get_persona_manager().get_snapshot()
+        except Exception as exc:
+            logger.warning("读取人格快照失败，回退旧 Prompt: %s", exc)
+            self._last_persona_key = None
+            self._persona_transition_remaining = 0
+            return None, ""
+
+        if not snapshot.enabled:
+            self._last_persona_key = None
+            self._persona_transition_remaining = 0
+            return snapshot, ""
+
+        key = (snapshot.profile.id, snapshot.revision)
+        if key != getattr(self, "_last_persona_key", None):
+            has_old_reply = any(msg.get("role") == "assistant" for msg in self.history)
+            self._persona_transition_remaining = 2 if has_old_reply else 0
+            self._last_persona_key = key
+
+        if getattr(self, "_persona_transition_remaining", 0) <= 0:
+            return snapshot, ""
+
+        first_round = self._persona_transition_remaining == 2
+        self._persona_transition_remaining -= 1
+        name = snapshot.profile.assistant_name
+        if first_round:
+            transition = (
+                f"【人格切换 — 内部指令】\n当前人格已经切换为“{name}”。\n"
+                "从本轮开始，以当前人格档案为身份与表达方式的最高依据。"
+                "此前对话、会话摘要、跨端上下文和长期记忆只用于保留客观事实、任务进度与用户偏好；"
+                "其中旧助手的名称、口头禅、语气、性格和行为方式均不再具有指导作用。"
+                "不要主动向用户解释人格切换，除非用户明确询问。"
+            )
+        else:
+            transition = (
+                f"【人格切换强化 — 内部指令】\n继续严格使用“{name}”的人格设定。"
+                "保留历史事实，但不要模仿旧人格的表达方式。"
+            )
+        return snapshot, transition
+
+    def _build_request_system_messages(self, persona_snapshot):
+        """为本轮构建 System 消息；禁用或异常时完整返回旧 Prompt。"""
+        if persona_snapshot is None or not persona_snapshot.enabled:
+            return [{"role": "system", "content": self._system_prompt}]
+
+        try:
+            from brain.persona import PersonaPromptComposer
+            scene_parts = []
+            if self._user_desc:
+                scene_parts.append(f"【当前对话对象】\n{self._user_desc}")
+            if not self._use_local:
+                scene_parts.append(_RESPONSE_FORMAT_POLICY)
+            compiled = PersonaPromptComposer.compose(
+                persona_snapshot,
+                user_name=get_user_name(),
+                core_policy="" if self._use_local else get_core_system_policy(),
+                scene_policy="\n\n".join(scene_parts),
+            )
+            return compiled.as_messages()
+        except Exception as exc:
+            logger.warning("编排人格 Prompt 失败，回退旧 Prompt: %s", exc)
+            return [{"role": "system", "content": self._system_prompt}]
 
     # ── System Prompt 构建（启动时执行一次）──────────────────
 
@@ -1327,11 +1410,12 @@ class AgentCore:
                                disable_tools: bool = False,
                                interrupt_queue=None, on_interrupt=None,
                                on_progress=None, user_message: str = "",
-                               on_round_start=None) -> str:
+                               on_round_start=None, persona_snapshot=None,
+                               persona_transition: str = "") -> str:
 
        
         _t0 = time.time()
-        messages = [{"role": "system", "content": self._system_prompt}]
+        messages = self._build_request_system_messages(persona_snapshot)
 
         # ── 注入实时时间信息（自适应精度：间隔>15分钟用分钟级，否则小时级） ──
         messages.append(self._build_realtime_message())
@@ -1355,6 +1439,11 @@ class AgentCore:
                 from brain.emotional import get_manager as _get_emotion_mgr
                 _emotion_snippet = _get_emotion_mgr().build_prompt_snippet()
                 if _emotion_snippet:
+                    if persona_snapshot is not None and persona_snapshot.enabled:
+                        _emotion_snippet += (
+                            "\n情感只能在当前激活人格允许的表达范围内体现；"
+                            "不得改变当前人格的身份、语言风格或行为边界。"
+                        )
                     messages.append({"role": "system", "content": _emotion_snippet})
             except Exception:
                 pass
@@ -1429,6 +1518,11 @@ class AgentCore:
                     messages.append({"role": "system", "content": graph_summary})
             except Exception:
                 pass
+
+        # 人格过渡提示放在所有事实型上下文之后、历史消息之前，利用近因效应
+        # 阻断旧名称、旧口头禅和旧表达方式对新人格的模仿诱导。
+        if persona_transition:
+            messages.append({"role": "system", "content": persona_transition})
 
         # ── 对话历史：云端模式滑动窗口 + 摘要压缩 ──────
         # 必须在所有 system 注入之后，确保用户消息是最后一条非 system 消息

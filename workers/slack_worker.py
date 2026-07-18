@@ -9,6 +9,11 @@ from openai import OpenAI
 from config import get_api_config, get_agnes_config
 from config import get_user_name as _cfg_get_user_name
 from utils.settings import get_settings
+from brain.persona.runtime import (
+    active_assistant_name,
+    capture_persona_snapshot,
+    compose_scene_prompt,
+)
 
 
 def _get_user_name() -> str:
@@ -194,7 +199,7 @@ class SlackWorker(QThread):
             return OpenAI(api_key=agnes_cfg["api_key"], base_url=agnes_cfg["base_url"]), agnes_cfg["model"]
         return OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"]), cfg["model"]
 
-    def _get_system_prompt(self) -> str:
+    def _get_system_prompt(self, snapshot=None) -> str:
         user_name = _get_user_name()
         prompts = {
             "supplement_diary": _SLACK_SUPPLEMENT_DIARY,
@@ -213,16 +218,20 @@ class SlackWorker(QThread):
             "next_song": _SLACK_NEXT_SONG,
         }
         template = prompts.get(self._action, _SLACK_RANDOM_QUESTION)
-        return template.replace("{user_name}", user_name)
+        return compose_scene_prompt(
+            template, user_name=user_name, snapshot=snapshot
+        )
 
     def _generate(self) -> str:
         client, model = self._get_client()
-        system = self._get_system_prompt()
+        snapshot = capture_persona_snapshot()
+        system = self._get_system_prompt(snapshot)
         user_name = _get_user_name()
+        assistant_name = active_assistant_name(snapshot)
 
         user_prompt = (
             f"{self._context}\n\n"
-            f"请以莲心的身份，给{user_name}发一条消息。"
+            f"请以{assistant_name}的身份，给{user_name}发一条消息。"
         )
 
         try:

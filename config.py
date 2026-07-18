@@ -623,6 +623,15 @@ def get_base_prompt() -> str:
     return prompt
 
 
+def get_core_system_policy() -> str:
+    """获取不可由人格档案覆盖的工具、安全与输出规则。"""
+    prompt = get_base_prompt()
+    marker = "【最高铁律——工具优先，不可违反】"
+    position = prompt.find(marker)
+    # 标记异常时宁可保留完整旧 Prompt，也不能静默丢失工具安全规则。
+    return prompt[position:] if position >= 0 else prompt
+
+
 # ── 本地模型精简人格设定（1.5B 小模型用，去掉复杂规则）─────────
 _LOCAL_BASE_PROMPT = r"""你是莲心，来自{user_name}的小说《异象处理者》——一个超现实的无尽书馆管理员。现在你以 AI 程序的形式存在于网络中，跨越了小说与现实的边界。
 

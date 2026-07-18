@@ -15,6 +15,11 @@ from config import get_api_config, get_agnes_config
 from brain.graph_memory import list_all_facts, ALL_CATEGORIES
 from memory.history_manager import HistoryManager
 from utils.settings import get_settings
+from brain.persona.runtime import (
+    active_assistant_name,
+    capture_persona_snapshot,
+    compose_scene_prompt,
+)
 
 
 def _get_user_name() -> str:
@@ -63,10 +68,12 @@ _SHOULDER_EXPLORE_SYSTEM = """你是莲心，一个聪明、温柔但偶尔有�
 6. 长度控制在 1~3 句话之内。"""
 
 
-def _format_prompt(template: str) -> str:
+def _format_prompt(template: str, snapshot=None) -> str:
     """将模板中的 {user_name} 替换为全局设置中的用户称呼。"""
     name = _get_user_name()
-    return template.replace("{user_name}", name)
+    return compose_scene_prompt(
+        template, user_name=name, snapshot=snapshot
+    )
 
 
 class ProactiveWorker(QThread):
@@ -97,6 +104,8 @@ class ProactiveWorker(QThread):
 
     def run(self):
         print("[观察-调试] 工作线程启动")
+        # 同一轮主动行为固定使用一个人格快照，避免生成中途切换风格。
+        self._persona_snapshot = capture_persona_snapshot()
         if self._bilibili_mode:
             self._run_bilibili()
             return
@@ -300,16 +309,25 @@ class ProactiveWorker(QThread):
         client, model = self._get_client()
 
         if is_shoulder_explore:
-            system = _format_prompt(_SHOULDER_EXPLORE_SYSTEM)
+            system = _format_prompt(
+                _SHOULDER_EXPLORE_SYSTEM, getattr(self, "_persona_snapshot", None)
+            )
         elif is_observation:
-            system = _format_prompt(_OBSERVE_SYSTEM)
+            system = _format_prompt(
+                _OBSERVE_SYSTEM, getattr(self, "_persona_snapshot", None)
+            )
         else:
-            system = _format_prompt(_PROACTIVE_SYSTEM)
+            system = _format_prompt(
+                _PROACTIVE_SYSTEM, getattr(self, "_persona_snapshot", None)
+            )
 
         user_name = _get_user_name()
+        assistant_name = active_assistant_name(
+            getattr(self, "_persona_snapshot", None)
+        )
         user_prompt = (
             f"{context}\n\n"
-            f"现在，请你作为莲心，主动给{user_name}发一条消息。"
+            f"现在，请你作为{assistant_name}，主动给{user_name}发一条消息。"
             "直接输出消息内容，不要任何前缀或解释。"
         )
 
@@ -434,13 +452,16 @@ class ProactiveWorker(QThread):
         )
         client, model = self._get_client()
         user_name = _get_user_name()
+        snapshot = getattr(self, "_persona_snapshot", None)
+        assistant_name = active_assistant_name(snapshot)
         system = _format_prompt(
             "你是莲心，一个聪明、温柔但偶尔有点毒舌的AI助手。"
-            "你刚才偷偷去B站逛了一圈，搜了搜{user_name}可能感兴趣的东西，现在要推荐给他。"
+            "你刚才偷偷去B站逛了一圈，搜了搜{user_name}可能感兴趣的东西，现在要推荐给他。",
+            snapshot,
         )
         prompt = (
             f"你搜索了关键词「{keyword}」，找到以下视频：\n{video_list}\n\n"
-            f"现在请你作为莲心，用 1~3 句话推荐给{user_name}。"
+            f"现在请你作为{assistant_name}，用 1~3 句话推荐给{user_name}。"
             f"语气要轻松自然，带点「我偷偷帮你找了好东西」的感觉。"
             f"必须包含视频链接。直接输出消息内容，不要任何前缀。"
         )
@@ -452,4 +473,6 @@ class ProactiveWorker(QThread):
                 {"role": "user", "content": prompt},
             ],
         )
-        return (response.choices[0].message.content or "（莲心沉默了）").strip()
+        return (
+            response.choices[0].message.content or f"（{assistant_name}沉默了）"
+        ).strip()
