@@ -329,6 +329,9 @@ class MainWindow(QMainWindow):
         self._duty_scheduler.mooyu_data_sources.connect(self._on_mooyu_data_sources)
         self._duty_scheduler.mooyu_duty_data_source.connect(self._on_mooyu_duty_data_source)
         self._duty_scheduler.start()
+        # 启动时若当前就是从未说过话的新会话，也应允许莲心在等待后主动破冰。
+        if self._agent and not self._agent.history:
+            self._duty_scheduler.on_session_started()
 
         # ── 主线程心跳看门狗（后台线程实时监控，卡顿时立即抓堆栈）──
         self._heartbeat_time = time.monotonic()
@@ -1595,6 +1598,7 @@ class MainWindow(QMainWindow):
         self._agent.new_session()
         self._chat_widget.clear_messages()
         self._chat_widget.add_ai_message("这里是助手莲心，现实稳定锚就绪，坐标稳定...收到请回复~")
+        self._duty_scheduler.on_session_started()
 
     def _on_import_memory(self, session_id: int):
         msgs = self._agent.get_history_manager().get_messages(session_id)

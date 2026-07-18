@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from utils.duty_scheduler import ProactiveDuty, SlackDuty
+from utils.duty_scheduler import DutyScheduler, ProactiveDuty, SlackDuty
 from utils.proactive_chat import ProactiveChatScheduler
 from workers.slack_worker import SlackWorker
 
@@ -16,10 +16,54 @@ def make_scheduler():
     scheduler._settings = scheduler._default_settings()
     scheduler._last_fire_time = None
     scheduler._defer_until = None
+    scheduler._empty_session_started_at = None
+    scheduler._empty_session_waiting = False
     return scheduler
 
 
 class ProactiveBehaviorSchedulerTests(unittest.TestCase):
+    def test_empty_desktop_session_gets_guaranteed_icebreaker_after_wait(self):
+        scheduler = make_scheduler()
+        scheduler.desktop_enabled = True
+        scheduler.weights = [10] * 24
+        scheduler.user_defer_minutes = 10
+        scheduler.notify_session_started()
+        scheduler._empty_session_started_at = datetime.now() - timedelta(minutes=11)
+
+        with patch("utils.proactive_chat.random.random", return_value=0.999):
+            self.assertTrue(scheduler.should_fire())
+
+    def test_user_message_cancels_empty_session_icebreaker(self):
+        scheduler = make_scheduler()
+        scheduler.desktop_enabled = True
+        scheduler.weights = [10] * 24
+        scheduler.user_defer_minutes = 10
+        scheduler.notify_session_started()
+        scheduler._empty_session_started_at = datetime.now() - timedelta(minutes=11)
+
+        scheduler.notify_user_active()
+
+        with patch("utils.proactive_chat.random.random", return_value=0.999):
+            self.assertFalse(scheduler.should_fire())
+        self.assertFalse(scheduler._empty_session_waiting)
+
+    def test_duty_scheduler_arms_new_session_and_resets_idle_baseline(self):
+        class SchedulerStub:
+            def __init__(self):
+                self.calls = 0
+
+            def notify_session_started(self):
+                self.calls += 1
+
+        proactive = SchedulerStub()
+        duty_scheduler = DutyScheduler()
+        duty_scheduler._proactive_scheduler = proactive
+
+        duty_scheduler.on_session_started()
+
+        self.assertEqual(1, proactive.calls)
+        self.assertGreater(duty_scheduler._last_user_message_time, 0)
+
     def test_old_settings_gain_new_defaults_without_overwrite(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "proactive_settings.json"

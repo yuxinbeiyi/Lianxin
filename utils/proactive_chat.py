@@ -52,6 +52,10 @@ class ProactiveChatScheduler:
         except (TypeError, ValueError):
             self._last_fire_time = None
         self._defer_until: datetime | None = None          # 因用户活跃而推迟到的时间
+        # 新建的桌面会话如果始终没有用户消息，需要在等待期后主动破冰。
+        # 该状态只属于当前运行，不持久化，避免重启后误判历史会话。
+        self._empty_session_started_at: datetime | None = None
+        self._empty_session_waiting = False
 
     # ── 持久化 ────────────────────────────────────────────────
 
@@ -286,6 +290,8 @@ class ProactiveChatScheduler:
     def record_behavior_success(self, behavior: str):
         """只有界面实际收到非空消息后才记录全局和单行为冷却。"""
         now = datetime.now()
+        self._empty_session_waiting = False
+        self._empty_session_started_at = None
         self._last_fire_time = now
         self._settings["_last_global_success"] = now.isoformat(timespec="seconds")
         last_success = self._settings.setdefault("_behavior_last_success", {})
@@ -605,8 +611,17 @@ class ProactiveChatScheduler:
 
     # ── 调度逻辑 ──────────────────────────────────────────────
 
+    def notify_session_started(self):
+        """新建空白桌面会话时调用，启动首次主动破冰计时。"""
+        self._empty_session_started_at = datetime.now()
+        self._empty_session_waiting = True
+        # 新会话不应继承上一会话尚未结束的“用户活跃推迟”。
+        self._defer_until = None
+
     def notify_user_active(self):
         """用户发出消息时调用，将主动聊天推迟一段时间。"""
+        self._empty_session_waiting = False
+        self._empty_session_started_at = None
         self._defer_until = datetime.now() + timedelta(minutes=self.user_defer_minutes)
 
     def notify_fired(self):
@@ -638,6 +653,15 @@ class ProactiveChatScheduler:
         weight = self.weights[hour] if hour < len(self.weights) else 0
         if weight <= 0:
             return False
+
+        # 空白会话不能永远依赖随机抽签。等待与“用户发言后推迟”相同的时长后，
+        # 在允许时段保证尝试一次；若生成失败，下一轮仍可重试，成功后再清除。
+        empty_started = getattr(self, "_empty_session_started_at", None)
+        if (self.desktop_enabled
+                and getattr(self, "_empty_session_waiting", False)
+                and empty_started is not None
+                and now >= empty_started + timedelta(minutes=self.user_defer_minutes)):
+            return True
 
         # 增强版概率公式：P = (weight/10) × (frequency/15) × BASE_RATE × 1.5
         prob = (weight / 10.0) * (self.frequency / 30.0) * _BASE_RATE * 1.5

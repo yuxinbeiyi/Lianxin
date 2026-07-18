@@ -237,6 +237,12 @@ class DutyScheduler(QObject):
         for duty in self._duties.values():
             duty.on_user_message(state)
 
+    def on_session_started(self):
+        """新建空白会话时重置空闲基线，并启动主动聊天的首次破冰计时。"""
+        self._last_user_message_time = time.monotonic()
+        if self._proactive_scheduler is not None:
+            self._proactive_scheduler.notify_session_started()
+
     def get_all_statuses(self) -> list[DutyStatus]:
         return [d.status for d in self._duties.values()]
 
