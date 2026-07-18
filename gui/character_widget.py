@@ -11,9 +11,9 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QScrollArea, QSlider,
     QLineEdit, QMessageBox, QFileDialog, QRadioButton,
-    QButtonGroup, QDialog, QDialogButtonBox,
+    QButtonGroup, QDialog, QDialogButtonBox, QGraphicsOpacityEffect,
 )
-from PyQt5.QtCore import Qt, QTimer, QPoint
+from PyQt5.QtCore import Qt, QTimer, QPoint, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QFont, QIcon, QPixmap
 
 from gui.animation_state_machine import AnimationStateMachine
@@ -282,131 +282,197 @@ class CharacterWidget(QWidget):
         main_layout.addWidget(self._music_bar)
 
         # ========== 功能区弹出触发按钮 ==========
-        self._btn_function_toggle = QPushButton("▲ 功能")
-        self._btn_function_toggle.setFixedHeight(28)
+        self._btn_function_toggle = QPushButton("▲ 功能中心")
+        self._btn_function_toggle.setFixedHeight(32)
         self._btn_function_toggle.setFont(QFont("Microsoft YaHei UI", 9))
         self._btn_function_toggle.setCursor(Qt.PointingHandCursor)
         self._btn_function_toggle.setStyleSheet("""
             QPushButton {
-                background-color: rgba(100, 100, 120, 200);
-                color: #CCC;
-                border-radius: 10px;
-                border: none;
+                background-color: #252538;
+                color: #C9CCDA;
+                border: 1px solid #3D3D5A;
+                border-radius: 8px;
             }
-            QPushButton:hover { background-color: rgba(120, 120, 140, 220); color: #FFF; }
+            QPushButton:hover {
+                background-color: #303049;
+                color: #F0F1F8;
+                border-color: #6C7BFF;
+            }
+            QPushButton:pressed { background-color: #383854; }
         """)
         self._btn_function_toggle.clicked.connect(self._toggle_function_panel)
         main_layout.addWidget(self._btn_function_toggle)
 
         # ========== 功能区弹出面板（overlay，初始隐藏） ==========
         self._function_popup = QWidget(self)
+        self._function_popup.setObjectName("function_popup")
         self._function_popup.setStyleSheet("""
             QWidget#function_popup {
-                background-color: rgba(30, 30, 45, 245);
-                border-radius: 16px;
+                background-color: rgba(24, 24, 42, 248);
+                border: 1px solid #3D3D5A;
+                border-radius: 14px;
             }
         """)
-        self._function_popup.setObjectName("function_popup")
         popup_layout = QVBoxLayout(self._function_popup)
-        popup_layout.setSpacing(8)
-        popup_layout.setContentsMargins(20, 16, 20, 20)
+        popup_layout.setSpacing(12)
+        popup_layout.setContentsMargins(16, 14, 16, 16)
 
         # 顶部标题栏
         popup_header = QHBoxLayout()
-        popup_title = QLabel("功能")
-        popup_title.setFont(QFont("Microsoft YaHei UI", 14, QFont.Bold))
-        popup_title.setStyleSheet("color: #EEE; background: transparent;")
-        popup_header.addWidget(popup_title)
+        title_box = QVBoxLayout()
+        title_box.setSpacing(1)
+        popup_title = QLabel("功能中心")
+        popup_title.setFont(QFont("Microsoft YaHei UI", 13, QFont.Bold))
+        popup_title.setStyleSheet("color: #F0F1F8; background: transparent; border: none;")
+        popup_subtitle = QLabel("莲心的工具与设置")
+        popup_subtitle.setFont(QFont("Microsoft YaHei UI", 8))
+        popup_subtitle.setStyleSheet("color: #8F96B2; background: transparent; border: none;")
+        title_box.addWidget(popup_title)
+        title_box.addWidget(popup_subtitle)
+        popup_header.addLayout(title_box)
         popup_header.addStretch()
-        close_btn = QPushButton("▼ 收起")
-        close_btn.setFixedSize(70, 28)
-        close_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        close_btn = QPushButton("✕")
+        close_btn.setToolTip("收起功能中心")
+        close_btn.setFixedSize(30, 30)
+        close_btn.setFont(QFont("Microsoft YaHei UI", 10))
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.setStyleSheet("""
             QPushButton {
-                background-color: rgba(255,255,255,0.15);
-                color: #CCC;
+                background-color: #252538;
+                color: #AEB2C5;
                 border-radius: 8px;
-                border: none;
+                border: 1px solid #3D3D5A;
             }
-            QPushButton:hover { background-color: rgba(255,255,255,0.3); color: #FFF; }
+            QPushButton:hover {
+                background-color: #303049;
+                color: #F0F1F8;
+                border-color: #6C7BFF;
+            }
         """)
         close_btn.clicked.connect(self._toggle_function_panel)
         popup_header.addWidget(close_btn)
         popup_layout.addLayout(popup_header)
 
-        # 按钮网格
-        grid = QGridLayout()
-        grid.setSpacing(10)
+        # 统一的功能卡片。语义色仅作为左侧细线，避免高饱和色块破坏主界面的一致性。
+        self._btn_accompany = self._create_button("📊  陪伴时长", "#6C7BFF")
+        self._btn_settings = self._create_button("⚙️  全局设置", "#8F96B2")
+        self._btn_pomodoro = self._create_button("🍅  番茄钟", "#E67E22")
+        self._btn_api_config = self._create_button("🔑  API Key", "#F0A84B")
+        self._btn_alarm = self._create_button("⏰  闹钟与提醒", "#E2647C")
+        self._btn_camera = self._create_button("👁️  视觉理解", "#5B9A8B")
+        self._btn_emotion = self._create_button("🧪  涟漪情感系统", "#9B72CF")
+        self._btn_sound = self._create_button("🔊  声音设置", "#48A999")
+        self._btn_memory = self._create_button("🧠  棱镜记忆系统", "#77839A")
+        self._btn_network = self._create_button("🌐  网络设置", "#4C95D9")
+        self._btn_capability = self._create_button("🧩  能力中枢", "#9670C9")
+        self._btn_proactive = self._create_button("💬  主动聊天", "#52B788")
+        self._btn_qq_bridge = self._create_button("🐧  QQ 聊天", "#4B8FD1")
+        self._btn_wechat_bridge = self._create_button("💬  微信聊天", "#36A66D")
+        self._btn_diary = self._create_button("📔  日记本", "#D98A45")
+        self._btn_voice_stt = self._create_button("🎙️  语音转录", "#52B788")
 
-        self._btn_accompany = self._create_button("📊 陪伴时长")
-        self._btn_settings  = self._create_button("⚙️ 全局设置")
-        self._btn_pomodoro  = self._create_button("🍅 番茄钟")
-        self._btn_api_config = self._create_button("🔑 API Key", color="#FF9500")
-        self._btn_alarm      = self._create_button("⏰ 闹钟&提醒")
-        self._btn_camera     = self._create_button("视觉理解")
-        self._btn_emotion    = self._create_button("🧪 涟漪情感系统", color="#8E44AD")
+        scroll_area = QScrollArea(self._function_popup)
+        scroll_area.setObjectName("function_scroll_area")
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+        scroll_area.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QScrollArea > QWidget > QWidget { background: transparent; }
+            QScrollBar:vertical { background: transparent; width: 6px; margin: 0; }
+            QScrollBar::handle:vertical {
+                background: #4B4B68;
+                min-height: 30px;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical:hover { background: #626284; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
+        """)
+        scroll_content = QWidget()
+        scroll_content.setObjectName("function_scroll_content")
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 4, 0)
+        scroll_layout.setSpacing(12)
+        self._add_function_group(scroll_layout, "常用", (
+            self._btn_pomodoro, self._btn_alarm,
+            self._btn_diary, self._btn_accompany,
+        ))
+        self._add_function_group(scroll_layout, "莲心", (
+            self._btn_emotion, self._btn_memory,
+            self._btn_proactive, self._btn_capability,
+        ))
+        self._add_function_group(scroll_layout, "感知与声音", (
+            self._btn_camera, self._btn_sound,
+            self._btn_voice_stt, self._btn_settings,
+        ))
+        self._add_function_group(scroll_layout, "连接与服务", (
+            self._btn_api_config, self._btn_network,
+            self._btn_qq_bridge, self._btn_wechat_bridge,
+        ))
+        scroll_layout.addStretch()
+        scroll_area.setWidget(scroll_content)
+        popup_layout.addWidget(scroll_area, 1)
 
-        grid.addWidget(self._btn_accompany, 0, 0)
-        grid.addWidget(self._btn_settings, 0, 1)
-        grid.addWidget(self._btn_pomodoro, 1, 0)
-        grid.addWidget(self._btn_api_config, 1, 1)
-        grid.addWidget(self._btn_alarm, 2, 0)
-        grid.addWidget(self._btn_camera, 2, 1)
-        grid.addWidget(self._btn_emotion, 3, 0)
-        self._btn_sound = self._create_button("🔊 声音设置", color="#16A085")
-        grid.addWidget(self._btn_sound, 4, 0)
-        self._btn_memory = self._create_button("🧠 棱镜记忆系统", color="#5D6D7E")
-        grid.addWidget(self._btn_memory, 4, 1)
-        self._btn_network = self._create_button("🌐 网络设置", color="#3498DB")
-        grid.addWidget(self._btn_network, 5, 0)
-        self._btn_capability = self._create_button("🧩 能力中枢", color="#9B59B6")
-        grid.addWidget(self._btn_capability, 3, 1)
-        self._btn_proactive = self._create_button("💬 主动聊天", color="#27AE60")
-        grid.addWidget(self._btn_proactive, 5, 1)
-        self._btn_qq_bridge = self._create_button("🐧 QQ聊天", color="#2980B9")
-        grid.addWidget(self._btn_qq_bridge, 6, 0)
-        self._btn_wechat_bridge = self._create_button("💬 微信聊天", color="#07C160")
-        grid.addWidget(self._btn_wechat_bridge, 6, 1)
-        self._btn_diary = self._create_button("📔 日记本", color="#E67E22")
-        grid.addWidget(self._btn_diary, 7, 0)
-        self._btn_voice_stt = self._create_button("🎙️ 语音转录", color="#27AE60")
-        grid.addWidget(self._btn_voice_stt, 7, 1)
-        popup_layout.addLayout(grid)
-        popup_layout.addStretch()
+        self._function_opacity = QGraphicsOpacityEffect(self._function_popup)
+        self._function_popup.setGraphicsEffect(self._function_opacity)
+        self._function_animation = QPropertyAnimation(
+            self._function_opacity, b"opacity", self
+        )
+        self._function_animation.setDuration(180)
+        self._function_animation.setEasingCurve(QEasingCurve.OutCubic)
 
         self._function_popup.hide()
         self._function_expanded = False
 
     def _create_button(self, text: str, color: str = "#6C7BFF") -> QPushButton:
         btn = QPushButton(text)
-        btn.setFixedHeight(32)
+        btn.setObjectName("function_card")
+        btn.setFixedHeight(46)
         btn.setFont(QFont("Microsoft YaHei UI", 9))
         btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip(text.replace("  ", " "))
         btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {color};
-                color: white;
-                border-radius: 16px;
-                border: none;
-                padding: 6px 12px;
+                background-color: #252538;
+                color: #E8EAF2;
+                border: 1px solid #34344D;
+                border-left: 3px solid {color};
+                border-radius: 9px;
+                padding: 6px 10px;
+                text-align: left;
             }}
             QPushButton:hover {{
-                background-color: {self._darken_color(color)};
+                background-color: #303049;
+                color: #FFFFFF;
+                border-color: #4A4A69;
+                border-left: 3px solid {color};
             }}
             QPushButton:pressed {{
-                background-color: {self._darken_color(color, 20)};
+                background-color: #383854;
+                padding-left: 11px;
             }}
         """)
         return btn
 
     @staticmethod
-    def _darken_color(color: str, percent: int = 10) -> str:
-        if color == "#6C7BFF":
-            return "#5A6AEE"
-        elif color == "#FF9500":
-            return "#E08600"
-        return color
+    def _add_function_group(layout: QVBoxLayout, title: str, buttons) -> None:
+        """向功能中心添加一个两列分组，并保持各业务按钮对象不变。"""
+        label = QLabel(title)
+        label.setObjectName("function_group_title")
+        label.setFont(QFont("Microsoft YaHei UI", 8, QFont.Bold))
+        label.setStyleSheet(
+            "color: #8F96B2; background: transparent; border: none; padding-left: 2px;"
+        )
+        layout.addWidget(label)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        for index, button in enumerate(buttons):
+            grid.addWidget(button, index // 2, index % 2)
+        layout.addLayout(grid)
 
     # ========== 音乐盒控件获取方法 ==========
     def get_music_play_button(self):
@@ -456,14 +522,32 @@ class CharacterWidget(QWidget):
     def _toggle_function_panel(self):
         """弹出/收起功能区覆盖面板"""
         self._function_expanded = not self._function_expanded
+        self._function_animation.stop()
+        try:
+            self._function_animation.finished.disconnect()
+        except TypeError:
+            pass
+
         if self._function_expanded:
             self._position_function_popup()
+            self._function_opacity.setOpacity(0.0)
             self._function_popup.show()
             self._function_popup.raise_()
             self._btn_function_toggle.setText("▼ 收起")
+            self._function_animation.setStartValue(0.0)
+            self._function_animation.setEndValue(1.0)
+            self._function_animation.start()
         else:
+            self._btn_function_toggle.setText("▲ 功能中心")
+            self._function_animation.setStartValue(self._function_opacity.opacity())
+            self._function_animation.setEndValue(0.0)
+            self._function_animation.finished.connect(self._finish_function_popup_hide)
+            self._function_animation.start()
+
+    def _finish_function_popup_hide(self):
+        """仅在收起状态结束淡出，避免快速连点造成面板误隐藏。"""
+        if not self._function_expanded:
             self._function_popup.hide()
-            self._btn_function_toggle.setText("▲ 功能")
 
     def _position_function_popup(self):
         """将功能区面板定位到覆盖 GIF + 音乐盒区域"""
