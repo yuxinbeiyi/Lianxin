@@ -4,11 +4,14 @@ VoiceSpeaker：Edge-TTS 语音合成 + pygame 播放
 """
 import threading
 import asyncio
+import logging
 import os
 import re
 import tempfile
 import edge_tts
 import pygame
+
+logger = logging.getLogger("VoiceSpeaker")
 
 
 class VoiceSpeaker:
@@ -231,111 +234,74 @@ class VoiceSpeaker:
         if not sentences:
             return
 
+        from config import get_tts_config
+        tts_cfg = get_tts_config()
         try:
             from brain.tts_engine import TtsEngine
             _temp = TtsEngine()
-            from config import get_tts_config
-            engine = _temp if (get_tts_config().get("engine") != "edge_tts" and _temp.gpt_sovits_available) else None
+            engine = _temp if (tts_cfg.get("engine") != "edge_tts" and _temp.gpt_sovits_available) else None
 
-        except Exception:
+        except Exception as e:
+            logger.warning(f"初始化 GPT-SoVITS 失败，将使用 Edge-TTS: {e}")
             engine = None
 
         # 整段文字统一检测情绪，避免每句随机选不同参考音频导致声音不一致
         from brain.tts_engine import _detect_mood
-        unified_mood = _detect_mood(cleaned_text, None) or "casual"
-        tts_speed = get_tts_config().get("speed", 1.0)     # ← 加这行
+        configured_mood = tts_cfg.get("default_mood", "auto")
+        mood_hint = None if configured_mood == "auto" else configured_mood
+        unified_mood = _detect_mood(cleaned_text, mood_hint) or "casual"
+        tts_speed = tts_cfg.get("speed", 1.0)
         # ── 单句：快速路径（无流水线开销） ──────────
         if len(sentences) == 1:
-            tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-            tmp_path = tmp.name
-            tmp.close()
+            tmp_path = None
             try:
-                success = False
-                if engine and engine.gpt_sovits_available:
-                    success = engine.synthesize_to_mp3(sentences[0], tmp_path, mood=unified_mood, speed=tts_speed)
-                if not success:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        loop.run_until_complete(self._async_synthesize(sentences[0], tmp_path))
-                        success = True
-                    finally:
-                        loop.close()
-                if success and not self._stop_flag:
+                tmp_path = self._synthesize_sentence(
+                    sentences[0], engine, unified_mood, tts_speed
+                )
+                if tmp_path and not self._stop_flag:
                     self._play(tmp_path)
             finally:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+                self._remove_temp_file(tmp_path)
             return
 
         # ── 多句：流水线合成 + 播放 ──────────────────
         import queue as _queue
         audio_queue = _queue.Queue(maxsize=2)
         temp_files = []
-        gpt_avail = engine is not None and engine.gpt_sovits_available
-        has_edge = False
+        queue_done = object()
 
         def _producer():
-            nonlocal has_edge
-            from brain.tts_engine import TtsEngine as _TE
-            _eng = _TE() if gpt_avail else None
             for i, sent in enumerate(sentences):
                 if self._stop_flag:
-                    audio_queue.put(None)
+                    audio_queue.put(queue_done)
                     return
                 if not sent.strip():
                     continue
 
-                tmp = tempfile.NamedTemporaryFile(suffix=f"_s{i}.mp3", delete=False)
-                tmp_path = tmp.name
-                tmp.close()
-                temp_files.append(tmp_path)
+                tmp_path = self._synthesize_sentence(
+                    sent, engine, unified_mood, tts_speed, sequence=i
+                )
+                if tmp_path:
+                    temp_files.append(tmp_path)
+                    audio_queue.put(tmp_path)
 
-                ok = False
-                if _eng and _eng.gpt_sovits_available:
-                    ok = _eng.synthesize_to_mp3(sent, tmp_path, mood=unified_mood, speed=tts_speed)
-
-                if not ok and not has_edge:
-                    try:
-                        import edge_tts as _et
-                        has_edge = True
-                    except Exception:
-                        pass
-                if not ok and has_edge:
-                    _lp = asyncio.new_event_loop()
-                    asyncio.set_event_loop(_lp)
-                    try:
-                        _lp.run_until_complete(edge_tts.Communicate(sent, self._voice).save(tmp_path))
-                        ok = True
-                    except Exception:
-                        pass
-                    finally:
-                        _lp.close()
-
-                audio_queue.put(tmp_path if ok else None)
-
-            audio_queue.put(None)
+            audio_queue.put(queue_done)
 
         prod = threading.Thread(target=_producer, daemon=True)
         prod.start()
 
         while True:
             tmp_path = audio_queue.get()
-            if tmp_path is None:
+            if tmp_path is queue_done:
                 break
             if self._stop_flag:
-                break
+                continue
             self._play(tmp_path)
 
         prod.join(timeout=3)
 
         for fp in temp_files:
-            try:
-                os.unlink(fp)
-            except OSError:
-                pass
+            self._remove_temp_file(fp)
 
 
     def stop(self):
@@ -348,34 +314,63 @@ class VoiceSpeaker:
 
     # ── 内部方法 ─────────────────────────────────────────────
 
-    def _synthesize(self, text: str) -> str | None:
-        # 优先使用 TtsEngine（GPT-SoVITS）
-        try:
-            from brain.tts_engine import TtsEngine
-            engine = TtsEngine()
-            if engine.gpt_sovits_available:
-                tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-                tmp_path = tmp.name
-                tmp.close()
-                success = engine.synthesize_to_mp3(text, tmp_path)
+    @staticmethod
+    def _new_temp_path(suffix: str) -> str:
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        path = tmp.name
+        tmp.close()
+        return path
 
-                if success:
-                    return tmp_path
-        except Exception:
+    @staticmethod
+    def _remove_temp_file(path: str | None):
+        if not path:
+            return
+        try:
+            os.unlink(path)
+        except OSError:
             pass
 
-        # 回退：原 Edge-TTS 逻辑
+    def _synthesize_sentence(self, text: str, engine, mood: str,
+                             speed: float, sequence: int | None = None) -> str | None:
+        """合成单句并返回可播放文件。
+
+        GPT-SoVITS 原生输出 WAV，避免依赖 FFmpeg；只有 GPT 合成本身失败或
+        不可用时，才让 Edge-TTS 直接生成 MP3。
+        """
+        tag = f"_s{sequence}" if sequence is not None else ""
+        if engine and engine.gpt_sovits_available:
+            wav_path = self._new_temp_path(f"{tag}.wav")
+            if engine.synthesize_gpt_wav(text, wav_path, mood=mood, speed=speed):
+                logger.info(f"TTS 使用 GPT-SoVITS（WAV，text_len={len(text)}）")
+                return wav_path
+            self._remove_temp_file(wav_path)
+            logger.warning("GPT-SoVITS 合成失败，回退 Edge-TTS")
+
+        mp3_path = self._new_temp_path(f"{tag}.mp3")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-            tmp_path = tmp.name
-            tmp.close()
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self._async_synthesize(text, tmp_path))
-            finally:
-                loop.close()
-            return tmp_path
+            loop.run_until_complete(self._async_synthesize(text, mp3_path))
+            logger.info(f"TTS 使用 Edge-TTS（MP3，text_len={len(text)}）")
+            return mp3_path
+        except Exception as e:
+            logger.error(f"Edge-TTS 合成失败: {e}")
+            self._remove_temp_file(mp3_path)
+            return None
+        finally:
+            loop.close()
+
+    def _synthesize(self, text: str) -> str | None:
+        """兼容旧调用：按当前配置合成一个可直接播放的临时文件。"""
+        try:
+            from brain.tts_engine import TtsEngine
+            from config import get_tts_config
+            engine = TtsEngine()
+            cfg = get_tts_config()
+            selected = engine if cfg.get("engine") != "edge_tts" else None
+            mood = cfg.get("default_mood", "auto")
+            speed = cfg.get("speed", 1.0)
+            return self._synthesize_sentence(text, selected, mood, speed)
         except Exception as e:
             print(f"[TTS合成出错] {e}")
             return None

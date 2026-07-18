@@ -558,6 +558,23 @@ class TtsEngine:
         # 使用 Edge-TTS
         return _fallback_edge_tts(text, output_path, voice)
 
+    def synthesize_gpt_wav(self, text: str, output_path: str,
+                           mood: Optional[str] = None,
+                           speed: Optional[float] = None) -> bool:
+        """仅使用 GPT-SoVITS 合成 WAV，不在此方法内回退其他引擎。
+
+        桌面端可以直接播放 WAV，因此不应为了播放而转成 MP3。调用方可根据
+        False 返回值自行选择 Edge-TTS，同时准确知道实际使用了哪个引擎。
+        """
+        if not _is_gpt_sovits_available():
+            logger.info("GPT-SoVITS 不可用，跳过 WAV 合成")
+            return False
+        try:
+            return self._synthesize_gpt_sovits(text, output_path, mood, speed)
+        except Exception as e:
+            logger.warning(f"GPT-SoVITS WAV 合成失败: {e}")
+            return False
+
 
 
     def synthesize_to_mp3(self, text: str, output_path: str,
