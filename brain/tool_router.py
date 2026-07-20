@@ -17,7 +17,7 @@ from typing import List, Dict, Set, Tuple
 # ── 核心工具（始终加载完整定义）────────────────────────────
 CORE_TOOLS: Set[str] = {
     # 记忆系统（仅保留高频 CRUD，其余按需激活）
-    "save_memory", "search_graph_memory", "update_memory", "delete_memory",
+    "save_memory", "update_current_state", "search_graph_memory", "update_memory", "delete_memory",
     "discover_connections",  # 图谱关系发现
     # 时间
     "get_current_time",
@@ -253,7 +253,7 @@ def build_tool_catalog(loaded_categories: Set[str],
     ]
 
     # 核心工具
-    core_names = sorted(CORE_TOOLS)
+    core_names = sorted(name for name in CORE_TOOLS if name not in disabled)
     lines.append(f"✅ 核心({len(core_names)}): {', '.join(core_names)}")
 
     # 领域工具

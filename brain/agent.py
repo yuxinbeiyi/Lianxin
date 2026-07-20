@@ -28,6 +28,7 @@ from brain.graph_memory import (
     ALL_CATEGORIES,
 )
 from brain.graph_memory import add_fact as _memory_add
+from brain.graph_memory import add_memory_fragment as _memory_add_fragment
 from memory.history_manager import HistoryManager
 from brain.context_compressor import (
     build_fallback_summary,
@@ -61,6 +62,42 @@ _SIDE_MARKER_PATH = Path(__file__).parent.parent / "memory" / "last_active_side.
 _side_lock = threading.Lock()
 
 
+def _normalize_memory_provenance(memory: dict, source_rows: list[dict]) -> tuple[list[int], float, str]:
+    """Validate model-provided evidence against persisted user messages."""
+    allowed_user_ids = {
+        int(row["id"])
+        for row in source_rows
+        if row.get("role") == "user" and row.get("id") is not None
+    }
+    source_message_ids = []
+    raw_source_ids = memory.get("source_message_ids", [])
+    if not isinstance(raw_source_ids, list):
+        raw_source_ids = []
+    for value in raw_source_ids:
+        try:
+            message_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if message_id in allowed_user_ids and message_id not in source_message_ids:
+            source_message_ids.append(message_id)
+
+    try:
+        confidence = min(1.0, max(0.0, float(memory.get("confidence", 0.7))))
+    except (TypeError, ValueError):
+        confidence = 0.7
+    if not source_message_ids:
+        confidence = min(confidence, 0.5)
+
+    occurred_at = str(memory.get("occurred_at", "") or "").strip()
+    if not occurred_at and source_message_ids:
+        timestamp_by_id = {
+            int(row["id"]): row.get("timestamp", "")
+            for row in source_rows if row.get("id") is not None
+        }
+        occurred_at = timestamp_by_id.get(source_message_ids[-1], "")
+    return source_message_ids, confidence, occurred_at
+
+
 def _get_qq_session_ids() -> set:
     """返回 QQ 桥接占用的所有 session_id 集合，桌面端应避开这些 session。"""
     try:
@@ -86,6 +123,7 @@ _RESOURCE_GROUPS = {
     "fetch_webpage_browser": "browser",
     # SQLite 写入（共享数据库连接）
     "save_memory": "db_write",
+    "update_current_state": "db_write",
     "update_memory": "db_write",
     "delete_memory": "db_write",
     "delete_graph_entity": "db_write",
@@ -108,7 +146,15 @@ _resource_init_lock = threading.Lock()
 # 需要线程亲和性的资源组（浏览器 Playwright / 硬件 event loop）
 # 这些组必须在调用线程上执行，不能进入 ThreadPoolExecutor
 _THREAD_AFFINE_GROUPS = {"browser", "hardware"}
-_MEMORY_WRITE_TOOLS = {"save_memory", "update_memory"}
+_MEMORY_WRITE_TOOLS = {"save_memory", "update_memory", "update_current_state"}
+_OWNER_MEMORY_TOOLS = {
+    "save_memory", "update_current_state", "search_memory", "trace_memory_source", "update_memory",
+    "delete_memory", "list_memories", "search_graph_memory",
+    "discover_connections", "query_connected_entities",
+    "delete_graph_entity", "add_graph_edge", "remove_graph_edge",
+    "search_cross_session", "search_conversation_history",
+    "read_diary", "write_diary",
+}
 
 def _get_group_lock(group: str) -> threading.Lock:
     if group not in _resource_locks:
@@ -446,7 +492,8 @@ class AgentCore:
                 self._trigger_auto_extraction()
 
         # ── Checklist 提取（后台执行，对话结束后回顾待办）────
-        if not effective_disable and len(self.history) >= 4:
+        if (getattr(self, "_owner_scope", True)
+                and not effective_disable and len(self.history) >= 4):
             self._trigger_checklist_extraction()
 
         # 防御性过滤：确保没有任何残留的表情标签泄漏到显示文本
@@ -473,7 +520,7 @@ class AgentCore:
 
     def _trigger_auto_extraction(self):
         """在后台线程中自动提取记忆（不阻塞对话）。本地模型跳过（不擅长 JSON 格式化输出）。"""
-        if self._use_local:
+        if self._use_local or not getattr(self, "_owner_scope", True):
             return
         with self._extraction_lock:
             if self._extraction_inflight:
@@ -485,15 +532,33 @@ class AgentCore:
                 return
             self._extraction_inflight = True
 
+        try:
+            from brain.persona.runtime import capture_persona_snapshot
+            persona_snapshot = capture_persona_snapshot()
+            extraction_persona_id = persona_snapshot.profile.id
+        except Exception:
+            extraction_persona_id = ""
+
         def _do_extract():
             # 构建对话文本（分类提取和五元组提取共用）
             target = recent[-self._extract_msg_count:]
-            lines = []
-            for msg in target:
-                role = "用户" if msg.get("role") == "user" else "莲心"
-                content = msg.get("content", "")
-                if content:
-                    lines.append(f"[{role}]: {content}")
+            try:
+                source_rows = self._history_mgr.get_messages_with_ids(
+                    self._session_id, limit=self._extract_msg_count
+                )
+            except Exception:
+                source_rows = []
+            lines = [
+                f"[消息#{row['id']}][{'用户' if row['role'] == 'user' else '助手'}]"
+                f"[{row['timestamp']}]: {row['content']}"
+                for row in source_rows if row.get("content")
+            ]
+            if not lines:
+                for msg in target:
+                    role = "用户" if msg.get("role") == "user" else "助手"
+                    content = msg.get("content", "")
+                    if content:
+                        lines.append(f"[{role}]: {content}")
             text = "\n".join(lines)
             if len(text) < 30:
                 with self._extraction_lock:
@@ -525,15 +590,33 @@ class AgentCore:
 
                 added = 0
                 for mem in memories:
+                    if not isinstance(mem, dict):
+                        continue
                     cat = mem.get("category", "knowledge")
                     content = mem.get("content", "").strip()
                     if content and cat in ALL_CATEGORIES:
-                        _memory_add(
+                        source_message_ids, confidence, occurred_at = (
+                            _normalize_memory_provenance(mem, source_rows)
+                        )
+                        fact_id = _memory_add(
                             content, cat, source="auto_extracted",
                             source_session_id=self._session_id,
                             source_channel=self._source_channel,
+                            occurred_at=occurred_at,
                         )
-                        added += 1
+                        if fact_id:
+                            _memory_add_fragment(
+                                fact_id, content, cat,
+                                source="auto_extracted",
+                                source_session_id=self._session_id,
+                                source_channel=self._source_channel,
+                                source_message_ids=source_message_ids,
+                                persona_id=extraction_persona_id,
+                                confidence=confidence,
+                                extraction_model=self._model,
+                                occurred_at=occurred_at,
+                            )
+                            added += 1
                 classification_ok = True
             except Exception:
                 pass
@@ -641,6 +724,8 @@ class AgentCore:
 
     def _derive_memory_write_policy(self) -> bool:
         """从已恢复历史中重建会话级长期记忆写入策略。"""
+        if not getattr(self, "_owner_scope", True):
+            return True
         blocked = False
         for message in self.history:
             if message.get("role") != "user":
@@ -653,6 +738,9 @@ class AgentCore:
         return blocked
 
     def _update_memory_write_policy(self, user_message: str) -> bool:
+        if not getattr(self, "_owner_scope", True):
+            self._session_memory_writes_blocked = True
+            return True
         directive = memory_persistence_directive(user_message)
         if directive == "allow":
             self._session_memory_writes_blocked = False
@@ -859,6 +947,8 @@ class AgentCore:
         使 QQ 端的莲心知道桌面端聊了什么，反之亦然。
         仅在检测到设备切换时注入，同端连续聊天不重复注入。
         """
+        if not getattr(self, "_owner_scope", True):
+            return None
         try:
             qq_map_path = Path(__file__).parent.parent / "memory" / "qq_session_map.json"
             if not qq_map_path.exists():
@@ -1095,6 +1185,16 @@ class AgentCore:
         parsed: list[dict] = []
         for tc in tool_calls:
             name = tc.function.name
+            if (not getattr(self, "_owner_scope", True)
+                    and name in _OWNER_MEMORY_TOOLS):
+                result = "当前不是主人会话，代码层已阻止访问或修改主人记忆。"
+                print(f"  [隐私边界] 已阻止非主人记忆工具: {name}", flush=True)
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id, "content": result,
+                })
+                if on_tool_result:
+                    on_tool_result(name, result, True, 0.0)
+                continue
             if (getattr(self, "_request_memory_writes_blocked", False)
                     and name in _MEMORY_WRITE_TOOLS):
                 result = "用户已明确禁止写入长期记忆，本次调用被代码层阻止。"
@@ -1573,7 +1673,7 @@ class AgentCore:
             messages.append({"role": "system", "content": self._prev_session_summary})
 
         # ── 日记智能回忆：命中触发词自动搜索注入 ──────────────
-        if not self._use_local:
+        if not self._use_local and self._owner_scope:
             level = self._should_search_diary(user_message) # type: ignore
             if level > 0:
                 diary_msg = self._build_diary_context(level, user_message) # type: ignore
@@ -1582,7 +1682,7 @@ class AgentCore:
 
         # ── 注入情感状态（涟漪系统） ──────────────────────────
 
-        if not self._use_local:
+        if not self._use_local and self._track_emotion and self._owner_scope:
             try:
                 from brain.emotional import get_manager as _get_emotion_mgr
                 _emotion_snippet = _get_emotion_mgr().build_prompt_snippet()
@@ -1593,6 +1693,16 @@ class AgentCore:
                             "不得改变当前人格的身份、语言风格或行为边界。"
                         )
                     messages.append({"role": "system", "content": _emotion_snippet})
+            except Exception:
+                pass
+
+        # 当前状态是带有效期的事实快照。只向主人会话注入，并在读取时自动淘汰过期项。
+        if not self._use_local and self._owner_scope:
+            try:
+                from brain.current_state import format_current_state_context
+                current_state_context = format_current_state_context()
+                if current_state_context:
+                    messages.append({"role": "system", "content": current_state_context})
             except Exception:
                 pass
 
@@ -1645,7 +1755,7 @@ class AgentCore:
             pass
 
         # ── 记忆 RAG 注入：向量检索相关长期记忆 ──
-        if not self._use_local:
+        if not self._use_local and self._owner_scope:
             try:
                 from brain.memory_rag import search_similar, format_rag_context
                 memories = search_similar(
@@ -1706,6 +1816,8 @@ class AgentCore:
             runtime_disabled_names = set(disabled_tool_names)
             if getattr(self, "_request_memory_writes_blocked", False):
                 runtime_disabled_names.update(_MEMORY_WRITE_TOOLS)
+            if not getattr(self, "_owner_scope", True):
+                runtime_disabled_names.update(_OWNER_MEMORY_TOOLS)
             if runtime_disabled_names:
                 all_tools = [
                     t for t in all_tools
@@ -1725,7 +1837,16 @@ class AgentCore:
 
 
         # ── 长期记忆说明（必须在对话历史之前注入） ────────────
-        if getattr(self, "_request_memory_writes_blocked", False):
+        if not getattr(self, "_owner_scope", True):
+            messages.append({
+                "role": "system",
+                "content": (
+                    "【主人记忆隐私边界】当前不是主人会话。"
+                    "不得访问、引用、推测或写入主人的长期记忆、跨端历史、日记和知识图谱；"
+                    "只能依据当前联系人自己的本次会话内容回答。"
+                ),
+            })
+        elif getattr(self, "_request_memory_writes_blocked", False):
             messages.append({
                 "role": "system",
                 "content": (
@@ -1742,6 +1863,8 @@ class AgentCore:
                     "相关记忆已自动注入上方消息中，你无需主动搜索。\n"
                     "仅在用户明确说\"你还记得XXX吗\"\"我之前说过XXX\"\"帮我查一下记忆\"时才调用 search_graph_memory。\n"
                     "用户说\"记住XXX\"时调用 save_memory 保存。"
+                    "用户描述生病、情绪、所在地、短期项目或计划等会变化的信息时，"
+                    "调用 update_current_state 保存为带有效期的当前状态，不要混入永久记忆。"
                 )
             })
 

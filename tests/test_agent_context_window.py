@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from brain.agent import AgentCore
+from brain.agent import AgentCore, _normalize_memory_provenance
 
 
 def _history(turns: int) -> list[dict]:
@@ -58,6 +58,33 @@ class AgentContextWindowTests(unittest.TestCase):
         self.assertEqual(0, agent._summarized_history_idx)
         self.assertEqual(agent.history, recent)
         self.assertEqual([], agent._history_mgr.saved)
+
+    def test_memory_provenance_accepts_only_persisted_user_messages(self):
+        rows = [
+            {"id": 10, "role": "user", "timestamp": "2026-07-20 09:00:00"},
+            {"id": 11, "role": "assistant", "timestamp": "2026-07-20 09:00:01"},
+            {"id": 12, "role": "user", "timestamp": "2026-07-20 09:00:02"},
+        ]
+        ids, confidence, occurred_at = _normalize_memory_provenance(
+            {
+                "source_message_ids": [10, 11, 12, 10, 999],
+                "confidence": 0.92,
+                "occurred_at": "",
+            },
+            rows,
+        )
+        self.assertEqual([10, 12], ids)
+        self.assertEqual(0.92, confidence)
+        self.assertEqual("2026-07-20 09:00:02", occurred_at)
+
+    def test_uncited_memory_confidence_is_capped(self):
+        ids, confidence, occurred_at = _normalize_memory_provenance(
+            {"source_message_ids": [404], "confidence": 0.99},
+            [{"id": 10, "role": "user", "timestamp": "2026-07-20 09:00:00"}],
+        )
+        self.assertEqual([], ids)
+        self.assertEqual(0.5, confidence)
+        self.assertEqual("", occurred_at)
 
     def test_successful_summary_advances_cursor_and_persists_snapshot(self):
         agent = self._agent(turns=5)  # 溢出 3 turn / 6 message

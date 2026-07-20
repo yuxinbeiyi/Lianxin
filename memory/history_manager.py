@@ -172,11 +172,11 @@ class HistoryManager:
 
     # ── 消息管理 ─────────────────────────────────────────────
 
-    def save_message(self, session_id: int, role: str, content: str):
+    def save_message(self, session_id: int, role: str, content: str) -> int:
         """保存一条消息（role: 'user' | 'assistant'）。"""
         conn = self._conn()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
             (session_id, role, content, now)
         )
@@ -185,6 +185,7 @@ class HistoryManager:
             (now, session_id)
         )
         conn.commit()
+        return int(cur.lastrowid)
 
     # ── 读取接口 ─────────────────────────────────────────────
 
@@ -430,6 +431,47 @@ class HistoryManager:
             (session_id,)
         )
         return [dict(row) for row in cur.fetchall()]
+
+    def get_messages_with_ids(self, session_id: int, limit: int | None = None) -> list[dict]:
+        """Return persisted chat messages with stable ids for memory provenance."""
+        if limit is not None:
+            rows = self._conn().execute(
+                """SELECT id, session_id, role, content, timestamp
+                   FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?""",
+                (session_id, max(1, int(limit))),
+            ).fetchall()
+            rows = list(rows)
+            rows.reverse()
+            return [dict(row) for row in rows]
+        rows = self._conn().execute(
+            """SELECT id, session_id, role, content, timestamp
+               FROM messages WHERE session_id=? ORDER BY id ASC""",
+            (session_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_messages_by_ids(self, message_ids: list[int]) -> list[dict]:
+        """Resolve provenance ids to their original message and channel."""
+        clean_ids = []
+        for value in message_ids:
+            try:
+                message_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if message_id > 0 and message_id not in clean_ids:
+                clean_ids.append(message_id)
+        if not clean_ids:
+            return []
+        placeholders = ",".join("?" for _ in clean_ids)
+        rows = self._conn().execute(
+            f"""SELECT m.id, m.session_id, m.role, m.content, m.timestamp,
+                       s.channel, s.participant_id, s.owner_scope
+                FROM messages m JOIN sessions s ON s.id=m.session_id
+                WHERE m.id IN ({placeholders})""",
+            clean_ids,
+        ).fetchall()
+        by_id = {int(row["id"]): dict(row) for row in rows}
+        return [by_id[mid] for mid in clean_ids if mid in by_id]
 
     @staticmethod
     def _time_bounds(time_range: str) -> tuple[str | None, str | None]:

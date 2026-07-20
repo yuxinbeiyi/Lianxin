@@ -38,6 +38,7 @@ from utils.paths import get_user_data_dir
 from brain.graph_memory import (
     # 分类事实 CRUD（替换 long_term.json）
     add_fact as _memory_add,
+    add_memory_fragment as _memory_add_fragment,
     search_facts as _memory_search,
     update_facts as _memory_update,
     delete_facts as _memory_delete,
@@ -53,9 +54,17 @@ from brain.graph_memory import (
     format_graph_result,
     get_graph_stats,
     delete_entity,
+    get_fact_by_id,
+    get_fact_fragments,
 )
 # 格式化工具和常量仍然从 memory_store 取（无存储依赖）
 from brain.graph_memory import format_all_memories
+from brain.current_state import (
+    set_current_state as _state_set,
+    update_current_state as _state_update,
+    resolve_current_state as _state_resolve,
+    list_current_states as _state_list,
+)
 # 每块最大字符数（read_file 默认读第0块，read_file_chunk 可读任意块）
 _CHUNK_SIZE = 15000
 
@@ -137,6 +146,39 @@ def set_cross_session_context(session_id: int, history_mgr):
         "session_id": session_id,
         "history_mgr": history_mgr,
     }
+
+
+def _current_memory_provenance() -> dict:
+    """Capture the current persisted user turn for memory writes and corrections."""
+    provenance = {
+        "source_session_id": None,
+        "source_channel": "",
+        "source_message_ids": [],
+        "persona_id": "",
+        "occurred_at": "",
+    }
+    ctx = getattr(_tool_context, "cross_session", None)
+    if ctx is not None:
+        provenance["source_session_id"] = ctx.get("session_id")
+        try:
+            session = ctx["history_mgr"].get_session(provenance["source_session_id"])
+            provenance["source_channel"] = (session or {}).get("channel", "")
+            recent_messages = ctx["history_mgr"].get_messages_with_ids(
+                provenance["source_session_id"], limit=4
+            )
+            for message in reversed(recent_messages):
+                if message.get("role") == "user":
+                    provenance["source_message_ids"] = [int(message["id"])]
+                    provenance["occurred_at"] = message.get("timestamp", "")
+                    break
+        except Exception:
+            pass
+    try:
+        from brain.persona.runtime import capture_persona_snapshot
+        provenance["persona_id"] = capture_persona_snapshot().profile.id
+    except Exception:
+        pass
+    return provenance
 
 
 # ── DeepSeek/OpenAI 工具定义 ────────────────────────────────
@@ -1086,6 +1128,69 @@ TOOL_DEFINITIONS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_current_state",
+            "description": (
+                "维护用户有时效的当前状态，而不是永久记忆。适用于生病、情绪低落、"
+                "出差地点、正在推进的项目、短期计划等会变化或会过期的信息。"
+                "action=set 新建状态；update 更新已知状态；resolve 明确结束状态；"
+                "list 查看当前有效状态。用户只是在表达稳定偏好或长期事实时不要调用。"
+                "不要根据含糊表达推断医学诊断；不确定的信息必须标记为 inferred。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["set", "update", "resolve", "list"],
+                        "description": "要执行的状态操作"
+                    },
+                    "state_id": {
+                        "type": "integer",
+                        "description": "update/resolve 时使用的状态编号"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "具体且可独立理解的状态描述"
+                    },
+                    "state_type": {
+                        "type": "string",
+                        "enum": ["health", "emotion", "location", "project", "relationship", "plan", "other"],
+                        "description": "状态类型"
+                    },
+                    "expires_at": {
+                        "type": "string",
+                        "description": "可选的 ISO 8601 绝对过期时间"
+                    },
+                    "duration_days": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 90,
+                        "description": "未给绝对时间时，从现在起有效的天数"
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "对状态判断的置信度"
+                    },
+                    "source_quality": {
+                        "type": "string",
+                        "enum": ["direct_statement", "user_confirmed", "inferred"],
+                        "description": "信息来自用户直述、用户确认或模型推断"
+                    },
+                    "resolve_reason": {
+                        "type": "string",
+                        "description": "resolve 时说明状态为何结束"
+                    }
+                },
+                "required": ["action"],
+                "additionalProperties": False
+            }
+        }
+    },
 
     # ==================== 旧跨端搜索兼容工具 ====================
     {
@@ -1194,6 +1299,28 @@ TOOL_DEFINITIONS = [
                     }
                 },
                 "required": ["keyword"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "trace_memory_source",
+            "description": (
+                "追溯一条长期记忆的证据来源。当用户问‘你为什么记得’、"
+                "‘这条记忆来自哪次对话’或质疑某条记忆时调用。"
+                "memory_id 来自 search_memory/RAG 结果中的‘记忆#编号’。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "memory_id": {
+                        "type": "integer",
+                        "description": "要追溯的长期记忆编号"
+                    }
+                },
+                "required": ["memory_id"],
+                "additionalProperties": False
             }
         }
     },
@@ -2163,22 +2290,89 @@ def save_memory(fact: str, category: str | None = None) -> str:
     if date_tag not in fact:
         fact = f"{fact} {date_tag}"
 
-    source_session_id = None
-    source_channel = ""
-    ctx = getattr(_tool_context, "cross_session", None)
-    if ctx is not None:
-        source_session_id = ctx.get("session_id")
-        try:
-            session = ctx["history_mgr"].get_session(source_session_id)
-            source_channel = (session or {}).get("channel", "")
-        except Exception:
-            pass
-    _memory_add(
+    provenance = _current_memory_provenance()
+    occurred_at = provenance["occurred_at"] or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    fact_id = _memory_add(
         fact, category, source="user_saved",
-        source_session_id=source_session_id,
-        source_channel=source_channel, occurred_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        source_session_id=provenance["source_session_id"],
+        source_channel=provenance["source_channel"], occurred_at=occurred_at,
     )
+    if fact_id:
+        _memory_add_fragment(
+            fact_id, fact, category, source="user_saved",
+            source_session_id=provenance["source_session_id"],
+            source_channel=provenance["source_channel"],
+            source_message_ids=provenance["source_message_ids"],
+            persona_id=provenance["persona_id"],
+            confidence=1.0,
+            occurred_at=occurred_at,
+        )
     return f"好的，我记住了（分类：{category}）：{fact}"
+
+
+def manage_current_state(
+    action: str,
+    *,
+    state_id: int | None = None,
+    content: str | None = None,
+    state_type: str | None = None,
+    expires_at: str = "",
+    duration_days: int | None = None,
+    confidence: float = 0.9,
+    source_quality: str = "direct_statement",
+    resolve_reason: str = "",
+) -> str:
+    """Model-facing adapter for the time-bounded current-state store."""
+    action = str(action or "").strip().lower()
+    provenance = _current_memory_provenance()
+    source = {
+        "source_session_id": provenance["source_session_id"],
+        "source_channel": provenance["source_channel"],
+        "source_message_ids": provenance["source_message_ids"],
+        "persona_id": provenance["persona_id"],
+        "observed_at": provenance["occurred_at"],
+    }
+    try:
+        if action == "set":
+            if not content or not str(content).strip():
+                return "新建当前状态时必须提供 content。"
+            state = _state_set(
+                content, state_type or "other",
+                expires_at=expires_at, duration_days=duration_days,
+                confidence=confidence, source_quality=source_quality,
+                **source,
+            )
+            verb = "已确认原有状态" if state.get("operation") == "duplicate" else "已记录当前状态"
+            return f"{verb} #{state['id']}：{state['content']}（有效至 {state['expires_at']}）"
+        if action == "update":
+            if state_id is None:
+                return "更新当前状态时必须提供 state_id。"
+            state = _state_update(
+                state_id, content=content, state_type=state_type,
+                expires_at=expires_at, duration_days=duration_days,
+                **source,
+            )
+            return f"已更新当前状态 #{state['id']}：{state['content']}（有效至 {state['expires_at']}）"
+        if action == "resolve":
+            if state_id is None:
+                return "结束当前状态时必须提供 state_id。"
+            if not resolve_reason or not str(resolve_reason).strip():
+                return "结束当前状态时必须提供 resolve_reason。"
+            state = _state_resolve(state_id, resolve_reason, **source)
+            return f"已结束当前状态 #{state['id']}：{state['content']}（原因：{state['resolve_reason']}）"
+        if action == "list":
+            states = _state_list()
+            if not states:
+                return "当前没有仍在有效期内的临时状态。"
+            lines = ["当前有效状态："]
+            lines.extend(
+                f"- #{state['id']} [{state['state_type']}] {state['content']}（至 {state['expires_at']}）"
+                for state in states
+            )
+            return "\n".join(lines)
+        return "action 必须是 set、update、resolve 或 list。"
+    except (TypeError, ValueError) as exc:
+        return f"当前状态操作失败：{exc}"
 
 
 def write_file(path: str, content: str) -> str:
@@ -4242,6 +4436,62 @@ def _search_memory(keyword: str, category: str | None = None) -> str:
     return format_unified_search_result(result)
 
 
+def trace_memory_source(memory_id: int) -> str:
+    """Resolve a long-term fact to the exact persisted messages supporting it."""
+    try:
+        memory_id = int(memory_id)
+    except (TypeError, ValueError):
+        return "记忆编号无效。"
+    fact = get_fact_by_id(memory_id)
+    if not fact:
+        return f"没有找到编号为 {memory_id} 的长期记忆。"
+    fragments = get_fact_fragments(memory_id, include_inactive=True, limit=10)
+    if not fragments:
+        return (
+            f"记忆#{memory_id}：{fact['content']}\n"
+            "这是一条旧版或手动保存的记忆，目前没有可追溯的原始消息证据。"
+        )
+
+    ctx = getattr(_tool_context, "cross_session", None)
+    history_mgr = ctx.get("history_mgr") if ctx else None
+    if history_mgr is not None:
+        try:
+            request_session = history_mgr.get_session(ctx.get("session_id"))
+        except Exception:
+            request_session = None
+        if not request_session or not bool(request_session.get("owner_scope")):
+            return "记忆来源追溯仅对主人会话开放。"
+    message_ids = []
+    for fragment in fragments:
+        for message_id in fragment.get("source_message_ids", []):
+            if message_id not in message_ids:
+                message_ids.append(message_id)
+    messages = history_mgr.get_messages_by_ids(message_ids) if history_mgr else []
+    messages = [message for message in messages if bool(message.get("owner_scope"))]
+
+    lines = [f"记忆#{memory_id}：{fact['content']}", f"证据碎片：{len(fragments)} 条"]
+    for fragment in fragments[:5]:
+        lines.append(
+            f"- 碎片#{fragment['id']} | {fragment.get('source_channel') or '未知渠道'} | "
+            f"置信度 {float(fragment.get('confidence', 0)):.0%} | "
+            f"状态 {fragment.get('status', 'unknown')} | 人格 {fragment.get('persona_id') or '未记录'}"
+        )
+    if messages:
+        lines.append("原始对话：")
+        for message in messages[:12]:
+            speaker = "用户" if message.get("role") == "user" else "助手"
+            content = (message.get("content") or "").strip()[:400]
+            lines.append(
+                f"[{message.get('timestamp', '')} | {message.get('channel', 'unknown')} | "
+                f"消息#{message.get('id')} | {speaker}] {content}"
+            )
+    elif message_ids:
+        lines.append("原始消息已被清理或当前不可访问，但碎片元数据仍保留。")
+    else:
+        lines.append("该碎片未记录精确消息编号，不能将附近对话冒充为原始证据。")
+    return "\n".join(lines)
+
+
 def _update_memory(old_keyword: str, new_fact: str, category: str | None = None) -> str:
     """更新长期记忆中匹配的事实（分类更新）。"""
     from datetime import datetime
@@ -4256,13 +4506,44 @@ def _update_memory(old_keyword: str, new_fact: str, category: str | None = None)
     if date_tag not in new_fact:
         new_fact = f"{new_fact} {date_tag}"
 
-    updated = _memory_update(old_keyword, new_fact, category)
+    provenance = _current_memory_provenance()
+    occurred_at = provenance["occurred_at"] or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    updated = _memory_update(
+        old_keyword,
+        new_fact,
+        category,
+        source_session_id=provenance["source_session_id"],
+        source_channel=provenance["source_channel"],
+        source_message_ids=provenance["source_message_ids"],
+        persona_id=provenance["persona_id"],
+        occurred_at=occurred_at,
+    )
     if updated > 0:
         return f"已更新 {updated} 条记忆。"
     else:
         # 没找到，作为新记忆添加
         cat = category or "knowledge"
-        entry_id = _memory_add(new_fact, cat, source="user_saved")
+        entry_id = _memory_add(
+            new_fact,
+            cat,
+            source="user_saved",
+            source_session_id=provenance["source_session_id"],
+            source_channel=provenance["source_channel"],
+            occurred_at=occurred_at,
+        )
+        if entry_id:
+            _memory_add_fragment(
+                entry_id,
+                new_fact,
+                cat,
+                source="user_saved",
+                source_session_id=provenance["source_session_id"],
+                source_channel=provenance["source_channel"],
+                source_message_ids=provenance["source_message_ids"],
+                persona_id=provenance["persona_id"],
+                confidence=1.0,
+                occurred_at=occurred_at,
+            )
         return f"未找到包含「{old_keyword}」的旧事实，已将新内容作为新记忆保存（分类：{cat}）。"
 
 
@@ -4972,6 +5253,14 @@ TOOL_EXECUTORS = {
     "get_file_info_everything": lambda inp: get_file_info_everything(inp["filepath"]),
     "run_command":    lambda inp: run_command(inp["command"]),
     "save_memory":    lambda inp: save_memory(inp["fact"], inp.get("category")),
+    "update_current_state": lambda inp: manage_current_state(
+        inp.get("action", ""),
+        state_id=inp.get("state_id"), content=inp.get("content"),
+        state_type=inp.get("state_type"), expires_at=inp.get("expires_at", ""),
+        duration_days=inp.get("duration_days"), confidence=inp.get("confidence", 0.9),
+        source_quality=inp.get("source_quality", "direct_statement"),
+        resolve_reason=inp.get("resolve_reason", ""),
+    ),
     "open_app":       lambda inp: open_app(inp["name"]),
     "get_clipboard":  lambda inp: get_clipboard(),
     "get_current_time": lambda inp: get_current_time(inp.get("format", "full")),
@@ -5012,6 +5301,7 @@ TOOL_EXECUTORS = {
     "activate_skill":   lambda inp: _activate_skill(inp["name"]),
     "deactivate_skill": lambda inp: _deactivate_skill(inp["name"]),
     "search_memory":   lambda inp: _search_memory(inp["keyword"], inp.get("category")),
+    "trace_memory_source": lambda inp: trace_memory_source(inp["memory_id"]),
     "update_memory":   lambda inp: _update_memory(inp["old_keyword"], inp["new_fact"], inp.get("category")),
     "delete_memory":   lambda inp: _delete_memory(inp["keyword"], inp.get("category")),
     "list_memories":   lambda inp: _list_memories(),

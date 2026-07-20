@@ -864,6 +864,7 @@ def save_zhihu_config(config: dict):
 
 
 _BUILTIN_TOOL_DEFAULTS = {
+    "update_current_state": True,       # 有时效的用户当前状态
     "fetch_webpage": True,              # 普通 HTTP 抓取（直连，速度最快）
     "fetch_webpage_via_api": False,     # API 中转抓取（慢但穿透力强，默认关闭）
     "fetch_webpage_browser": True,      # 浏览器模式（Playwright，最慢但最强）

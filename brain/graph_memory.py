@@ -8,6 +8,8 @@
 两张表存在于 memory/conversations.db 中。
 """
 
+import hashlib
+import json
 import sqlite3
 import threading
 import logging
@@ -63,12 +65,33 @@ def _init_tables(conn: sqlite3.Connection):
             created_at TEXT DEFAULT (datetime('now', 'localtime')),
             UNIQUE(content, category)
         );
+        CREATE TABLE IF NOT EXISTS memory_fragments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fact_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT 'knowledge',
+            source TEXT NOT NULL DEFAULT 'auto_extracted',
+            source_session_id INTEGER,
+            source_channel TEXT DEFAULT '',
+            source_message_ids TEXT NOT NULL DEFAULT '[]',
+            persona_id TEXT DEFAULT '',
+            confidence REAL NOT NULL DEFAULT 0.5,
+            extraction_model TEXT DEFAULT '',
+            occurred_at TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',
+            fingerprint TEXT NOT NULL UNIQUE,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+        );
         CREATE INDEX IF NOT EXISTS idx_graph_entities_name ON graph_entities(name);
         CREATE INDEX IF NOT EXISTS idx_graph_entities_type ON graph_entities(entity_type);
         CREATE INDEX IF NOT EXISTS idx_graph_edges_head ON graph_edges(head_id);
         CREATE INDEX IF NOT EXISTS idx_graph_edges_tail ON graph_edges(tail_id);
         CREATE INDEX IF NOT EXISTS idx_graph_edges_relation ON graph_edges(relation);
         CREATE INDEX IF NOT EXISTS idx_memory_facts_category ON memory_facts(category);
+        CREATE INDEX IF NOT EXISTS idx_memory_fragments_fact ON memory_fragments(fact_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_fragments_session ON memory_fragments(source_session_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_fragments_status ON memory_fragments(status);
     """)
     # 为 RAG 向量检索添加 embedding 列（已存在的表不影响）
     try:
@@ -695,6 +718,114 @@ def add_fact(content: str, category: str = "knowledge",
     return row["id"] if row else 0
 
 
+def add_memory_fragment(
+    fact_id: int,
+    content: str,
+    category: str,
+    *,
+    source: str = "auto_extracted",
+    source_session_id: int | None = None,
+    source_channel: str = "",
+    source_message_ids: list[int] | None = None,
+    persona_id: str = "",
+    confidence: float = 0.5,
+    extraction_model: str = "",
+    occurred_at: str = "",
+    commit: bool = True,
+) -> int:
+    """Store immutable evidence for a normalized fact and return its fragment id."""
+    content = " ".join(str(content or "").split()).strip()
+    if not fact_id or not content:
+        return 0
+    if category not in ALL_MEMORY_CATEGORIES:
+        category = "knowledge"
+
+    message_ids = []
+    for value in source_message_ids or []:
+        try:
+            message_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if message_id > 0 and message_id not in message_ids:
+            message_ids.append(message_id)
+    message_ids_json = json.dumps(message_ids, ensure_ascii=False)
+    fingerprint_payload = json.dumps({
+        "fact_id": int(fact_id),
+        "content": content.casefold(),
+        "session_id": source_session_id,
+        "message_ids": message_ids,
+        "source": source,
+    }, sort_keys=True, ensure_ascii=False)
+    fingerprint = hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest()
+    try:
+        confidence_value = min(1.0, max(0.0, float(confidence)))
+    except (TypeError, ValueError):
+        confidence_value = 0.5
+
+    conn = _get_conn()
+    fact_exists = conn.execute(
+        "SELECT 1 FROM memory_facts WHERE id=?", (int(fact_id),)
+    ).fetchone()
+    if not fact_exists:
+        return 0
+    conn.execute(
+        """INSERT INTO memory_fragments (
+               fact_id, content, category, source, source_session_id,
+               source_channel, source_message_ids, persona_id, confidence,
+               extraction_model, occurred_at, status, fingerprint
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+           ON CONFLICT(fingerprint) DO UPDATE SET
+               confidence=MAX(confidence, excluded.confidence),
+               updated_at=datetime('now','localtime')""",
+        (
+            int(fact_id), content, category, str(source or "auto_extracted"),
+            source_session_id, str(source_channel or ""), message_ids_json,
+            str(persona_id or ""), confidence_value,
+            str(extraction_model or ""), str(occurred_at or ""), fingerprint,
+        ),
+    )
+    if commit:
+        conn.commit()
+    row = conn.execute(
+        "SELECT id FROM memory_fragments WHERE fingerprint=?", (fingerprint,)
+    ).fetchone()
+    return int(row["id"]) if row else 0
+
+
+def get_fact_fragments(fact_id: int, *, include_inactive: bool = False,
+                       limit: int = 20) -> list[dict]:
+    """Return evidence fragments for a fact, newest first."""
+    sql = """SELECT id, fact_id, content, category, source, source_session_id,
+                    source_channel, source_message_ids, persona_id, confidence,
+                    extraction_model, occurred_at, status, created_at, updated_at
+             FROM memory_fragments WHERE fact_id=?"""
+    params: list = [int(fact_id)]
+    if not include_inactive:
+        sql += " AND status='active'"
+    sql += " ORDER BY id DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 100)))
+    rows = _get_conn().execute(sql, params).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["source_message_ids"] = json.loads(item["source_message_ids"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            item["source_message_ids"] = []
+        result.append(item)
+    return result
+
+
+def get_fact_by_id(fact_id: int) -> dict | None:
+    row = _get_conn().execute(
+        """SELECT id, content, category, source, strength, created_at,
+                  updated_at, occurred_at, source_session_id, source_channel, status
+           FROM memory_facts WHERE id=?""",
+        (int(fact_id),),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def _prune_category(conn: sqlite3.Connection, category: str) -> None:
     """如果 category 条目数超出上限，淘汰最旧且强度最低的条目。"""
     try:
@@ -712,6 +843,17 @@ def _prune_category(conn: sqlite3.Connection, category: str) -> None:
         return
 
     excess = count - max_items
+    pruned_ids = [row["id"] for row in conn.execute(
+        """SELECT id FROM memory_facts WHERE category=?
+           ORDER BY strength ASC, created_at ASC LIMIT ?""",
+        (category, excess),
+    ).fetchall()]
+    if pruned_ids:
+        placeholders = ",".join("?" for _ in pruned_ids)
+        conn.execute(
+            f"DELETE FROM memory_fragments WHERE fact_id IN ({placeholders})",
+            pruned_ids,
+        )
     conn.execute(
         """DELETE FROM memory_facts WHERE id IN (
                SELECT id FROM memory_facts WHERE category=?
@@ -732,7 +874,9 @@ def search_facts(keyword: str, category: str | None = None) -> list[dict]:
     q = "%" + keyword + "%"
     if category:
         rows = conn.execute(
-            """SELECT id, content, category, source, strength, created_at
+            """SELECT id, content, category, source, strength, created_at,
+                      (SELECT COUNT(*) FROM memory_fragments mf
+                       WHERE mf.fact_id=memory_facts.id AND mf.status='active') AS evidence_count
                FROM memory_facts
                WHERE content LIKE ? AND category = ? AND status='active'
                ORDER BY updated_at DESC, strength DESC LIMIT 30""",
@@ -740,7 +884,9 @@ def search_facts(keyword: str, category: str | None = None) -> list[dict]:
         ).fetchall()
     else:
         rows = conn.execute(
-            """SELECT id, content, category, source, strength, created_at
+            """SELECT id, content, category, source, strength, created_at,
+                      (SELECT COUNT(*) FROM memory_fragments mf
+                       WHERE mf.fact_id=memory_facts.id AND mf.status='active') AS evidence_count
                FROM memory_facts
                WHERE content LIKE ? AND status='active'
                ORDER BY updated_at DESC, strength DESC LIMIT 30""",
@@ -749,8 +895,17 @@ def search_facts(keyword: str, category: str | None = None) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def update_facts(old_keyword: str, new_content: str,
-                 category: str | None = None) -> int:
+def update_facts(
+    old_keyword: str,
+    new_content: str,
+    category: str | None = None,
+    *,
+    source_session_id: int | None = None,
+    source_channel: str = "",
+    source_message_ids: list[int] | None = None,
+    persona_id: str = "",
+    occurred_at: str = "",
+) -> int:
     """替换所有匹配 old_keyword 的事实内容。返回更新条数。"""
     old_keyword = old_keyword.strip()
     new_content = new_content.strip()
@@ -759,6 +914,14 @@ def update_facts(old_keyword: str, new_content: str,
 
     conn = _get_conn()
     q = "%" + old_keyword + "%"
+    target_sql = "SELECT id, category FROM memory_facts WHERE content LIKE ?"
+    target_params: list = [q]
+    if category:
+        target_sql += " AND category=?"
+        target_params.append(category)
+    target_facts = [dict(row) for row in conn.execute(
+        target_sql, target_params
+    ).fetchall()]
     new_embedding = None
     try:
         from brain.memory_rag import embed_bytes
@@ -768,20 +931,50 @@ def update_facts(old_keyword: str, new_content: str,
     if category:
         cur = conn.execute(
             """UPDATE memory_facts SET content=?, source='user_saved',
-               embedding=?, embedding_model=?, updated_at=datetime('now','localtime'), status='active'
+               embedding=?, embedding_model=?, updated_at=datetime('now','localtime'),
+               source_session_id=COALESCE(?, source_session_id),
+               source_channel=CASE WHEN ?<>'' THEN ? ELSE source_channel END,
+               status='active'
                WHERE content LIKE ? AND category=?""",
             (new_content, new_embedding,
-             'BAAI/bge-small-zh-v1.5' if new_embedding else '', q, category)
+             'BAAI/bge-small-zh-v1.5' if new_embedding else '',
+             source_session_id, source_channel, source_channel, q, category)
         )
     else:
         cur = conn.execute(
             """UPDATE memory_facts SET content=?, source='user_saved',
-               embedding=?, embedding_model=?, updated_at=datetime('now','localtime'), status='active'
+               embedding=?, embedding_model=?, updated_at=datetime('now','localtime'),
+               source_session_id=COALESCE(?, source_session_id),
+               source_channel=CASE WHEN ?<>'' THEN ? ELSE source_channel END,
+               status='active'
                WHERE content LIKE ?""",
             (new_content, new_embedding,
-             'BAAI/bge-small-zh-v1.5' if new_embedding else '', q)
+             'BAAI/bge-small-zh-v1.5' if new_embedding else '',
+             source_session_id, source_channel, source_channel, q)
         )
-    conn.commit()
+    try:
+        for fact in target_facts:
+            conn.execute(
+                """UPDATE memory_fragments SET status='superseded',
+                   updated_at=datetime('now','localtime')
+                   WHERE fact_id=? AND status='active'""",
+                (fact["id"],),
+            )
+            add_memory_fragment(
+                fact["id"], new_content, fact["category"],
+                source="user_correction",
+                source_session_id=source_session_id,
+                source_channel=source_channel,
+                source_message_ids=source_message_ids,
+                persona_id=persona_id,
+                confidence=1.0,
+                occurred_at=occurred_at,
+                commit=False,
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     return cur.rowcount
 
 
@@ -793,6 +986,20 @@ def delete_facts(keyword: str, category: str | None = None) -> int:
 
     conn = _get_conn()
     q = "%" + keyword + "%"
+    select_sql = "SELECT id FROM memory_facts WHERE content LIKE ?"
+    select_params: list = [q]
+    if category:
+        select_sql += " AND category=?"
+        select_params.append(category)
+    fact_ids = [row["id"] for row in conn.execute(
+        select_sql, select_params
+    ).fetchall()]
+    if fact_ids:
+        placeholders = ",".join("?" for _ in fact_ids)
+        conn.execute(
+            f"DELETE FROM memory_fragments WHERE fact_id IN ({placeholders})",
+            fact_ids,
+        )
     if category:
         cur = conn.execute(
             "DELETE FROM memory_facts WHERE content LIKE ? AND category=?",
@@ -820,7 +1027,9 @@ def unified_search(keyword: str, category: str | None = None) -> dict:
     # 1. 搜索分类事实
     if category:
         fact_rows = conn.execute(
-            """SELECT id, content, category, source, strength, created_at
+            """SELECT id, content, category, source, strength, created_at,
+                      (SELECT COUNT(*) FROM memory_fragments mf
+                       WHERE mf.fact_id=memory_facts.id AND mf.status='active') AS evidence_count
                FROM memory_facts
                WHERE content LIKE ? AND category = ? AND status='active'
                ORDER BY updated_at DESC, strength DESC LIMIT 20""",
@@ -828,7 +1037,9 @@ def unified_search(keyword: str, category: str | None = None) -> dict:
         ).fetchall()
     else:
         fact_rows = conn.execute(
-            """SELECT id, content, category, source, strength, created_at
+            """SELECT id, content, category, source, strength, created_at,
+                      (SELECT COUNT(*) FROM memory_fragments mf
+                       WHERE mf.fact_id=memory_facts.id AND mf.status='active') AS evidence_count
                FROM memory_facts
                WHERE content LIKE ? AND status='active'
                ORDER BY updated_at DESC, strength DESC LIMIT 20""",
@@ -871,7 +1082,10 @@ def format_unified_search_result(result: dict) -> str:
             cat = f.get("category", "knowledge")
             src = "自动" if f.get("source") == "auto_extracted" else "手动"
             strength = f.get("strength", 1)
-            lines.append(f"  {i}. [{cat}] {f['content']} (强度:{strength}, {src})")
+            lines.append(
+                f"  {i}. [记忆#{f.get('id')}] [{cat}] {f['content']} "
+                f"(强度:{strength}, 证据:{f.get('evidence_count', 0)}条, {src})"
+            )
 
     if edges:
         lines.append("\n【知识图谱关联】")
@@ -1014,6 +1228,9 @@ def build_extraction_prompt(recent_conversation: str) -> str:
 3. 每条记忆应该自我完整，脱离上下文也能理解
 4. 如果某条信息与已有记忆相似，可以合并或强化（在 review 中注明）
 5. 宁少勿多：没有值得记的就不记
+6. source_message_ids 必须只填写直接支持该事实的用户消息编号，不要填写助手消息
+7. confidence 表示事实可信度，范围 0~1；用户明确陈述通常为 0.9 以上
+8. occurred_at 填事件实际发生时间；无法判断时留空，不要猜测
 
 ## 输出格式（JSON）
 {{{{
@@ -1021,7 +1238,10 @@ def build_extraction_prompt(recent_conversation: str) -> str:
         {{{{
             "category": "profile|preferences|events|knowledge|behaviors|skills",
             "content": "完整的记忆文本",
-            "reason": "为什么这条信息值得记住"
+            "reason": "为什么这条信息值得记住",
+            "source_message_ids": [123, 124],
+            "confidence": 0.95,
+            "occurred_at": "YYYY-MM-DD HH:MM:SS 或空字符串"
         }}}}
     ]
 }}}}

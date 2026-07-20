@@ -977,11 +977,18 @@ class QQBridgeWorker(QThread):
 
     def _get_or_create_agent(self, session_key: str, user_id: str = "") -> AgentCore:
         with self._lock:
+            is_owner = user_id == self._owner_qq
             if session_key in self._sessions:
-                return self._sessions[session_key]
+                cached_agent = self._sessions[session_key]
+                if bool(getattr(cached_agent, "_owner_scope", False)) == is_owner:
+                    return cached_agent
+                self._log(
+                    f"[*] 会话身份权限已变化，重建 Agent: {session_key} "
+                    f"(owner_scope={is_owner})"
+                )
+                del self._sessions[session_key]
 
             # ── 确定用户上下文（让 AI 知道在跟谁说话） ─────
-            is_owner = user_id == self._owner_qq
             disable_tools = not is_owner
 
             # ── 判断是群聊还是私聊 ──────────────────────────
@@ -1013,7 +1020,7 @@ class QQBridgeWorker(QThread):
                 f"- 你正在QQ群（群号{group_id}）中回复消息，群里的其他成员也能看到你的回复。\n"
                 f"- 对方通过 @你 来与你对话，你的回复首段会自动 @对方。\n"
                 f"- 保持回答简洁得体，因为群聊中其他成员也在看。\n"
-                f"- 注意保护隐私：不要透露{get_settings().user_name}（你的主人）的个人信息。"
+                f"- 注意保护隐私：不要透露主人的身份、联系方式或任何个人信息。"
                 f"- 你没有参与回复期间，群友的聊天内容会以「[近期群聊背景]」的形式在顶部展示，让你知道群里发生了什么。"
                 f"{member_display}"
                 f"\n\n【莲心指令 — 重要】\n"
@@ -1059,7 +1066,7 @@ class QQBridgeWorker(QThread):
                 user_desc = (
                     f"你正在与一位QQ好友（{user_id}）对话。"
                     f"请以友好礼貌的态度回应，但注意对方不是你的主人。"
-                    f"你的主人是「{self._owner_name}」（QQ号{self._owner_qq}）。"
+                    f"对方不是你的主人；禁止透露主人的姓名、账号、联系方式和私人信息。"
                     f"注意：你无法为对方使用任何工具（如打开软件、搜索网页、读写文件等），只能进行纯文本聊天。"
                     f"{group_note}"
                     f"{qq_platform_note}"

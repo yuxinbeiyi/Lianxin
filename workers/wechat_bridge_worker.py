@@ -241,9 +241,16 @@ class WeChatBridgeWorker(QObject):
     def _get_or_create_agent(self, msg: WeChatMessage, session_key: str, prompt_extra: str):
         from brain.agent import AgentCore
         with self._lock:
-            if session_key in self._agents:
-                return self._agents[session_key]
             is_owner = self._is_owner(msg.sender_id)
+            if session_key in self._agents:
+                cached_agent = self._agents[session_key]
+                if bool(getattr(cached_agent, "_owner_scope", False)) == is_owner:
+                    return cached_agent
+                self._log(
+                    f"[*] 会话身份权限已变化，重建 Agent: {session_key} "
+                    f"(owner_scope={is_owner})"
+                )
+                del self._agents[session_key]
             source_channel = "wechat_group" if msg.room_id else "wechat_private"
             kwargs = dict(
                 user_desc=prompt_extra,

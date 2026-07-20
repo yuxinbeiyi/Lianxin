@@ -183,6 +183,14 @@ def search_similar(
         if not rows:
             return []
 
+        evidence_counts = {
+            int(row["fact_id"]): int(row["evidence_count"])
+            for row in conn.execute(
+                """SELECT fact_id, COUNT(*) AS evidence_count
+                   FROM memory_fragments WHERE status='active' GROUP BY fact_id"""
+            ).fetchall()
+        }
+
         # 批量计算余弦相似度
         results = []
         for r in rows:
@@ -204,6 +212,7 @@ def search_similar(
                 strength_score = min(max(int(r["strength"] or 1), 1), 5) / 5.0
                 combined = sim * 0.85 + recency * 0.10 + strength_score * 0.05
                 results.append((combined, {
+                    "memory_id": r["id"],
                     "content": r["content"],
                     "category": r["category"],
                     "source": r["source"],
@@ -211,6 +220,7 @@ def search_similar(
                     "semantic_similarity": sim,
                     "updated_at": timestamp,
                     "source_channel": r["source_channel"],
+                    "evidence_count": evidence_counts.get(int(r["id"]), 0),
                 }))
 
         results.sort(key=lambda x: x[0], reverse=True)
@@ -242,7 +252,9 @@ def format_rag_context(memories: list[tuple[float, dict]]) -> str:
         updated = mem.get("updated_at") or "时间未知"
         semantic = mem.get("semantic_similarity", sim)
         lines.append(
-            f"· {mem['content']} (语义相关:{semantic:.0%}, 更新:{updated}, 来源:{source})"
+            f"· [记忆#{mem.get('memory_id', '?')}] {mem['content']} "
+            f"(语义相关:{semantic:.0%}, 更新:{updated}, 来源:{source}, "
+            f"证据:{mem.get('evidence_count', 0)}条)"
         )
     return "\n".join(lines)
 
