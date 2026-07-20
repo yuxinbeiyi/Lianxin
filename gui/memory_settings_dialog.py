@@ -73,7 +73,14 @@ class MemorySettingsDialog(QDialog):
         title = QLabel("棱镜记忆系统")
         title.setFont(QFont("Microsoft YaHei UI", 14, QFont.Bold))
         title.setStyleSheet("color: #1ABC9C;")
-        layout.addWidget(title)
+        title_row = QHBoxLayout()
+        title_row.addWidget(title)
+        title_row.addStretch()
+        universe_btn = QPushButton("✦ 进入记忆宇宙")
+        universe_btn.setStyleSheet("QPushButton { background:#202B5B; color:#C9D7FF; border:1px solid #5368B5; border-radius:7px; padding:6px 12px; } QPushButton:hover { background:#30427F; }")
+        universe_btn.clicked.connect(self._open_memory_universe)
+        title_row.addWidget(universe_btn)
+        layout.addLayout(title_row)
 
         # 分割线
         line = QFrame()
@@ -572,6 +579,14 @@ class MemorySettingsDialog(QDialog):
         self._constellation_panel.refresh()
         self._refresh_maintenance_status()
         super().showEvent(event)
+
+    def _open_memory_universe(self):
+        from gui.memory_universe import MemoryUniverseWindow
+        if not getattr(self, "_memory_universe", None):
+            self._memory_universe = MemoryUniverseWindow(self)
+        self._memory_universe.show()
+        self._memory_universe.raise_()
+        self._memory_universe.activateWindow()
 
     def _load_from_config(self):
         from config import get_memory_config, get_graph_config
