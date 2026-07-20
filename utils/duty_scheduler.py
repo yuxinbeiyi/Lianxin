@@ -327,6 +327,18 @@ class ProactiveDuty(Duty):
         # 情感门控
         if not self._scheduler._check_emotional_gate():
             return False
+        try:
+            from brain.memory_proactive import get_active_suppression, get_due_cue
+            if ps.memory_link_enabled:
+                if get_active_suppression():
+                    return False
+                cue = get_due_cue()
+                if cue and ps.can_deliver_memory_cue():
+                    self._pending_memory_cue = cue
+                    return True
+        except Exception:
+            pass
+        self._pending_memory_cue = None
         return ps.should_fire()
 
     def manual_trigger(self, state: SchedulerState, **kwargs):
@@ -344,10 +356,12 @@ class ProactiveDuty(Duty):
         if force_observe:
             force_behavior = "bilibili" if force_observe == "bilibili" else "observe"
 
+        memory_cue = None if force_behavior else getattr(self, "_pending_memory_cue", None)
+        self._pending_memory_cue = None
         candidates = kwargs.get("candidates") or self._eligible_behaviors(
             state, ignore_cooldowns=kwargs.get("ignore_cooldowns", False)
         )
-        behavior = force_behavior or ps.choose_behavior(candidates)
+        behavior = force_behavior or ("memory" if memory_cue else ps.choose_behavior(candidates))
         if not behavior:
             return None
 
@@ -357,7 +371,10 @@ class ProactiveDuty(Duty):
         self._observation_succeeded = False
         self._scheduler.proactive_behavior_selected.emit(behavior)
 
-        if behavior == "bilibili":
+        self._current_memory_cue = memory_cue if behavior == "memory" else None
+        if behavior == "memory":
+            worker = ProactiveWorker(hm, memory_cue=memory_cue)
+        elif behavior == "bilibili":
             worker = ProactiveWorker(hm, bilibili_mode=True)
         elif behavior == "slack":
             from workers.slack_worker import SlackWorker
@@ -439,6 +456,13 @@ class ProactiveDuty(Duty):
         self.status.last_result = "success"
         self.status.success_count += 1
         self._scheduler._proactive_scheduler.record_behavior_success(behavior)
+        cue = getattr(self, "_current_memory_cue", None)
+        if cue:
+            try:
+                from brain.memory_proactive import mark_cue_delivered
+                mark_cue_delivered(cue["id"], text)
+            except Exception:
+                pass
         if behavior == "slack":
             self._scheduler.slack_response.emit(text)
         else:
@@ -448,6 +472,13 @@ class ProactiveDuty(Duty):
         self.status.is_running = False
         self.status.last_result = "failed"
         self.status.fail_count += 1
+        cue = getattr(self, "_current_memory_cue", None)
+        if cue:
+            try:
+                from brain.memory_proactive import mark_cue_failed
+                mark_cue_failed(cue["id"], err)
+            except Exception:
+                pass
         if self._try_fallback():
             return
         self._scheduler.proactive_error.emit(err)
@@ -1036,6 +1067,54 @@ class SlackDuty(Duty):
     @_scheduler.setter
     def _scheduler(self, s):
         self.__scheduler = s
+
+
+# ═══════════════════════════════════════════════════════════════
+# MemoryCueEvaluationDuty
+# ═══════════════════════════════════════════════════════════════
+
+class MemoryCueEvaluationDuty(Duty):
+    """Low-frequency model review of semantic proactive opportunities."""
+
+    def __init__(self):
+        super().__init__("memory_cue_evaluation", "记忆主动联动", tick_interval_seconds=300)
+
+    def _check_enabled(self, state: SchedulerState) -> bool:
+        ps = state.proactive_scheduler
+        return bool(ps and ps.memory_link_enabled and (ps.desktop_enabled or ps.qq_enabled))
+
+    def _should_fire(self, state: SchedulerState) -> bool:
+        if state.agent_busy:
+            return False
+        if state.last_user_message_time and state.now-state.last_user_message_time < 120:
+            return False
+        try:
+            from brain.memory_proactive import should_evaluate
+            return should_evaluate(state.proactive_scheduler.memory_evaluation_interval_minutes)
+        except Exception:
+            return False
+
+    def _create_worker(self, state: SchedulerState, **kwargs):
+        from workers.memory_cue_worker import MemoryCueEvaluationWorker
+        return MemoryCueEvaluationWorker(max_candidates=state.proactive_scheduler.memory_max_candidates)
+
+    def _wire_worker(self, worker):
+        worker.completed.connect(self._on_completed)
+        worker.failed.connect(self._on_failed)
+
+    def _on_completed(self, result):
+        self.status.is_running=False; self.status.last_result="success"; self.status.success_count+=1
+        self.status.last_result_text=f"评估 {result.get('evaluated',0)} 条，批准 {result.get('approved',0)} 条"
+        self._scheduler.duty_completed.emit(self.name,self.status.last_result_text)
+
+    def _on_failed(self, error):
+        self.status.is_running=False; self.status.last_result="failed"; self.status.fail_count+=1
+        self.status.last_result_text=str(error); self._scheduler.duty_failed.emit(self.name,str(error))
+
+    @property
+    def _scheduler(self): return self.__scheduler
+    @_scheduler.setter
+    def _scheduler(self, value): self.__scheduler=value
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -377,7 +377,12 @@ class MemorySettingsDialog(QDialog):
         self._current_state_panel = CurrentStatePanel()
         tabs.addTab(self._current_state_panel, "◉ 当前状态")
 
-        # ── 选项卡 5：记忆浏览 ─────────────────────────────
+        # ── 选项卡 5：记忆诊断 ───────────────────────────────
+        from gui.memory_debug_panel import MemoryDebugPanel
+        self._debug_panel = MemoryDebugPanel()
+        tabs.addTab(self._debug_panel, "🔬 记忆诊断")
+
+        # ── 选项卡 6：记忆浏览 ─────────────────────────────
         tab4 = QWidget()
         tab4_layout = QVBoxLayout(tab4)
         tab4_layout.setSpacing(10)

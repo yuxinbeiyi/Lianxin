@@ -85,6 +85,9 @@ class ProactiveChatScheduler:
             "min_interval_minutes": DEFAULT_MIN_INTERVAL_MINUTES,
             "user_defer_minutes": DEFAULT_USER_ACTIVITY_DEFER_MINUTES,
             "qq_enabled": False,
+            "memory_link_enabled": True,
+            "memory_evaluation_interval_minutes": 30,
+            "memory_max_candidates": 8,
             # 统一行为调度：达到触发条件后只选择并执行一种行为
             "normal_enabled": True,
             "behavior_weights": {
@@ -204,6 +207,30 @@ class ProactiveChatScheduler:
     @qq_enabled.setter
     def qq_enabled(self, val: bool):
         self._settings["qq_enabled"] = val
+
+    @property
+    def memory_link_enabled(self) -> bool:
+        return bool(self._settings.get("memory_link_enabled", True))
+
+    @memory_link_enabled.setter
+    def memory_link_enabled(self, value: bool):
+        self._settings["memory_link_enabled"] = bool(value)
+
+    @property
+    def memory_evaluation_interval_minutes(self) -> int:
+        return max(10, min(1440, int(self._settings.get("memory_evaluation_interval_minutes", 30))))
+
+    @memory_evaluation_interval_minutes.setter
+    def memory_evaluation_interval_minutes(self, value: int):
+        self._settings["memory_evaluation_interval_minutes"] = max(10, min(1440, int(value)))
+
+    @property
+    def memory_max_candidates(self) -> int:
+        return max(1, min(20, int(self._settings.get("memory_max_candidates", 8))))
+
+    @memory_max_candidates.setter
+    def memory_max_candidates(self, value: int):
+        self._settings["memory_max_candidates"] = max(1, min(20, int(value)))
 
     @property
     def normal_enabled(self) -> bool:
@@ -667,6 +694,17 @@ class ProactiveChatScheduler:
         prob = (weight / 10.0) * (self.frequency / 30.0) * _BASE_RATE * 1.5
         prob = min(prob, 0.3)
         return random.random() < prob
+
+    def can_deliver_memory_cue(self) -> bool:
+        """Apply user-activity, cooldown and quiet-hour policy without randomness."""
+        if not self.memory_link_enabled or (not self.desktop_enabled and not self.qq_enabled):
+            return False
+        now = datetime.now()
+        if self._defer_until and now < self._defer_until:
+            return False
+        if self._last_fire_time and (now-self._last_fire_time).total_seconds()/60 < self.min_interval_minutes:
+            return False
+        return bool(self.weights[now.hour] if now.hour < len(self.weights) else 0)
     def should_slack_fire(self) -> bool:
         """
         使用与主动聊天相同的 24h 权重 + 概率公式判断是否触发摸鱼。

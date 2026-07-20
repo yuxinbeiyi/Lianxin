@@ -83,8 +83,9 @@ class CurrentStatePanelTests(unittest.TestCase):
         dialog = MemorySettingsDialog()
         tab_titles = [dialog._tabs.tabText(index) for index in range(dialog._tabs.count())]
 
-        self.assertEqual(5, dialog._tabs.count())
+        self.assertEqual(6, dialog._tabs.count())
         self.assertTrue(any("当前状态" in title for title in tab_titles))
+        self.assertTrue(any("记忆诊断" in title for title in tab_titles))
         self.assertIs(dialog._current_state_panel, dialog._tabs.widget(3))
         dialog.close()
 

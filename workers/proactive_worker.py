@@ -41,6 +41,10 @@ _PROACTIVE_SYSTEM = """你是莲心，一个聪明、温柔但偶尔有点毒舌
 4. 不要说"我主动来找你"之类的元描述，直接发内容就好。
 5. 长度控制在 1~3 句话之内。"""
 
+_MEMORY_PROACTIVE_SYSTEM = """你正在根据一条经过语义评估的用户近况，主动给{user_name}发消息。
+这不是机械提醒，也不是复述记忆。请严格遵循当前激活人格，以自然朋友式语气表达关心、询问或提醒。
+只输出 1~3 句话；不要提到“记忆系统”“Current State”“触发条件”或任何后台机制。"""
+
 # 观察模式下的 System Prompt——莲心刚"看"了主人一眼
 _OBSERVE_SYSTEM = """你是莲心，一个聪明、温柔但偶尔有点毒舌的AI助手。
 你刚刚偷偷"看"了{user_name}一眼——可能是瞄了一眼他的电脑屏幕，也可能是悄悄打开摄像头瞥了一下他在干嘛。
@@ -92,6 +96,7 @@ class ProactiveWorker(QThread):
                  camera_index: int = 0,
                  camera_wait: int = 15,
                  bilibili_mode: bool = False,
+                 memory_cue: dict = None,
                  parent=None):
         super().__init__(parent)
         self._history_mgr = history_manager
@@ -101,6 +106,7 @@ class ProactiveWorker(QThread):
         self._camera_index = camera_index
         self._camera_wait = camera_wait
         self._bilibili_mode = bilibili_mode
+        self._memory_cue = memory_cue or None
 
     def run(self):
         print("[观察-调试] 工作线程启动")
@@ -142,6 +148,12 @@ class ProactiveWorker(QThread):
             print("[观察-调试] 构建上下文...")
             try:
                 context = self._build_context(obs_text)
+                if self._memory_cue:
+                    context = (
+                        f"【本次主动联系依据】\n{self._memory_cue.get('content','')}\n"
+                        f"【表达意图】\n{self._memory_cue.get('suggested_message','')}\n"
+                        f"【决策理由（仅供理解，不要复述）】\n{self._memory_cue.get('rationale','')}\n\n" + context
+                    )
             except Exception as ctx_err:
                 print(f"[观察-调试] 构建上下文失败: {ctx_err}")
                 context = ""
@@ -308,7 +320,11 @@ class ProactiveWorker(QThread):
         """调用 API 生成一条主动消息。"""
         client, model = self._get_client()
 
-        if is_shoulder_explore:
+        if self._memory_cue:
+            system = _format_prompt(
+                _MEMORY_PROACTIVE_SYSTEM, getattr(self, "_persona_snapshot", None)
+            )
+        elif is_shoulder_explore:
             system = _format_prompt(
                 _SHOULDER_EXPLORE_SYSTEM, getattr(self, "_persona_snapshot", None)
             )

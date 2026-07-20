@@ -455,6 +455,19 @@ class ProactiveDialog(QDialog):
         self._defer_spin.setFixedWidth(100)
         defer_row.addWidget(self._defer_spin)
         adv_inner.addLayout(defer_row)
+
+        self._memory_link_cb = QCheckBox("允许记忆驱动的主动关怀")
+        self._memory_link_cb.setToolTip("模型判断是否值得联系；代码仅负责时间、冷却和防重复")
+        adv_inner.addWidget(self._memory_link_cb)
+        memory_row = QHBoxLayout()
+        memory_row.addWidget(QLabel("记忆线索评估间隔"))
+        memory_row.addStretch()
+        self._memory_eval_spin = QSpinBox()
+        self._memory_eval_spin.setRange(10, 1440)
+        self._memory_eval_spin.setSuffix(" 分钟")
+        self._memory_eval_spin.setFixedWidth(105)
+        memory_row.addWidget(self._memory_eval_spin)
+        adv_inner.addLayout(memory_row)
         layout.addWidget(advanced_group)
 
         # 每小时权重
@@ -1374,6 +1387,8 @@ class ProactiveDialog(QDialog):
         self._freq_slider.setValue(self._scheduler.frequency)
         self._interval_spin.setValue(self._scheduler.min_interval_minutes)
         self._defer_spin.setValue(self._scheduler.user_defer_minutes)
+        self._memory_link_cb.setChecked(self._scheduler.memory_link_enabled)
+        self._memory_eval_spin.setValue(self._scheduler.memory_evaluation_interval_minutes)
         self._normal_enable_cb.setChecked(self._scheduler.normal_enabled)
         for key, value in self._scheduler.behavior_weights.items():
             self._behavior_weight_sliders[key].setValue(value)
@@ -1445,6 +1460,8 @@ class ProactiveDialog(QDialog):
         self._scheduler.frequency = self._freq_slider.value()
         self._scheduler.min_interval_minutes = self._interval_spin.value()
         self._scheduler.user_defer_minutes = self._defer_spin.value()
+        self._scheduler.memory_link_enabled = self._memory_link_cb.isChecked()
+        self._scheduler.memory_evaluation_interval_minutes = self._memory_eval_spin.value()
         self._scheduler.normal_enabled = self._normal_enable_cb.isChecked()
         self._scheduler.behavior_weights = {
             key: slider.value() for key, slider in self._behavior_weight_sliders.items()

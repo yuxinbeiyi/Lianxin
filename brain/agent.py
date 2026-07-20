@@ -259,6 +259,7 @@ class AgentCore:
         self._source_channel = source_channel
         self._participant_id = str(participant_id)
         self._owner_scope = bool(owner_scope)
+        self._active_memory_trace_id = ""
         self._last_emotion = None     # 本轮回复的情绪标签（供 GUI 选图用）
         self._last_raw_response = None  # 本轮回复原始文本（含标签）
         self._last_reasoning = None    # 本轮回复的 COT 推理链
@@ -424,6 +425,23 @@ class AgentCore:
         # 即使用户此时在界面切换人格，也只影响下一条新请求。
         persona_snapshot, persona_transition = self._prepare_persona_request()
 
+        trace_id = ""
+        trace_started = time.perf_counter()
+        if getattr(self, "_owner_scope", True) and not getattr(self, "_use_local", False):
+            try:
+                from brain.memory_diagnostics import start_memory_trace
+                profile = getattr(persona_snapshot, "profile", None)
+                trace_id = start_memory_trace(
+                    session_id=getattr(self, "_session_id", None),
+                    channel=getattr(self, "_source_channel", "desktop"),
+                    persona_id=getattr(profile, "id", ""),
+                    persona_revision=getattr(persona_snapshot, "revision", 0),
+                    user_message=user_message,
+                )
+            except Exception:
+                trace_id = ""
+        self._active_memory_trace_id = trace_id
+
         self.history.append({"role": "user", "content": user_message})
         if not self._session_titled:
             title = user_message.strip()[:20]
@@ -432,12 +450,23 @@ class AgentCore:
         self._history_mgr.save_message(self._session_id, "user", user_message)
 
         effective_disable = disable_tools or self._disable_tools or self._use_local
-        response_text = self._function_calling_loop(on_tool_call, on_tool_result, forced_tool,
-                                                      effective_disable, interrupt_queue,
-                                                      on_interrupt, on_progress, user_message,
-                                                      on_round_start=on_round_start,
-                                                      persona_snapshot=persona_snapshot,
-                                                      persona_transition=persona_transition)
+        try:
+            response_text = self._function_calling_loop(on_tool_call, on_tool_result, forced_tool,
+                                                          effective_disable, interrupt_queue,
+                                                          on_interrupt, on_progress, user_message,
+                                                          on_round_start=on_round_start,
+                                                          persona_snapshot=persona_snapshot,
+                                                          persona_transition=persona_transition)
+        except Exception as exc:
+            if trace_id:
+                try:
+                    from brain.memory_diagnostics import finish_memory_trace
+                    finish_memory_trace(trace_id, status="failed", response=str(exc),
+                                        duration_ms=(time.perf_counter()-trace_started)*1000)
+                except Exception:
+                    pass
+            self._active_memory_trace_id = ""
+            raise
 
 
         # ── 剥离情绪标签：只存/显示干净文本，情绪通过属性传递 ──
@@ -462,6 +491,12 @@ class AgentCore:
         if response_guard is not None and not response_guard():
             self._last_emotion = None
             self._last_raw_response = None
+            if trace_id:
+                try:
+                    from brain.memory_diagnostics import finish_memory_trace
+                    finish_memory_trace(trace_id, status="stale", duration_ms=(time.perf_counter()-trace_started)*1000)
+                except Exception: pass
+            self._active_memory_trace_id = ""
             return ""
 
         # ── 情感系统：分析本轮交互 ────────────────────────────
@@ -520,6 +555,15 @@ class AgentCore:
         ).strip()
 
         self._last_reply_time = datetime.now()
+        if trace_id:
+            try:
+                from brain.memory_diagnostics import finish_memory_trace, prune_memory_diagnostics
+                finish_memory_trace(trace_id, status="success", response=display_response,
+                                    duration_ms=(time.perf_counter()-trace_started)*1000)
+                prune_memory_diagnostics()
+            except Exception:
+                pass
+        self._active_memory_trace_id = ""
         return display_response  # 返回干净文本，不含标签和 emoji
 
 
@@ -1287,6 +1331,14 @@ class AgentCore:
                     and name in _MEMORY_WRITE_TOOLS):
                 result = "用户已明确禁止写入长期记忆，本次调用被代码层阻止。"
                 print(f"  [权限边界] 已阻止长期记忆写入: {name}", flush=True)
+                if getattr(self, "_active_memory_trace_id", ""):
+                    try:
+                        from brain.memory_diagnostics import record_memory_event
+                        record_memory_event(self._active_memory_trace_id, "memory_tool_blocked",
+                                            reason="用户已明确禁止本轮记忆写入",
+                                            payload={"tool": name, "raw_arguments": (tc.function.arguments or "")[:1000]})
+                    except Exception:
+                        pass
                 messages.append({
                     "role": "tool", "tool_call_id": tc.id, "content": result,
                 })
@@ -1351,6 +1403,12 @@ class AgentCore:
             """执行单个工具调用（在 worker 线程内）。"""
             _set_ctx(self._session_id, self._history_mgr, self._model)
             name, args = item["name"], item["args"]
+            if name in _OWNER_MEMORY_TOOLS and self._active_memory_trace_id:
+                try:
+                    from brain.memory_diagnostics import record_memory_event
+                    record_memory_event(self._active_memory_trace_id, "memory_tool_call",
+                                        reason=name, payload={"tool": name, "arguments": args})
+                except Exception: pass
             if on_tool_call:
                 on_tool_call(name, args)
             t0 = _perf_time.perf_counter()
@@ -1368,6 +1426,13 @@ class AgentCore:
                 is_error = True
                 print(f"  [工具错误] {name} → {e}\n", flush=True)
             elapsed_ms = (_perf_time.perf_counter() - t0) * 1000
+            if name in _OWNER_MEMORY_TOOLS and self._active_memory_trace_id:
+                try:
+                    from brain.memory_diagnostics import record_memory_event
+                    record_memory_event(self._active_memory_trace_id, "memory_tool_result",
+                                        reason=name, payload={"tool": name, "is_error": is_error,
+                                        "elapsed_ms": round(elapsed_ms, 1), "result": str(result)[:1000]})
+                except Exception: pass
             if on_tool_result:
                 on_tool_result(name, result, is_error, elapsed_ms)
             idx = parsed_order[id(item["tc"])]
@@ -1787,10 +1852,19 @@ class AgentCore:
         # 当前状态是带有效期的事实快照。只向主人会话注入，并在读取时自动淘汰过期项。
         if not self._use_local and self._owner_scope:
             try:
-                from brain.current_state import format_current_state_context
+                from brain.current_state import format_current_state_context, list_current_states
                 current_state_context = format_current_state_context()
                 if current_state_context:
                     messages.append({"role": "system", "content": current_state_context})
+                    if self._active_memory_trace_id:
+                        from brain.memory_diagnostics import record_memory_event
+                        states = list_current_states()
+                        record_memory_event(self._active_memory_trace_id, "current_state_injected",
+                                            reason=f"注入 {len(states)} 条有效状态", payload={"states": states})
+                elif self._active_memory_trace_id:
+                    from brain.memory_diagnostics import record_memory_event
+                    record_memory_event(self._active_memory_trace_id, "current_state_checked",
+                                        reason="当前没有有效状态", payload={"states": []})
             except Exception:
                 pass
 
@@ -1853,6 +1927,25 @@ class AgentCore:
                 if memories:
                     rag_text = format_rag_context(memories)
                     messages.append({"role": "system", "content": rag_text})
+                    if self._active_memory_trace_id:
+                        from brain.memory_diagnostics import record_memory_event
+                        query = last_user_msg if last_user_msg else user_message
+                        for final_score, memory in memories:
+                            record_memory_event(
+                                self._active_memory_trace_id, "rag_memory_injected",
+                                memory_id=memory.get("memory_id"), score=float(final_score),
+                                reason="语义相似度、质量、时效与强度综合排序后进入 Top 3",
+                                payload={"query": query[:500], "content": memory.get("content", ""),
+                                         "semantic_similarity": memory.get("semantic_similarity"),
+                                         "quality_score": memory.get("quality_score"),
+                                         "source": memory.get("source_channel") or memory.get("source"),
+                                         "evidence_count": memory.get("evidence_count", 0)},
+                            )
+                elif self._active_memory_trace_id:
+                    from brain.memory_diagnostics import record_memory_event
+                    record_memory_event(self._active_memory_trace_id, "rag_no_match",
+                                        reason="没有记忆达到 0.5 检索阈值",
+                                        payload={"query": (last_user_msg if last_user_msg else user_message)[:500], "threshold": 0.5})
             except Exception:
                 pass
 
@@ -1862,6 +1955,11 @@ class AgentCore:
                 graph_summary = get_graph_summary_for_user(depth=2)
                 if graph_summary:
                     messages.append({"role": "system", "content": graph_summary})
+                    if self._active_memory_trace_id:
+                        from brain.memory_diagnostics import record_memory_event
+                        record_memory_event(self._active_memory_trace_id, "graph_memory_injected",
+                                            reason="主人知识图谱存在关联上下文",
+                                            payload={"preview": graph_summary[:1200]})
             except Exception:
                 pass
 
