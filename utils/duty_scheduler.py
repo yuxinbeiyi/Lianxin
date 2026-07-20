@@ -1182,6 +1182,65 @@ class MemoryNarrativeDuty(Duty):
 
 
 # ═══════════════════════════════════════════════════════════════
+# WorkingMemorySummaryDuty
+# ═══════════════════════════════════════════════════════════════
+
+class WorkingMemorySummaryDuty(Duty):
+    """Model-assisted topic summary; code summary remains the fallback."""
+
+    def __init__(self):
+        super().__init__("working_memory_summary", "工作记忆摘要", tick_interval_seconds=300)
+
+    @staticmethod
+    def _config():
+        try:
+            from config import get_memory_config
+            return get_memory_config()
+        except Exception:
+            return {"working_memory_model_summary_enabled": True, "working_memory_summary_interval_minutes": 10}
+
+    def _check_enabled(self, state):
+        return bool(self._config().get("working_memory_model_summary_enabled", True))
+
+    def _should_fire(self, state):
+        if state.agent_busy or not state.history_manager:
+            return False
+        try:
+            from brain.working_memory import get_working_topic, should_refresh_model_summary
+            topic = get_working_topic(session_id=state.session_id)
+            if state.last_user_message_time and state.now - state.last_user_message_time < 120:
+                return False
+            return should_refresh_model_summary(topic, self._config().get("working_memory_summary_interval_minutes", 10))
+        except Exception:
+            return False
+
+    def _create_worker(self, state, **kwargs):
+        from workers.working_memory_summary_worker import WorkingMemorySummaryWorker
+        return WorkingMemorySummaryWorker(state.history_manager, state.session_id)
+
+    def _wire_worker(self, worker):
+        worker.completed.connect(self._on_completed)
+        worker.failed.connect(self._on_failed)
+
+    def _on_completed(self, result):
+        self.status.is_running = False
+        self.status.last_result = result.get("status", "success")
+        self.status.success_count += 1
+        self.status.last_result_text = "工作记忆摘要已更新" if result.get("status") == "success" else "暂无可更新工作记忆"
+
+    def _on_failed(self, error):
+        self.status.is_running = False
+        self.status.last_result = "failed"
+        self.status.fail_count += 1
+        self.status.last_result_text = str(error)
+
+    @property
+    def _scheduler(self): return self.__scheduler
+    @_scheduler.setter
+    def _scheduler(self, value): self.__scheduler = value
+
+
+# ═══════════════════════════════════════════════════════════════
 # MemoryMaintenanceDuty
 # ═══════════════════════════════════════════════════════════════
 

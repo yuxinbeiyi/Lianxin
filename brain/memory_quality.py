@@ -56,7 +56,7 @@ def _source_score(source: str) -> float:
     return SOURCE_SCORES.get(str(source or ""), 0.60)
 
 
-def _fact_quality(fact: dict, fragments: list[dict], relations: list[dict], pending_count: int, now: datetime) -> tuple[float, dict, str]:
+def _fact_quality(fact: dict, fragments: list[dict], relations: list[dict], pending_count: int, now: datetime) -> tuple[float, dict, str, str]:
     if fragments:
         confidences = [
             min(1.0, max(0.0, float(fragment.get("confidence", 0.5))))
@@ -70,7 +70,7 @@ def _fact_quality(fact: dict, fragments: list[dict], relations: list[dict], pend
     strength = min(1.0, max(0.0, float(fact.get("strength", 1) or 1)) / 5.0)
     source = _source_score(fact.get("source", ""))
     age = _age_days(fact.get("updated_at") or fact.get("created_at", ""), now)
-    horizon = {
+    base_horizon = {
         "events": 365.0,
         "knowledge": 730.0,
         "profile": 730.0,
@@ -78,6 +78,8 @@ def _fact_quality(fact: dict, fragments: list[dict], relations: list[dict], pend
         "behaviors": 540.0,
         "skills": 540.0,
     }.get(fact.get("category"), 540.0)
+    emotional_weight = min(1.0, max(0.0, float(fact.get("emotional_weight", 0.5) or 0.5)))
+    horizon = base_horizon * (0.65 + emotional_weight * 0.70)
     recency = max(0.10, 1.0 - age / horizon)
     access_count = max(0, int(fact.get("access_count", 0) or 0))
     access = min(1.0, math.log1p(access_count) / math.log(11))
@@ -91,6 +93,8 @@ def _fact_quality(fact: dict, fragments: list[dict], relations: list[dict], pend
         "evidence_count": len(fragments),
         "relation_count": len(relations),
         "pending_conflicts": pending_count,
+        "emotional_weight": round(emotional_weight, 4),
+        "decay_horizon_days": round(horizon, 2),
     }
     score = sum(breakdown[key] * weight for key, weight in QUALITY_WEIGHTS.items())
     score = round(min(1.0, max(0.0, score)), 4)
@@ -106,7 +110,15 @@ def _fact_quality(fact: dict, fragments: list[dict], relations: list[dict], pend
         review_status = "stale"
     else:
         review_status = "normal"
-    return score, breakdown, review_status
+    if fact.get("status") == "retired":
+        lifecycle_stage = "retired"
+    elif age > horizon * 1.5 and access_count == 0:
+        lifecycle_stage = "decaying"
+    elif score >= 0.70 and len(fragments) >= 1:
+        lifecycle_stage = "stable"
+    else:
+        lifecycle_stage = "maturing"
+    return score, breakdown, review_status, lifecycle_stage
 
 
 def calculate_memory_quality(fact_id: int, *, now: datetime | None = None) -> dict:
@@ -128,13 +140,14 @@ def calculate_memory_quality(fact_id: int, *, now: datetime | None = None) -> di
     except Exception:
         relations, pending = [], 0
     current = now or datetime.now().astimezone()
-    score, breakdown, review_status = _fact_quality(fact, fragments, relations, pending, current)
+    score, breakdown, review_status, lifecycle_stage = _fact_quality(fact, fragments, relations, pending, current)
     return {
         "fact_id": int(fact_id),
         "content": fact["content"],
         "category": fact["category"],
         "score": score,
         "review_status": review_status,
+        "lifecycle_stage": lifecycle_stage,
         "breakdown": breakdown,
     }
 
@@ -161,9 +174,9 @@ def recalculate_memory_quality(
         for item_id in ids:
             result = calculate_memory_quality(item_id, now=current)
             conn.execute(
-                """UPDATE memory_facts SET quality_score=?, review_status=?,
+                """UPDATE memory_facts SET quality_score=?, review_status=?, lifecycle_stage=?,
                        quality_updated_at=? WHERE id=? AND status='active'""",
-                (result["score"], result["review_status"], current.isoformat(timespec="seconds"), item_id),
+                (result["score"], result["review_status"], result["lifecycle_stage"], current.isoformat(timespec="seconds"), item_id),
             )
             updated.append(result)
         conn.commit()
@@ -177,6 +190,29 @@ def recalculate_memory_quality(
             },
             "items": updated,
         }
+
+
+def set_memory_emotional_weight(fact_id: int, weight: float) -> dict:
+    conn = _ensure_schema()
+    value = min(1.0, max(0.0, float(weight)))
+    conn.execute("UPDATE memory_facts SET emotional_weight=?,updated_at=? WHERE id=?", (value, datetime.now().astimezone().isoformat(timespec="seconds"), int(fact_id)))
+    conn.commit()
+    return calculate_memory_quality(int(fact_id))
+
+
+def retire_memory(fact_id: int, reason: str = "") -> bool:
+    conn = _ensure_schema()
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    cur = conn.execute("UPDATE memory_facts SET status='retired',lifecycle_stage='retired',valid_to=?,updated_at=? WHERE id=? AND status='active'", (now, now, int(fact_id)))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def restore_memory(fact_id: int) -> bool:
+    conn = _ensure_schema()
+    cur = conn.execute("UPDATE memory_facts SET status='active',lifecycle_stage='maturing',valid_to='',updated_at=? WHERE id=? AND status='retired'", (datetime.now().astimezone().isoformat(timespec="seconds"), int(fact_id)))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def record_memory_access(fact_ids: list[int] | tuple[int, ...]) -> int:
@@ -226,6 +262,10 @@ def get_memory_statistics() -> dict:
         "average_quality": round(float(quality or 0.0), 4),
         "review_status_counts": {row["review_status"]: row["count"] for row in rows},
         "pending_conflicts": pending_conflicts,
+        "lifecycle_stage_counts": {
+            row["lifecycle_stage"] or "maturing": row["count"]
+            for row in conn.execute("SELECT lifecycle_stage,COUNT(*) AS count FROM memory_facts WHERE status='active' GROUP BY lifecycle_stage").fetchall()
+        },
     }
 
 

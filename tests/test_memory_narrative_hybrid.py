@@ -85,6 +85,8 @@ class NarrativeHybridTests(unittest.TestCase):
         graph_memory.add_memory_fragment(fact_id, "莲心项目正在升级", "events")
         candidate = collect_narrative_candidates()[0]
         apply_narrative_result({"entities": [{"name": "莲心项目", "entity_type": "project", "summary": "正在升级"}], "episodes": [], "sagas": []}, [candidate])
+        graph_row = graph_memory._get_conn().execute("SELECT id FROM graph_entities WHERE name=?", ("莲心项目",)).fetchone()
+        self.assertIsNotNone(graph_row)
         with patch("brain.memory_rag._get_model", return_value=None), patch("brain.memory_rag._load_attempted", True):
             results = search_similar("莲心项目是谁", top_k=5)
         self.assertTrue(any(item[1].get("source_table") == "memory_entity_profiles" for item in results))
@@ -103,6 +105,24 @@ class NarrativeHybridTests(unittest.TestCase):
         self.assertEqual(1, stats["episodes_merged"])
         active = [episode for episode in list_episodes() if episode["status"] == "active"]
         self.assertEqual(1, len(active))
+
+    def test_existing_saga_can_evolve_without_new_fragments(self):
+        from brain.memory_narrative import apply_narrative_result, collect_narrative_candidates, list_sagas
+        for content in ("项目第一阶段完成", "项目第二阶段开始"):
+            fact_id = graph_memory.add_fact(content, "events")
+            graph_memory.add_memory_fragment(fact_id, content, "events")
+        candidates = collect_narrative_candidates()
+        apply_narrative_result({
+            "entities": [],
+            "episodes": [
+                {"title": "第一阶段", "summary": "项目第一阶段完成", "fragment_ids": [candidates[0]["id"], candidates[1]["id"]]},
+                {"title": "第二阶段", "summary": "项目第二阶段开始", "fragment_ids": [candidates[0]["id"], candidates[1]["id"]]},
+            ],
+            "sagas": [{"title": "项目长期演进", "summary": "项目从第一阶段进入第二阶段", "episode_indices": [0, 1]}],
+        }, candidates)
+        saga = list_sagas()[0]
+        apply_narrative_result({"entities": [], "episodes": [], "sagas": [{"title": "项目长期演进", "summary": "项目正在持续演进并进入验证阶段", "episode_ids": [int(value) for value in __import__('json').loads(saga["episode_ids"])]}]}, [])
+        self.assertIn("验证阶段", list_sagas()[0]["summary"])
 
 
 if __name__ == "__main__":

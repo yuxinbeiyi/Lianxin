@@ -9,7 +9,7 @@ from PyQt5.QtGui import QColor, QBrush, QPen
 from PyQt5.QtWidgets import (
     QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsScene,
     QGraphicsSimpleTextItem, QGraphicsView, QLabel, QPushButton,
-    QVBoxLayout, QWidget,
+    QComboBox, QHBoxLayout, QVBoxLayout, QWidget,
 )
 
 
@@ -28,13 +28,19 @@ class MemoryConstellationPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        top = QVBoxLayout()
+        top = QHBoxLayout()
         self._hint = QLabel("叙事记忆会在后台整理后出现在这里。点击实体节点查看档案。")
         self._hint.setWordWrap(True)
         top.addWidget(self._hint)
+        self._layer_combo = QComboBox()
+        self._layer_combo.addItem("实体层", "entities")
+        self._layer_combo.addItem("Episode 层", "episodes")
+        self._layer_combo.addItem("Saga 层", "sagas")
+        self._layer_combo.currentIndexChanged.connect(lambda _index: self.refresh())
+        top.addWidget(self._layer_combo)
         refresh = QPushButton("刷新星图")
         refresh.clicked.connect(self.refresh)
-        top.addWidget(refresh, alignment=Qt.AlignRight)
+        top.addWidget(refresh)
         layout.addLayout(top)
         self._scene = QGraphicsScene(self)
         self._view = QGraphicsView(self._scene)
@@ -58,10 +64,17 @@ class MemoryConstellationPanel(QWidget):
         except Exception as exc:
             self._hint.setText(f"星图加载失败：{exc}")
             return
-        if not entities:
+        layer = self._layer_combo.currentData()
+        if not entities and layer == "entities":
             self._hint.setText("暂无实体档案。完成几轮对话并等待后台叙事整合后，星图会逐步生长。")
             return
         self._hint.setText(f"{len(entities)} 个实体 · {len(episodes)} 个 Episode · {len(sagas)} 条 Saga")
+        if layer == "episodes":
+            self._render_episodes(episodes)
+            return
+        if layer == "sagas":
+            self._render_sagas(sagas)
+            return
         center_x, center_y = 0.0, 0.0
         radius = max(180.0, 35.0 * math.sqrt(len(entities)))
         positions = {}
@@ -105,4 +118,71 @@ class MemoryConstellationPanel(QWidget):
             f"{entity.get('name', '')} · {entity.get('entity_type', 'concept')} · "
             f"提及 {entity.get('mention_count', 0)} 次\n"
             f"{entity.get('summary', '')}\n当前状态：{entity.get('current_status', '')}"
+        )
+
+    def _render_episodes(self, episodes: list[dict]):
+        if not episodes:
+            self._hint.setText(self._hint.text() + " · 暂无 Episode")
+            return
+        radius = max(180.0, 45.0 * math.sqrt(len(episodes)))
+        positions = {}
+        for index, episode in enumerate(episodes):
+            angle = 2 * math.pi * index / max(1, len(episodes))
+            x, y = radius * math.cos(angle), radius * math.sin(angle)
+            positions[int(episode["id"])] = (x, y)
+            size = 26 + min(30, int(float(episode.get("confidence", 0.5) or 0.5) * 30))
+            item = _EntityNode(QRectF(x - size / 2, y - size / 2, size, size), episode, self._show_episode)
+            item.setBrush(QBrush(QColor("#D994FF")))
+            item.setPen(QPen(QColor("#F0C8FF"), 1.5))
+            item.setToolTip(episode.get("summary", ""))
+            self._scene.addItem(item)
+            label = QGraphicsSimpleTextItem(episode.get("title", "")[:30])
+            label.setBrush(QBrush(QColor("#F2DEFF")))
+            label.setPos(x + size / 2 + 4, y - 8)
+            self._scene.addItem(label)
+        for left_index, left in enumerate(episodes):
+            left_entities = set(json.loads(left.get("entity_ids", "[]") or "[]"))
+            for right in episodes[left_index + 1:]:
+                right_entities = set(json.loads(right.get("entity_ids", "[]") or "[]"))
+                if not left_entities & right_entities:
+                    continue
+                x1, y1 = positions[int(left["id"])]
+                x2, y2 = positions[int(right["id"])]
+                line = QGraphicsLineItem(x1, y1, x2, y2)
+                line.setPen(QPen(QColor("#604B76"), 1))
+                self._scene.addItem(line)
+        self._scene.setSceneRect(-radius - 160, -radius - 100, radius * 2 + 320, radius * 2 + 200)
+        self._view.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
+
+    def _render_sagas(self, sagas: list[dict]):
+        if not sagas:
+            self._hint.setText(self._hint.text() + " · 暂无 Saga")
+            return
+        radius = max(180.0, 65.0 * math.sqrt(len(sagas)))
+        for index, saga in enumerate(sagas):
+            angle = 2 * math.pi * index / max(1, len(sagas))
+            x, y = radius * math.cos(angle), radius * math.sin(angle)
+            size = 38 + min(36, int(float(saga.get("confidence", 0.5) or 0.5) * 36))
+            item = _EntityNode(QRectF(x - size / 2, y - size / 2, size, size), saga, self._show_saga)
+            item.setBrush(QBrush(QColor("#FFB454")))
+            item.setPen(QPen(QColor("#FFE0A5"), 2))
+            item.setToolTip(saga.get("summary", ""))
+            self._scene.addItem(item)
+            label = QGraphicsSimpleTextItem(saga.get("title", "")[:30])
+            label.setBrush(QBrush(QColor("#FFF0CE")))
+            label.setPos(x + size / 2 + 4, y - 8)
+            self._scene.addItem(label)
+        self._scene.setSceneRect(-radius - 180, -radius - 110, radius * 2 + 360, radius * 2 + 220)
+        self._view.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
+
+    def _show_episode(self, episode: dict):
+        self._detail.setText(
+            f"Episode #{episode.get('id')} · {episode.get('title', '')}\n"
+            f"{episode.get('summary', '')}\n来源事实：{episode.get('source_fact_ids', '[]')} · 来源碎片：{episode.get('fragment_ids', '[]')}"
+        )
+
+    def _show_saga(self, saga: dict):
+        self._detail.setText(
+            f"Saga #{saga.get('id')} · {saga.get('title', '')}\n"
+            f"{saga.get('summary', '')}\n关联 Episode：{saga.get('episode_ids', '[]')}"
         )

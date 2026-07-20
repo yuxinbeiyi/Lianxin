@@ -18,9 +18,22 @@ def _ensure():
         id INTEGER PRIMARY KEY AUTOINCREMENT, topic_key TEXT NOT NULL UNIQUE,
         topic_label TEXT NOT NULL, summary TEXT DEFAULT '', facts_json TEXT DEFAULT '[]',
         open_loops_json TEXT DEFAULT '[]', session_id INTEGER, status TEXT DEFAULT 'active',
-        last_active_at TEXT NOT NULL, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        last_active_at TEXT NOT NULL, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        model_summary TEXT DEFAULT '', model_facts_json TEXT DEFAULT '[]',
+        task_state TEXT DEFAULT 'none', summary_source TEXT DEFAULT 'code', summary_updated_at TEXT DEFAULT ''
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_working_topics_active ON memory_working_topics(status,last_active_at)")
+    for sql in (
+        "ALTER TABLE memory_working_topics ADD COLUMN model_summary TEXT DEFAULT ''",
+        "ALTER TABLE memory_working_topics ADD COLUMN model_facts_json TEXT DEFAULT '[]'",
+        "ALTER TABLE memory_working_topics ADD COLUMN task_state TEXT DEFAULT 'none'",
+        "ALTER TABLE memory_working_topics ADD COLUMN summary_source TEXT DEFAULT 'code'",
+        "ALTER TABLE memory_working_topics ADD COLUMN summary_updated_at TEXT DEFAULT ''",
+    ):
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass
     conn.commit()
     return conn
 
@@ -62,6 +75,11 @@ def update_working_topic(*, user_message: str, recent_messages: list[dict] | Non
         lines.append(f"{role}：{content[:240]}")
         if message.get("role") == "user" and ("?" in content or "？" in content or "待" in content or "需要" in content):
             open_loops.append(content[:180])
+    if active and not open_loops and active["summary_source"] == "model":
+        try:
+            open_loops = json.loads(active["open_loops_json"] or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            open_loops = []
     summary = "\n".join(lines)[-1800:]
     expires = now + timedelta(minutes=max(15, min(720, int(ttl_minutes))))
     if active and active["topic_key"] == key:
@@ -83,10 +101,13 @@ def update_working_topic(*, user_message: str, recent_messages: list[dict] | Non
     return get_working_topic(topic_id)
 
 
-def get_working_topic(topic_id: int | None = None) -> dict | None:
+def get_working_topic(topic_id: int | None = None, session_id: int | None = None) -> dict | None:
     conn = _ensure()
     if topic_id:
         row = conn.execute("SELECT * FROM memory_working_topics WHERE id=?", (int(topic_id),)).fetchone()
+    elif session_id is not None:
+        row = conn.execute("""SELECT * FROM memory_working_topics WHERE status='active' AND session_id IS ?
+          AND expires_at>=? ORDER BY last_active_at DESC LIMIT 1""", (session_id, _now().isoformat(timespec="seconds"))).fetchone()
     else:
         row = conn.execute("""SELECT * FROM memory_working_topics WHERE status='active' AND expires_at>=?
           ORDER BY last_active_at DESC LIMIT 1""", (_now().isoformat(timespec="seconds"),)).fetchone()
@@ -94,17 +115,53 @@ def get_working_topic(topic_id: int | None = None) -> dict | None:
         return None
     result = dict(row)
     result["facts"] = json.loads(result.pop("facts_json") or "[]")
+    result["model_facts"] = json.loads(result.pop("model_facts_json", "[]") or "[]")
     result["open_loops"] = json.loads(result.pop("open_loops_json") or "[]")
     return result
 
 
+def should_refresh_model_summary(topic: dict | None, interval_minutes: int = 10) -> bool:
+    if not topic or not topic.get("model_summary"):
+        return True
+    try:
+        updated = datetime.fromisoformat(topic.get("summary_updated_at", ""))
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=_now().tzinfo)
+        return (_now() - updated.astimezone(_now().tzinfo)).total_seconds() >= max(1, int(interval_minutes)) * 60
+    except (TypeError, ValueError):
+        return True
+
+
 def format_working_memory_context(topic: dict | None = None) -> str:
     topic = topic or get_working_topic()
-    if not topic or not topic.get("summary"):
+    if not topic or not (topic.get("summary") or topic.get("model_summary")):
         return ""
-    lines = ["【当前话题工作记忆】", f"主题：{topic.get('topic_label', '当前话题')}", topic["summary"]]
+    summary = topic.get("model_summary") or topic.get("summary")
+    lines = ["【当前话题工作记忆】", f"主题：{topic.get('topic_label', '当前话题')}", summary]
+    if topic.get("model_summary"):
+        lines.append(f"模型任务阶段：{topic.get('task_state', 'none')}")
+    facts = topic.get("model_facts") or topic.get("facts") or []
+    if facts:
+        lines.append("当前稳定事实：" + "；".join(str(item)[:180] for item in facts[:5]))
     loops = topic.get("open_loops") or []
     if loops:
         lines.append("未闭环问题：" + "；".join(loops[:3]))
     lines.append("这只是当前话题的临时工作记忆；话题切换后不要把它当作长期事实。")
     return "\n".join(lines)
+
+
+def apply_model_summary(topic_id: int, *, summary: str, facts: list[str] | None = None,
+                        open_loops: list[str] | None = None, task_state: str = "none") -> bool:
+    allowed = {"none", "exploring", "planning", "executing", "waiting", "done"}
+    state = task_state if task_state in allowed else "none"
+    conn = _ensure()
+    row = conn.execute("SELECT id FROM memory_working_topics WHERE id=?", (int(topic_id),)).fetchone()
+    if not row:
+        return False
+    now = _now().isoformat(timespec="seconds")
+    conn.execute("""UPDATE memory_working_topics SET model_summary=?,model_facts_json=?,open_loops_json=?,
+      task_state=?,summary_source='model',summary_updated_at=?,updated_at=? WHERE id=?""", (
+        str(summary or "").strip()[:2200], json.dumps([str(item)[:240] for item in (facts or [])[:8]], ensure_ascii=False),
+        json.dumps([str(item)[:240] for item in (open_loops or [])[:8]], ensure_ascii=False), state, now, now, int(topic_id)))
+    conn.commit()
+    return True

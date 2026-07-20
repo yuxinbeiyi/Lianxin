@@ -38,7 +38,8 @@ class MemoryNarrativeWorker(QThread):
         try:
             from brain.memory_narrative import (
                 apply_narrative_result, collect_narrative_candidates,
-                finish_narrative_run, merge_narrative_duplicates, start_narrative_run,
+                finish_narrative_run, list_episodes, merge_narrative_duplicates,
+                start_narrative_run,
             )
             candidates = collect_narrative_candidates(self.max_candidates)
             run_id = start_narrative_run(len(candidates))
@@ -61,6 +62,8 @@ class MemoryNarrativeWorker(QThread):
 
 只返回 JSON：{{"entities":[{{"name":"","entity_type":"person|project|place|event|concept|other","summary":"","current_status":"","confidence":0.0}}],"episodes":[{{"title":"","summary":"","category":"event|project|relationship|other","fragment_ids":[1,2],"entities":[{{"name":"","entity_type":""}}],"occurred_from":"","occurred_to":"","confidence":0.0}}],"sagas":[{{"title":"","summary":"","episode_indices":[0,1],"confidence":0.0}}]}}
 
+已有叙事（可通过 episode_id 更新，而不是重复创建）：{json.dumps(list_episodes(20), ensure_ascii=False)}
+
 碎片：{json.dumps(candidates, ensure_ascii=False)}"""
             response = client.chat.completions.create(
                 model=model, temperature=0.1, max_tokens=3000,
@@ -78,6 +81,7 @@ class MemoryNarrativeWorker(QThread):
             finish_narrative_run(
                 run_id, status="success",
                 episodes_created=stats.get("episodes_created", 0),
+                episodes_updated=stats.get("episodes_updated", 0),
                 entities_updated=stats.get("entities_updated", 0),
             )
             self.completed.emit({"candidates": len(candidates), **stats})

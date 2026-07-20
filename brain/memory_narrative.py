@@ -40,6 +40,8 @@ def _ensure_tables():
         mention_count INTEGER NOT NULL DEFAULT 0,
         source_fact_ids TEXT NOT NULL DEFAULT '[]',
         related_entity_ids TEXT NOT NULL DEFAULT '[]',
+        graph_entity_id INTEGER,
+        graph_entity_type TEXT DEFAULT '',
         status TEXT NOT NULL DEFAULT 'active',
         first_seen_at TEXT DEFAULT '',
         last_seen_at TEXT DEFAULT '',
@@ -82,6 +84,7 @@ def _ensure_tables():
         finished_at TEXT DEFAULT '',
         candidates INTEGER NOT NULL DEFAULT 0,
         episodes_created INTEGER NOT NULL DEFAULT 0,
+        episodes_updated INTEGER NOT NULL DEFAULT 0,
         entities_updated INTEGER NOT NULL DEFAULT 0,
         error TEXT DEFAULT ''
     );
@@ -90,6 +93,15 @@ def _ensure_tables():
     CREATE INDEX IF NOT EXISTS idx_episodes_updated ON memory_episodes(updated_at);
     CREATE INDEX IF NOT EXISTS idx_sagas_status ON memory_sagas(status);
     """)
+    for sql in (
+        "ALTER TABLE memory_entity_profiles ADD COLUMN graph_entity_id INTEGER",
+        "ALTER TABLE memory_entity_profiles ADD COLUMN graph_entity_type TEXT DEFAULT ''",
+        "ALTER TABLE memory_narrative_runs ADD COLUMN episodes_updated INTEGER NOT NULL DEFAULT 0",
+    ):
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass
     conn.commit()
     return conn
 
@@ -129,6 +141,15 @@ def _upsert_entity(conn, item: dict, source_fact_ids: list[int], timestamp: str)
     if not name:
         return None
     entity_type = str(item.get("entity_type", item.get("type", "concept")) or "concept").strip()[:40]
+    graph_type = {
+        "person": "人物", "project": "概念", "place": "地点",
+        "event": "事件", "concept": "概念", "organization": "组织",
+    }.get(entity_type, "概念")
+    try:
+        from brain.graph_memory import _get_or_create_entity
+        graph_entity_id = _get_or_create_entity(conn, name, graph_type)
+    except Exception:
+        graph_entity_id = None
     row = conn.execute(
         "SELECT * FROM memory_entity_profiles WHERE name=? AND entity_type=?",
         (name, entity_type),
@@ -141,20 +162,20 @@ def _upsert_entity(conn, item: dict, source_fact_ids: list[int], timestamp: str)
     if row:
         conn.execute(
             """UPDATE memory_entity_profiles SET summary=?, current_status=?, confidence=?,
-               mention_count=mention_count+1, source_fact_ids=?, last_seen_at=?, updated_at=?
-               WHERE id=?""",
+               mention_count=mention_count+1, source_fact_ids=?, last_seen_at=?, updated_at=?,
+               graph_entity_id=?, graph_entity_type=? WHERE id=?""",
             (summary or row["summary"], current_status or row["current_status"],
              max(confidence, float(row["confidence"] or 0)), json.dumps(merged_ids),
-             timestamp, timestamp, int(row["id"])),
+             timestamp, timestamp, graph_entity_id, graph_type, int(row["id"])),
         )
         return int(row["id"])
     cur = conn.execute(
         """INSERT INTO memory_entity_profiles
            (name,entity_type,summary,current_status,confidence,mention_count,
-            source_fact_ids,first_seen_at,last_seen_at,created_at,updated_at)
-           VALUES (?,?,?,?,?,1,?,?,?,?,?)""",
+            source_fact_ids,graph_entity_id,graph_entity_type,first_seen_at,last_seen_at,created_at,updated_at)
+           VALUES (?,?,?,?,?,1,?,?,?,?,?,?,?)""",
         (name, entity_type, summary, current_status, confidence,
-         json.dumps(merged_ids), timestamp, timestamp, timestamp, timestamp),
+         json.dumps(merged_ids), graph_entity_id, graph_type, timestamp, timestamp, timestamp, timestamp),
     )
     return int(cur.lastrowid)
 
@@ -164,6 +185,7 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
     conn = _ensure_tables()
     by_id = {int(item["id"]): item for item in candidates}
     created = 0
+    updated = 0
     entities = 0
     candidate_ids = set(by_id)
     timestamp = _now()
@@ -191,11 +213,7 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
             summary = str(episode.get("summary", "") or "").strip()[:1600]
             if not summary:
                 continue
-            fingerprint = _episode_fingerprint(title, fragment_ids)
-            existing = conn.execute("SELECT id FROM memory_episodes WHERE fingerprint=?", (fingerprint,)).fetchone()
-            if existing:
-                created_episode_ids.append(int(existing["id"]))
-                continue
+            confidence = min(1.0, max(0.0, float(episode.get("confidence", 0.6) or 0.6)))
             source_fact_ids = sorted({int(by_id[item]["fact_id"]) for item in fragment_ids})
             entity_ids = []
             for entity in episode.get("entities", []) if isinstance(episode.get("entities"), list) else []:
@@ -203,7 +221,62 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
                 if entity_id and entity_id not in entity_ids:
                     entity_ids.append(entity_id)
                     entities += 1
-            confidence = min(1.0, max(0.0, float(episode.get("confidence", 0.6) or 0.6)))
+            fingerprint = _episode_fingerprint(title, fragment_ids)
+            requested_id = 0
+            try:
+                requested_id = int(episode.get("episode_id", 0) or 0)
+            except (TypeError, ValueError):
+                requested_id = 0
+            existing_by_id = conn.execute(
+                "SELECT * FROM memory_episodes WHERE id=? AND status='active'", (requested_id,)
+            ).fetchone() if requested_id else None
+            if existing_by_id:
+                old_fragments = _json(existing_by_id["fragment_ids"], [])
+                old_facts = _json(existing_by_id["source_fact_ids"], [])
+                old_entities = _json(existing_by_id["entity_ids"], [])
+                fragment_ids = list(dict.fromkeys(old_fragments + fragment_ids))
+                source_fact_ids = sorted(set(old_facts + [int(by_id[item]["fact_id"]) for item in fragment_ids if item in by_id]))
+                entity_ids = list(dict.fromkeys(old_entities + entity_ids))
+                new_fingerprint = _episode_fingerprint(title, fragment_ids)
+                conn.execute(
+                    """UPDATE memory_episodes SET title=?,summary=?,category=?,entity_ids=?,fragment_ids=?,
+                       source_fact_ids=?,confidence=MAX(confidence,?),occurred_from=?,occurred_to=?,
+                       updated_at=?,fingerprint=? WHERE id=?""",
+                    (title, summary, str(episode.get("category", existing_by_id["category"]))[:40],
+                     json.dumps(entity_ids), json.dumps(fragment_ids), json.dumps(source_fact_ids), confidence,
+                     str(episode.get("occurred_from", existing_by_id["occurred_from"]) or "")[:40],
+                     str(episode.get("occurred_to", existing_by_id["occurred_to"]) or "")[:40], timestamp,
+                     new_fingerprint, requested_id),
+                )
+                created_episode_ids.append(requested_id)
+                updated += 1
+                continue
+            existing = conn.execute("SELECT id FROM memory_episodes WHERE fingerprint=?", (fingerprint,)).fetchone()
+            if existing:
+                created_episode_ids.append(int(existing["id"]))
+                continue
+            if len(entity_ids) > 1:
+                profile_rows = conn.execute(
+                    "SELECT id,name,entity_type,graph_entity_id,graph_entity_type,related_entity_ids FROM memory_entity_profiles WHERE id IN (" + ",".join("?" for _ in entity_ids) + ")",
+                    entity_ids,
+                ).fetchall()
+                for profile in profile_rows:
+                    related = list(dict.fromkeys(_json(profile["related_entity_ids"], []) + [value for value in entity_ids if value != int(profile["id"])]))
+                    conn.execute("UPDATE memory_entity_profiles SET related_entity_ids=?,updated_at=? WHERE id=?", (json.dumps(related), timestamp, int(profile["id"])))
+                # Connect co-occurring entities in the existing graph with a weak,
+                # auditable narrative edge.  It is not treated as a user fact.
+                for left in profile_rows:
+                    for right in profile_rows:
+                        if int(left["id"]) >= int(right["id"]):
+                            continue
+                        if left["graph_entity_id"] and right["graph_entity_id"]:
+                            conn.execute(
+                                """INSERT INTO graph_edges(head_id,head_type,relation,tail_id,tail_type,source,strength,updated_at)
+                                   VALUES (?,?,?,?,?,?,1,?)
+                                   ON CONFLICT(head_id,relation,tail_id) DO UPDATE SET strength=MAX(strength,excluded.strength),updated_at=excluded.updated_at""",
+                                (left["graph_entity_id"], left["graph_entity_type"], "共同叙事",
+                                 right["graph_entity_id"], right["graph_entity_type"], "narrative", timestamp),
+                            )
             cur = conn.execute(
                 """INSERT INTO memory_episodes
                    (title,summary,category,entity_ids,fragment_ids,source_fact_ids,
@@ -218,10 +291,18 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
             created += 1
 
         for saga in result.get("sagas", []) if isinstance(result, dict) else []:
-            if not isinstance(saga, dict) or len(created_episode_ids) < 2:
+            if not isinstance(saga, dict):
                 continue
             raw_indices = saga.get("episode_indices", [])
             episode_ids = []
+            for value in saga.get("episode_ids", []) if isinstance(saga.get("episode_ids"), list) else []:
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    continue
+                row = conn.execute("SELECT id FROM memory_episodes WHERE id=? AND status='active'", (value,)).fetchone()
+                if row:
+                    episode_ids.append(value)
             for value in raw_indices if isinstance(raw_indices, list) else []:
                 try:
                     index = int(value)
@@ -237,16 +318,25 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
             if not summary:
                 continue
             fingerprint = hashlib.sha256(f"{title}:{','.join(map(str, episode_ids))}".encode("utf-8")).hexdigest()
-            conn.execute(
-                """INSERT OR IGNORE INTO memory_sagas
-                   (title,summary,episode_ids,confidence,created_at,updated_at,fingerprint)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (title, summary, json.dumps(episode_ids),
-                 min(1.0, max(0.0, float(saga.get("confidence", 0.6) or 0.6))),
-                 timestamp, timestamp, fingerprint),
-            )
+            saga_confidence = min(1.0, max(0.0, float(saga.get("confidence", 0.6) or 0.6)))
+            existing_saga = conn.execute("SELECT id FROM memory_sagas WHERE fingerprint=?", (fingerprint,)).fetchone()
+            if existing_saga:
+                conn.execute(
+                    """UPDATE memory_sagas SET title=?,summary=?,episode_ids=?,confidence=MAX(confidence,?),
+                       updated_at=? WHERE id=?""",
+                    (title, summary, json.dumps(episode_ids), saga_confidence, timestamp, int(existing_saga["id"])),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO memory_sagas
+                       (title,summary,episode_ids,confidence,created_at,updated_at,fingerprint)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (title, summary, json.dumps(episode_ids), saga_confidence,
+                     timestamp, timestamp, fingerprint),
+                )
         conn.commit()
-    return {"episodes_created": created, "entities_updated": entities, "episode_ids": created_episode_ids}
+    return {"episodes_created": created, "episodes_updated": updated,
+            "entities_updated": entities, "episode_ids": created_episode_ids}
 
 
 def list_entity_profiles(limit: int = 200) -> list[dict]:
@@ -406,12 +496,14 @@ def start_narrative_run(candidates: int) -> int:
 
 
 def finish_narrative_run(run_id: int, *, status: str, episodes_created: int = 0,
-                         entities_updated: int = 0, error: str = "") -> None:
+                         episodes_updated: int = 0, entities_updated: int = 0,
+                         error: str = "") -> None:
     conn = _ensure_tables()
     conn.execute(
         """UPDATE memory_narrative_runs SET status=?,finished_at=?,episodes_created=?,
-           entities_updated=?,error=? WHERE id=?""",
-        (str(status), _now(), max(0, int(episodes_created)), max(0, int(entities_updated)),
+           episodes_updated=?,entities_updated=?,error=? WHERE id=?""",
+        (str(status), _now(), max(0, int(episodes_created)), max(0, int(episodes_updated)),
+         max(0, int(entities_updated)),
          str(error or "")[:1000], int(run_id)),
     )
     conn.commit()

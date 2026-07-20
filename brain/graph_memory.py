@@ -118,6 +118,8 @@ def _init_tables(conn: sqlite3.Connection):
         "ALTER TABLE memory_facts ADD COLUMN quality_score REAL NOT NULL DEFAULT 0.5",
         "ALTER TABLE memory_facts ADD COLUMN review_status TEXT NOT NULL DEFAULT 'normal'",
         "ALTER TABLE memory_facts ADD COLUMN quality_updated_at TEXT DEFAULT ''",
+        "ALTER TABLE memory_facts ADD COLUMN lifecycle_stage TEXT DEFAULT 'maturing'",
+        "ALTER TABLE memory_facts ADD COLUMN emotional_weight REAL NOT NULL DEFAULT 0.5",
         "ALTER TABLE graph_edges ADD COLUMN updated_at TEXT DEFAULT ''",
         "ALTER TABLE graph_edges ADD COLUMN status TEXT DEFAULT 'active'",
         "ALTER TABLE graph_edges ADD COLUMN source_session_id INTEGER",
@@ -138,6 +140,37 @@ def _init_tables(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_facts_status ON memory_facts(status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_facts_quality ON memory_facts(status, quality_score)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_facts_review ON memory_facts(review_status)")
+    # FTS5 is optional in some SQLite builds.  The RAG layer detects its absence
+    # and falls back to parameterized LIKE queries without changing facts.
+    try:
+        conn.execute(
+            """CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(
+                   content, category UNINDEXED, fact_id UNINDEXED,
+                   tokenize='unicode61')"""
+        )
+        conn.executescript("""
+        DROP TRIGGER IF EXISTS memory_facts_fts_insert;
+        DROP TRIGGER IF EXISTS memory_facts_fts_update;
+        DROP TRIGGER IF EXISTS memory_facts_fts_delete;
+        CREATE TRIGGER IF NOT EXISTS memory_facts_fts_insert AFTER INSERT ON memory_facts BEGIN
+            INSERT INTO memory_facts_fts(rowid, content, category, fact_id)
+            VALUES (new.id, new.content, new.category, new.id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS memory_facts_fts_update AFTER UPDATE OF content, category ON memory_facts BEGIN
+            DELETE FROM memory_facts_fts WHERE rowid=old.id;
+            INSERT INTO memory_facts_fts(rowid, content, category, fact_id)
+            VALUES (new.id, new.content, new.category, new.id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS memory_facts_fts_delete AFTER DELETE ON memory_facts BEGIN
+            DELETE FROM memory_facts_fts WHERE rowid=old.id;
+        END;
+        """)
+        indexed = conn.execute("SELECT COUNT(*) FROM memory_facts_fts").fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM memory_facts").fetchone()[0]
+        if indexed != total:
+            conn.execute("INSERT INTO memory_facts_fts(memory_facts_fts) VALUES('rebuild')")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
 
 

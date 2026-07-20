@@ -308,6 +308,33 @@ def _lexical_memory_results(query: str, category: str | None = None) -> list[tup
         terms.append(text)
     if not terms:
         return []
+    # Prefer the indexed channel.  SQLite builds without FTS5 continue below
+    # with the same parameterized LIKE fallback used by older installations.
+    try:
+        match_terms = [term.replace('"', ' ') for term in terms[:8] if term.strip()]
+        match_query = " OR ".join(f'"{term}"' for term in match_terms)
+        fts_sql = """SELECT f.id,f.content,f.category,f.source,f.strength,f.created_at,
+                    f.updated_at,f.source_channel,f.quality_score,f.review_status,f.access_count,
+                    bm25(memory_facts_fts) AS rank
+             FROM memory_facts_fts JOIN memory_facts f ON f.id=memory_facts_fts.fact_id
+             WHERE memory_facts_fts MATCH ? AND f.status='active'"""
+        fts_params: list[str] = [match_query]
+        if category:
+            fts_sql += " AND f.category=?"
+            fts_params.append(category)
+        fts_rows = conn.execute(fts_sql + " ORDER BY rank LIMIT 30", fts_params).fetchall()
+        if fts_rows:
+            output = []
+            for index, row in enumerate(fts_rows):
+                item = dict(row)
+                item.update({"memory_id": int(row["id"]), "semantic_similarity": 0.0,
+                             "evidence_count": 0, "source_table": "memory_facts",
+                             "keyword_channel": "fts5"})
+                output.append((1.0 / (index + 1), item))
+            return output
+    except Exception as exc:
+        logger.debug("FTS5 memory search unavailable, using LIKE fallback: %s", exc)
+
     where = ["status='active'"]
     params: list[str] = []
     clauses = []
@@ -339,19 +366,26 @@ def _merge_hybrid_results(query: str, vector_results: list[tuple[float, dict]],
     from brain.memory_narrative import get_entity_context, get_narrative_context
 
     intent = route_memory_intent(query)
-    channels: list[list[tuple[float, dict]]] = [vector_results, _lexical_memory_results(query, category)]
+    keyword_results = _lexical_memory_results(query, category)
+    channel_specs: list[tuple[str, float, list[tuple[float, dict]]]] = [
+        ("vector", 1.15 if intent in {"general", "long_term"} else 1.0, vector_results),
+        ("keyword", 1.25 if intent == "fact" else 1.0, keyword_results),
+    ]
     narratives = get_narrative_context(query, limit=max(4, top_k * 2))
     entities = get_entity_context(query, limit=max(4, top_k * 2))
     if intent in {"long_term", "summary", "entity"}:
-        channels.append([(item.get("narrative_score", 0.0), item) for item in narratives])
+        channel_specs.append(("episode", 1.35 if intent in {"long_term", "summary"} else 1.0,
+                              [(item.get("narrative_score", 0.0), item) for item in narratives]))
     if intent == "entity":
-        channels.append([(item.get("narrative_score", 0.0), item) for item in entities])
+        channel_specs.append(("entity", 1.45, [(item.get("narrative_score", 0.0), item) for item in entities]))
     ranks: dict[str, float] = {}
     items: dict[str, dict] = {}
-    for channel in channels:
+    for _channel_name, channel_weight, channel in channel_specs:
         for rank, (_score, item) in enumerate(channel, start=1):
             key = ("episode:" + str(item["id"])) if item.get("source_table") == "memory_episodes" else ("fact:" + str(item.get("memory_id", item.get("id"))))
-            ranks[key] = ranks.get(key, 0.0) + 1.0 / (60 + rank)
+            if item.get("source_table") == "memory_entity_profiles":
+                key = "entity:" + str(item["id"])
+            ranks[key] = ranks.get(key, 0.0) + channel_weight / (60 + rank)
             items[key] = item
     merged = sorted(ranks.items(), key=lambda pair: pair[1], reverse=True)[:max(1, int(top_k))]
     return [(score, dict(items[key], retrieval_intent=intent, rrf_score=round(score, 6))) for key, score in merged]

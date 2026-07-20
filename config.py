@@ -784,6 +784,8 @@ _MEMORY_DEFAULTS = {
     "narrative_interval_hours": 12,        # 叙事整合低频间隔
     "narrative_candidate_batch": 36,       # 每轮交给模型整理的碎片数
     "working_memory_ttl_minutes": 120,     # 话题工作记忆保留时长
+    "working_memory_model_summary_enabled": True,
+    "working_memory_summary_interval_minutes": 10,
 }
 
 
