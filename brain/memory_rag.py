@@ -4,6 +4,7 @@ sentence-transformers 本地 embedding → 语义搜索 → 注入聊天气泡
 """
 
 import logging
+import re
 import threading
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
@@ -137,8 +138,9 @@ def search_similar(
     threshold: float = 0.5,
     category: str = None,
     track_access: bool = True,
+    hybrid: bool = True,
 ) -> list[tuple[float, dict]]:
-    """向量语义搜索与 query 最相似的记忆。
+    """混合检索记忆：向量、关键词和叙事层结果用 RRF 融合。
 
     Args:
         query: 查询文本（通常是用户最后一条消息）
@@ -147,17 +149,21 @@ def search_similar(
         category: 可选，限制分类
 
     Returns:
-        [(相似度, 记忆dict), ...] 按相似度降序
+        [(融合分数, 记忆dict), ...] 按融合分数降序
     """
     model = _get_model()
     if model is None:
         if _load_attempted:
             logger.debug("RAG search skipped: model unavailable (load previously attempted)")
-        return []
+        merged = _merge_hybrid_results(query, [], category=category, top_k=top_k) if hybrid else []
+        _record_hybrid_access(merged, track_access)
+        return merged
 
     q_vec = embed(query)
     if q_vec is None:
-        return []
+        merged = _merge_hybrid_results(query, [], category=category, top_k=top_k) if hybrid else []
+        _record_hybrid_access(merged, track_access)
+        return merged
 
     try:
         from brain.graph_memory import _get_conn
@@ -234,7 +240,11 @@ def search_similar(
                 }))
 
         results.sort(key=lambda x: x[0], reverse=True)
-        ranked = results[:top_k]
+        ranked = results[: max(top_k * 3, top_k)]
+        if hybrid:
+            ranked = _merge_hybrid_results(query, ranked, category=category, top_k=top_k)
+        else:
+            ranked = ranked[:top_k]
         try:
             from brain.memory_conflicts import get_fact_relations
             for _score, memory in ranked:
@@ -244,7 +254,10 @@ def search_similar(
         if track_access and ranked:
             try:
                 from brain.memory_quality import record_memory_access
-                record_memory_access([memory["memory_id"] for _score, memory in ranked])
+                record_memory_access([
+                    memory["memory_id"] for _score, memory in ranked
+                    if memory.get("memory_id") is not None
+                ])
             except Exception:
                 pass
         return ranked
@@ -263,9 +276,95 @@ def find_similar_memory(
     返回最相似的那条 (相似度, 记忆dict) 或 None。"""
     results = search_similar(
         content, top_k=1, threshold=threshold, category=category,
-        track_access=False,
+        track_access=False, hybrid=False,
     )
     return results[0] if results else None
+
+
+def route_memory_intent(query: str) -> str:
+    """Choose retrieval emphasis without changing the model's semantic answer."""
+    text = str(query or "").lower()
+    if any(marker in text for marker in ("回忆", "记得", "以前", "过去", "聊过", "那时候", "经历")):
+        return "long_term"
+    if any(marker in text for marker in ("最近", "这段时间", "进展", "总结", "回顾")):
+        return "summary"
+    if any(marker in text for marker in ("谁", "哪个项目", "关于", "和谁", "关系")):
+        return "entity"
+    if any(marker in text for marker in ("什么时候", "几点", "哪天", "日期", "多少")):
+        return "fact"
+    return "general"
+
+
+def _lexical_memory_results(query: str, category: str | None = None) -> list[tuple[float, dict]]:
+    from brain.graph_memory import _get_conn
+    conn = _get_conn()
+    text = " ".join(str(query or "").split()).strip()
+    terms = []
+    for term in re.findall(r"[A-Za-z0-9_]{2,}|[\u4e00-\u9fff]{2,}", text):
+        terms.append(term)
+        if re.fullmatch(r"[\u4e00-\u9fff]+", term) and len(term) > 2:
+            terms.extend(term[index:index + 2] for index in range(len(term) - 1))
+    if text and text not in terms:
+        terms.append(text)
+    if not terms:
+        return []
+    where = ["status='active'"]
+    params: list[str] = []
+    clauses = []
+    for term in terms[:8]:
+        clauses.append("content LIKE ?")
+        params.append(f"%{term}%")
+    where.append("(" + " OR ".join(clauses) + ")")
+    if category:
+        where.append("category=?")
+        params.append(category)
+    rows = conn.execute(
+        """SELECT id,content,category,source,strength,created_at,updated_at,
+                  source_channel,quality_score,review_status,access_count
+           FROM memory_facts WHERE """ + " AND ".join(where) + " ORDER BY updated_at DESC LIMIT 30",
+        params,
+    ).fetchall()
+    output = []
+    for index, row in enumerate(rows):
+        item = dict(row)
+        item.update({"memory_id": int(row["id"]), "semantic_similarity": 0.0,
+                     "evidence_count": 0, "source_table": "memory_facts"})
+        output.append((1.0 / (index + 1), item))
+    return output
+
+
+def _merge_hybrid_results(query: str, vector_results: list[tuple[float, dict]],
+                          *, category: str | None, top_k: int) -> list[tuple[float, dict]]:
+    """RRF merge with an intent-specific narrative boost."""
+    from brain.memory_narrative import get_narrative_context
+
+    intent = route_memory_intent(query)
+    channels: list[list[tuple[float, dict]]] = [vector_results, _lexical_memory_results(query, category)]
+    narratives = get_narrative_context(query, limit=max(4, top_k * 2))
+    if intent in {"long_term", "summary", "entity"}:
+        channels.append([(item.get("narrative_score", 0.0), item) for item in narratives])
+    ranks: dict[str, float] = {}
+    items: dict[str, dict] = {}
+    for channel in channels:
+        for rank, (_score, item) in enumerate(channel, start=1):
+            key = ("episode:" + str(item["id"])) if item.get("source_table") == "memory_episodes" else ("fact:" + str(item.get("memory_id", item.get("id"))))
+            ranks[key] = ranks.get(key, 0.0) + 1.0 / (60 + rank)
+            items[key] = item
+    merged = sorted(ranks.items(), key=lambda pair: pair[1], reverse=True)[:max(1, int(top_k))]
+    return [(score, dict(items[key], retrieval_intent=intent, rrf_score=round(score, 6))) for key, score in merged]
+
+
+def _record_hybrid_access(results: list[tuple[float, dict]], enabled: bool) -> None:
+    if not enabled or not results:
+        return
+    try:
+        from brain.memory_quality import record_memory_access
+        record_memory_access([
+            item["memory_id"] for _score, item in results
+            if item.get("memory_id") is not None
+        ])
+    except Exception:
+        pass
 
 
 def format_rag_context(memories: list[tuple[float, dict]]) -> str:
@@ -274,6 +373,12 @@ def format_rag_context(memories: list[tuple[float, dict]]) -> str:
         return ""
     lines = ["【你可能记得的相关信息】"]
     for sim, mem in memories:
+        if mem.get("source_table") == "memory_episodes":
+            lines.append(
+                f"· [叙事#{mem.get('id', '?')}] {mem.get('title', '相关经历')}：{mem.get('summary', '')} "
+                f"(融合相关度:{float(mem.get('rrf_score', sim)):.1%}, 来源:叙事记忆)"
+            )
+            continue
         source = mem.get("source_channel") or mem.get("source") or "unknown"
         updated = mem.get("updated_at") or "时间未知"
         semantic = mem.get("semantic_similarity", sim)

@@ -1868,6 +1868,29 @@ class AgentCore:
             except Exception:
                 pass
 
+            # 话题工作记忆是临时上下文，不会提升为长期事实。
+            try:
+                from brain.working_memory import format_working_memory_context, update_working_topic
+                working_topic = update_working_topic(
+                    user_message=user_message,
+                    recent_messages=self.history,
+                    session_id=getattr(self, "_session_id", None),
+                    ttl_minutes=get_memory_config().get("working_memory_ttl_minutes", 120),
+                )
+                working_context = format_working_memory_context(working_topic)
+                if working_context:
+                    messages.append({"role": "system", "content": working_context})
+                    if self._active_memory_trace_id:
+                        from brain.memory_diagnostics import record_memory_event
+                        record_memory_event(
+                            self._active_memory_trace_id, "working_memory_injected",
+                            reason="当前话题工作记忆已更新并注入",
+                            payload={"topic_key": working_topic.get("topic_key", ""),
+                                     "topic_label": working_topic.get("topic_label", "")},
+                        )
+            except Exception:
+                pass
+
         # 注入跨端记忆上下文（有则加，无则忽略；本地模式跳过）
         if not self._use_local:
             cross_ctx = self._get_cross_session_context()

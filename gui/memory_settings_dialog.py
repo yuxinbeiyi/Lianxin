@@ -225,6 +225,28 @@ class MemorySettingsDialog(QDialog):
         maintenance_layout.addWidget(self._maintenance_status_label)
         tab1_layout.addWidget(maintenance_frame)
 
+        narrative_frame = self._create_frame()
+        narrative_layout = QVBoxLayout(narrative_frame)
+        self._narrative_enabled_cb = QCheckBox("启用叙事记忆整合")
+        self._narrative_enabled_cb.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        narrative_layout.addWidget(self._narrative_enabled_cb)
+        narrative_row = QHBoxLayout()
+        narrative_row.addWidget(QLabel("整合间隔"))
+        self._narrative_interval_spin = QSpinBox()
+        self._narrative_interval_spin.setRange(1, 168)
+        self._narrative_interval_spin.setSuffix(" 小时")
+        narrative_row.addWidget(self._narrative_interval_spin)
+        narrative_row.addSpacing(12)
+        narrative_row.addWidget(QLabel("每轮碎片"))
+        self._narrative_batch_spin = QSpinBox()
+        self._narrative_batch_spin.setRange(4, 100)
+        self._narrative_batch_spin.setSuffix(" 条")
+        narrative_row.addWidget(self._narrative_batch_spin)
+        narrative_row.addStretch()
+        narrative_layout.addLayout(narrative_row)
+        narrative_layout.addWidget(QLabel("后台模型会把有来源的碎片整理成实体档案、Episode 和 Saga；原始碎片不会删除。"))
+        tab1_layout.addWidget(narrative_frame)
+
         # 默认保存分类
         cat_frame = self._create_frame()
         cat_vbox = QVBoxLayout(cat_frame)
@@ -377,12 +399,17 @@ class MemorySettingsDialog(QDialog):
         self._current_state_panel = CurrentStatePanel()
         tabs.addTab(self._current_state_panel, "◉ 当前状态")
 
-        # ── 选项卡 5：记忆诊断 ───────────────────────────────
+        # ── 选项卡 5：记忆星图 ───────────────────────────────
+        from gui.memory_constellation_panel import MemoryConstellationPanel
+        self._constellation_panel = MemoryConstellationPanel()
+        tabs.addTab(self._constellation_panel, "✦ 记忆星图")
+
+        # ── 选项卡 6：记忆诊断 ───────────────────────────────
         from gui.memory_debug_panel import MemoryDebugPanel
         self._debug_panel = MemoryDebugPanel()
         tabs.addTab(self._debug_panel, "🔬 记忆诊断")
 
-        # ── 选项卡 6：记忆浏览 ─────────────────────────────
+        # ── 选项卡 7：记忆浏览 ─────────────────────────────
         tab4 = QWidget()
         tab4_layout = QVBoxLayout(tab4)
         tab4_layout.setSpacing(10)
@@ -542,6 +569,7 @@ class MemorySettingsDialog(QDialog):
         self._all_facts = list_all_facts()
         self._refresh_memory_list()
         self._current_state_panel.refresh()
+        self._constellation_panel.refresh()
         self._refresh_maintenance_status()
         super().showEvent(event)
 
@@ -579,10 +607,14 @@ class MemorySettingsDialog(QDialog):
         self._maintenance_conflict_batch_spin.setValue(
             self._mem_cfg.get("maintenance_conflict_scan_batch", 10)
         )
+        self._narrative_enabled_cb.setChecked(self._mem_cfg.get("narrative_enabled", True))
+        self._narrative_interval_spin.setValue(self._mem_cfg.get("narrative_interval_hours", 12))
+        self._narrative_batch_spin.setValue(self._mem_cfg.get("narrative_candidate_batch", 36))
         self._refresh_maintenance_status()
 
     def _on_save(self):
-        cfg = {
+        cfg = dict(self._mem_cfg)
+        cfg.update({
             "auto_extract": self._memory_auto_cb.isChecked(),
             "extract_interval": self._memory_extract_interval_spin.value(),
             "extract_message_count": self._memory_extract_msgs_spin.value(),
@@ -594,7 +626,11 @@ class MemorySettingsDialog(QDialog):
             "maintenance_enabled": self._maintenance_enabled_cb.isChecked(),
             "maintenance_interval_hours": self._maintenance_interval_spin.value(),
             "maintenance_conflict_scan_batch": self._maintenance_conflict_batch_spin.value(),
-        }
+            "narrative_enabled": self._narrative_enabled_cb.isChecked(),
+            "narrative_interval_hours": self._narrative_interval_spin.value(),
+            "narrative_candidate_batch": self._narrative_batch_spin.value(),
+            "working_memory_ttl_minutes": self._mem_cfg.get("working_memory_ttl_minutes", 120),
+        })
         from config import save_memory_config
         save_memory_config(cfg)
 

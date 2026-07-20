@@ -780,6 +780,10 @@ _MEMORY_DEFAULTS = {
     "maintenance_enabled": True,       # 是否启用低频后台记忆维护
     "maintenance_interval_hours": 6,   # 后台维护间隔（小时）
     "maintenance_conflict_scan_batch": 10,  # 每轮最多扫描的冲突候选事实数
+    "narrative_enabled": True,             # 是否启用 Episode/实体/Saga 整合
+    "narrative_interval_hours": 12,        # 叙事整合低频间隔
+    "narrative_candidate_batch": 36,       # 每轮交给模型整理的碎片数
+    "working_memory_ttl_minutes": 120,     # 话题工作记忆保留时长
 }
 
 

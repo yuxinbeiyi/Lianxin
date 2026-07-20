@@ -1118,6 +1118,70 @@ class MemoryCueEvaluationDuty(Duty):
 
 
 # ═══════════════════════════════════════════════════════════════
+# MemoryNarrativeDuty
+# ═══════════════════════════════════════════════════════════════
+
+class MemoryNarrativeDuty(Duty):
+    """Low-frequency semantic consolidation into entities, episodes and sagas."""
+
+    def __init__(self):
+        super().__init__("memory_narrative", "叙事记忆整合", tick_interval_seconds=300)
+
+    @staticmethod
+    def _config():
+        try:
+            from config import get_memory_config
+            return get_memory_config()
+        except Exception:
+            return {"narrative_enabled": True, "narrative_interval_hours": 12,
+                    "narrative_candidate_batch": 36}
+
+    def _check_enabled(self, state):
+        return bool(self._config().get("narrative_enabled", True))
+
+    def _should_fire(self, state):
+        if state.agent_busy:
+            return False
+        try:
+            from brain.memory_narrative import should_run_narrative
+            return should_run_narrative(self._config().get("narrative_interval_hours", 12))
+        except Exception:
+            return False
+
+    def _create_worker(self, state, **kwargs):
+        from workers.memory_narrative_worker import MemoryNarrativeWorker
+        return MemoryNarrativeWorker(
+            max_candidates=int(self._config().get("narrative_candidate_batch", 36))
+        )
+
+    def _wire_worker(self, worker):
+        worker.completed.connect(self._on_completed)
+        worker.failed.connect(self._on_failed)
+
+    def _on_completed(self, result):
+        self.status.is_running = False
+        self.status.last_result = "success"
+        self.status.success_count += 1
+        self.status.last_result_text = (
+            f"Episode {result.get('episodes_created', 0)} 条，"
+            f"实体更新 {result.get('entities_updated', 0)} 个"
+        )
+        self._scheduler.duty_completed.emit(self.name, self.status.last_result_text)
+
+    def _on_failed(self, error):
+        self.status.is_running = False
+        self.status.last_result = "failed"
+        self.status.fail_count += 1
+        self.status.last_result_text = str(error)
+        self._scheduler.duty_failed.emit(self.name, str(error))
+
+    @property
+    def _scheduler(self): return self.__scheduler
+    @_scheduler.setter
+    def _scheduler(self, value): self.__scheduler = value
+
+
+# ═══════════════════════════════════════════════════════════════
 # MemoryMaintenanceDuty
 # ═══════════════════════════════════════════════════════════════
 

@@ -26,7 +26,17 @@ class MemoryDebugPanel(QWidget):
             self._traces=[t for t in all_traces if not selected_persona or t.get("persona_id")==selected_persona]
             diagnostic_stats=get_memory_diagnostic_stats()
             stats=diagnostic_stats.get("requests", {})
-            self._stats.setText(f"请求 {stats.get('total',0) or 0} · 成功 {stats.get('success',0) or 0} · 失败 {stats.get('failed',0) or 0} · 运行中 {stats.get('running',0) or 0} · 跨人格召回差异 {diagnostic_stats.get('persona_recall_mismatches',0)}")
+            try:
+                from brain.memory_narrative import get_narrative_statistics
+                narrative = get_narrative_statistics()
+            except Exception:
+                narrative = {"entities": 0, "episodes": 0, "sagas": 0}
+            self._stats.setText(
+                f"请求 {stats.get('total',0) or 0} · 成功 {stats.get('success',0) or 0} · "
+                f"失败 {stats.get('failed',0) or 0} · 跨人格召回差异 "
+                f"{diagnostic_stats.get('persona_recall_mismatches',0)} · "
+                f"实体 {narrative['entities']} · Episode {narrative['episodes']} · Saga {narrative['sagas']}"
+            )
             self._table.setRowCount(len(self._traces))
             for row,item in enumerate(self._traces):
                 values=[str(item.get("started_at",""))[:19],item.get("channel", ""),item.get("persona_id", "") or "默认",item.get("user_message", "")[:80],item.get("status", ""),f"{float(item.get('duration_ms') or 0):.0f} ms",item.get("trace_id", "")[:10]]
