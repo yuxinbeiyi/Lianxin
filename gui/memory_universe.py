@@ -11,12 +11,12 @@ import math
 import random
 from datetime import datetime
 
-from PyQt5.QtCore import QSettings, Qt, QTimer, QRectF, pyqtSignal
+from PyQt5.QtCore import QSettings, Qt, QTimer, QRectF, QPointF, pyqtSignal
 from PyQt5.QtGui import (
     QColor, QFont, QLinearGradient, QPainter, QPen, QRadialGradient,
 )
 from PyQt5.QtWidgets import (
-    QComboBox, QFrame, QGraphicsItem, QGraphicsObject, QGraphicsScene,
+    QComboBox, QFrame, QGraphicsItem, QGraphicsLineItem, QGraphicsObject, QGraphicsScene,
     QGraphicsSimpleTextItem, QGraphicsView, QHBoxLayout, QLabel, QLineEdit,
     QDialog, QMainWindow, QPushButton, QSlider, QTextBrowser, QVBoxLayout, QWidget,
 )
@@ -95,6 +95,8 @@ class _StarNode(QGraphicsObject):
 
 
 class _UniverseView(QGraphicsView):
+    parallax_changed = pyqtSignal(float, float)
+
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
         self._particles = [
@@ -102,6 +104,9 @@ class _UniverseView(QGraphicsView):
             for _ in range(180)
         ]
         self._phase = 0.0
+        self._parallax_x = 0.0
+        self._parallax_y = 0.0
+        self.setMouseTracking(True)
         self.setFrameShape(QFrame.NoFrame)
         self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
@@ -115,6 +120,21 @@ class _UniverseView(QGraphicsView):
         self._phase += 0.035
         self.invalidateScene(self.sceneRect(), QGraphicsScene.BackgroundLayer)
         self.viewport().update()
+
+    def set_parallax(self, x: float, y: float):
+        self._parallax_x, self._parallax_y = float(x), float(y)
+        self.viewport().update()
+
+    def mouseMoveEvent(self, event):
+        rect = self.viewport().rect()
+        nx = (event.pos().x() / max(1, rect.width()) - 0.5) * 2.0
+        ny = (event.pos().y() / max(1, rect.height()) - 0.5) * 2.0
+        self.parallax_changed.emit(max(-1.0, min(1.0, nx)), max(-1.0, min(1.0, ny)))
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self.parallax_changed.emit(0.0, 0.0)
+        super().leaveEvent(event)
 
     def wheelEvent(self, event):
         factor = 1.12 if event.angleDelta().y() > 0 else 0.89
@@ -130,16 +150,16 @@ class _UniverseView(QGraphicsView):
         # Two slow-moving nebula clouds give depth without bitmap assets.
         for ratio, color, drift in ((0.28, QColor(81, 58, 174, 40), 0.0),
                                     (0.72, QColor(22, 160, 188, 30), 1.8)):
-            cx = rect.left() + rect.width() * ratio + math.sin(self._phase + drift) * 80
-            cy = rect.top() + rect.height() * (0.35 + ratio * 0.35)
+            cx = rect.left() + rect.width() * ratio + math.sin(self._phase + drift) * 80 + self._parallax_x * 34
+            cy = rect.top() + rect.height() * (0.35 + ratio * 0.35) + self._parallax_y * 24
             cloud = QRadialGradient(cx, cy, rect.width() * 0.35)
             cloud.setColorAt(0.0, color)
             cloud.setColorAt(1.0, QColor(color.red(), color.green(), color.blue(), 0))
             painter.fillRect(rect, cloud)
         painter.setPen(Qt.NoPen)
         for x_ratio, y_ratio, alpha, phase in self._particles:
-            x = rect.left() + rect.width() * x_ratio
-            y = rect.top() + rect.height() * y_ratio
+            x = rect.left() + rect.width() * x_ratio + self._parallax_x * 10
+            y = rect.top() + rect.height() * y_ratio + self._parallax_y * 7
             flicker = max(0, min(255, int(120 * alpha * (0.75 + 0.25 * math.sin(self._phase * 2 + phase)))))
             painter.setBrush(QColor(190, 218, 255, flicker))
             painter.drawEllipse(QRectF(x, y, 1.5 + alpha, 1.5 + alpha))
@@ -169,6 +189,8 @@ class MemoryUniverseWindow(QMainWindow):
         self._reduced_motion = self._settings.value("reduced_motion", "false") == "true"
         self._max_visible_nodes = 700
         self._render_generation = 0
+        self._parallax_x = 0.0
+        self._parallax_y = 0.0
         self._build_ui()
         self._reload_data()
 
@@ -204,15 +226,15 @@ class MemoryUniverseWindow(QMainWindow):
         toolbar.addWidget(self._back_btn)
         toolbar.addStretch()
         self._search = QLineEdit()
-        self._search.setPlaceholderText("搜索记忆、实体或 Episode…")
+        self._search.setPlaceholderText("搜索记忆、人物或经历…")
         self._search.setFixedWidth(260)
         self._search.returnPressed.connect(self._apply_filters)
         toolbar.addWidget(self._search)
         self._layer = QComboBox()
         self._layer.addItem("宇宙视图", "universe")
-        self._layer.addItem("实体星系", "entities")
-        self._layer.addItem("Episode 星座", "episodes")
-        self._layer.addItem("Saga 星座", "sagas")
+        self._layer.addItem("人物与实体", "entities")
+        self._layer.addItem("经历星座", "episodes")
+        self._layer.addItem("长期故事", "sagas")
         self._layer.currentIndexChanged.connect(self._on_layer_changed)
         toolbar.addWidget(self._layer)
         refresh = QPushButton("刷新")
@@ -233,6 +255,7 @@ class MemoryUniverseWindow(QMainWindow):
         canvas_layout = QVBoxLayout(canvas_frame)
         self._scene = QGraphicsScene(self)
         self._view = _UniverseView(self._scene)
+        self._view.parallax_changed.connect(self._on_parallax)
         canvas_layout.addWidget(self._view)
         body.addWidget(canvas_frame, 4)
 
@@ -314,7 +337,7 @@ class MemoryUniverseWindow(QMainWindow):
             self._timeline_label.setText(f"最新 {cutoff}%")
         else:
             self._timeline_label.setText("全部")
-        self._breadcrumb.setText({"universe": " / 宇宙", "entities": " / 实体星系", "episodes": " / Episode 星座", "sagas": " / Saga 星座"}.get(layer, ""))
+        self._breadcrumb.setText({"universe": " / 宇宙", "entities": " / 人物与实体", "episodes": " / 经历星座", "sagas": " / 长期故事"}.get(layer, ""))
         self._render(layer, data)
 
     def _on_layer_changed(self, _index):
@@ -324,6 +347,17 @@ class MemoryUniverseWindow(QMainWindow):
             self._last_layer = layer
         self._back_btn.setEnabled(bool(self._layer_history))
         self._apply_filters()
+
+    def _on_parallax(self, x: float, y: float):
+        """Move foreground layers by depth to create a restrained 2.5D effect."""
+        self._parallax_x, self._parallax_y = float(x), float(y)
+        self._view.set_parallax(x, y)
+        for item in self._scene.items():
+            base = item.data(1)
+            depth = item.data(2)
+            if base is None or depth is None:
+                continue
+            item.setPos(base + QPointF(x * 34.0 * float(depth), y * 24.0 * float(depth)))
 
     def _go_back(self):
         if not self._layer_history:
@@ -350,10 +384,11 @@ class MemoryUniverseWindow(QMainWindow):
             self._render_ring(data["episodes"], "episodes", "title", "summary")
         else:
             self._render_ring(data["sagas"], "sagas", "title", "summary")
+        visible_items = data["entities"] if layer == "universe" else data.get(layer, [])
         self._stats.setText(
-            f"实体 {len(data['entities'])} · Episode {len(data['episodes'])} · Saga {len(data['sagas'])}\n"
+            f"实体 {len(data['entities'])} · 经历星座 {len(data['episodes'])} · 长期故事 {len(data['sagas'])}\n"
             "亮度：质量/置信度 · 线条：共享实体或叙事关系\n"
-            f"当前显示 {max(0, len(data.get(layer, [])) - self._hidden_count)}/{len(data.get(layer, []))} 星体"
+            f"当前显示 {max(0, len(visible_items) - self._hidden_count)}/{len(visible_items)} 星体"
         )
 
     def _render_universe(self, data):
@@ -363,6 +398,32 @@ class MemoryUniverseWindow(QMainWindow):
         payloads = [{"id": key, "name": key, "summary": f"{len(items)} 个实体", "items": items}
                     for key, items in groups.items()]
         self._render_ring(payloads, "universe", "name", "summary")
+        self._render_binary_core()
+
+    def _render_binary_core(self):
+        """Render the user/companion pair at the heart of the memory universe."""
+        left = {"id": "user-core", "name": "雨心博士", "entity_type": "person",
+                "summary": "记忆宇宙的主人"}
+        right = {"id": "ai-core", "name": "莲心", "entity_type": "companion",
+                 "summary": "陪伴者与记忆整理者"}
+        line = QGraphicsLineItem(-42, 0, 42, 0)
+        line.setPen(QPen(QColor(185, 210, 230, 110), 1.2))
+        line.setData(1, QPointF(0, 0))
+        line.setData(2, 1.0)
+        self._scene.addItem(line)
+        for payload, x, color in ((left, -42, QColor("#FFD58A")), (right, 42, QColor("#83E8FF"))):
+            node = _StarNode(payload, color, 19)
+            node.setData(1, QPointF(x, 0))
+            node.setData(2, 1.0)
+            node.setPos(x, 0)
+            node.clicked.connect(self._select_item)
+            self._scene.addItem(node)
+            label = QGraphicsSimpleTextItem(payload["name"])
+            label.setBrush(color)
+            label.setData(1, QPointF(x - 22, 34))
+            label.setData(2, 1.0)
+            label.setPos(x - 22, 34)
+            self._scene.addItem(label)
 
     def _render_ring(self, items, layer, title_key, summary_key):
         if not items:
@@ -394,11 +455,16 @@ class MemoryUniverseWindow(QMainWindow):
                 item_id = 0
             event_kind = self._event_kinds.get((event_type, item_id), "")
             node = _StarNode(item, color, 14 + confidence * 12, event_kind)
+            depth = {"universe": 0.58, "entities": 0.86, "episodes": 1.0, "sagas": 1.08}.get(layer, 0.9)
+            node.setData(1, QPointF(x, y))
+            node.setData(2, depth)
             node.setPos(x, y)
             node.clicked.connect(self._select_item)
             self._scene.addItem(node)
             label = QGraphicsSimpleTextItem(str(item.get(title_key, "未命名"))[:28])
             label.setBrush(QColor("#E7ECFF"))
+            label.setData(1, QPointF(x + 18, y - 8))
+            label.setData(2, depth)
             label.setPos(x + 18, y - 8)
             self._scene.addItem(label)
         self._scene.setSceneRect(-radius - 220, -radius - 130, radius * 2 + 440, radius * 2 + 260)

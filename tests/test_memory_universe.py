@@ -19,6 +19,10 @@ class MemoryUniverseUiTests(unittest.TestCase):
         self.assertTrue(window._search)
         self.assertTrue(window._timeline)
         self.assertTrue(window._motion_btn)
+        self.assertEqual("经历星座", window._layer.itemText(2))
+        self.assertEqual("长期故事", window._layer.itemText(3))
+        window._on_parallax(0.5, -0.5)
+        self.assertEqual(0.5, window._parallax_x)
         previous_motion = window._reduced_motion
         window._toggle_motion()
         self.assertNotEqual(previous_motion, window._reduced_motion)
