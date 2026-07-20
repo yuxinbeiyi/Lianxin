@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from PyQt5.QtCore import QUrl, Qt, QObject, pyqtSlot
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QDialog, QMainWindow, QVBoxLayout, QTextBrowser, QPushButton, QWidget
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWebChannel import QWebChannel
@@ -59,6 +60,8 @@ class MemoryConstellationWebWindow(QMainWindow):
         self.setWindowFlags(Qt.Window)
         self._asset_dir = Path(__file__).resolve().parent.parent / "assets" / "memory_constellation"
         self._view = QWebEngineView(self)
+        self._view.setAttribute(Qt.WA_OpaquePaintEvent, True)
+        self._view.page().setBackgroundColor(QColor("#020410"))
         self._bridge = _ConstellationBridge()
         channel = QWebChannel(self._view)
         channel.registerObject("lianxinBridge", self._bridge)
