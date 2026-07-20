@@ -401,21 +401,33 @@ def save_qq_bridge_config(config: dict):
 
 
 # ── QQ 桥接定时参数默认值 ────────────────────────────
-_QQ_TIMING_DEFAULTS = {
+_QQ_TIMING_PROFILE_VERSION = 2
+_QQ_TIMING_LEGACY_DEFAULTS = {
     "think_delay_min": 3.0,
     "think_delay_max": 5.0,
     "type_speed_min": 65,
     "type_speed_max": 90,
-    "segment_threshold_min": 100,
-    "segment_threshold_max": 150,
     "segment_interval_min": 5.0,
     "segment_interval_max": 10.0,
     "global_send_interval_min": 5.0,
     "global_send_interval_max": 10.0,
     "min_reply_interval": 3.0,
-    "daily_limit_owner": 120,
     "daily_limit_other": 30,
     "cross_session_context_limit": 6,
+}
+_QQ_TIMING_DEFAULTS = {
+    "profile_version": _QQ_TIMING_PROFILE_VERSION,
+    "think_delay_min": 0.5,
+    "think_delay_max": 1.0,
+    "type_speed_min": 900,
+    "type_speed_max": 1100,
+    "segment_interval_min": 0.1,
+    "segment_interval_max": 0.4,
+    "global_send_interval_min": 0.0,
+    "global_send_interval_max": 1.0,
+    "min_reply_interval": 0.0,
+    "daily_limit_other": 30,
+    "cross_session_context_limit": 15,
 }
 
 
@@ -425,7 +437,42 @@ def get_qq_timing_config() -> dict:
     bridge = full.get("qq_bridge", {})
     timing = bridge.get("timing", {})
     result = _QQ_TIMING_DEFAULTS.copy()
-    result.update(timing)
+    for key in result:
+        if key in timing:
+            result[key] = timing[key]
+
+    try:
+        profile_version = int(timing.get("profile_version", 1) or 1)
+    except (TypeError, ValueError):
+        profile_version = 1
+    if profile_version < _QQ_TIMING_PROFILE_VERSION:
+        paired_fields = (
+            ("think_delay_min", "think_delay_max"),
+            ("type_speed_min", "type_speed_max"),
+            ("global_send_interval_min", "global_send_interval_max"),
+        )
+        for low_key, high_key in paired_fields:
+            legacy_pair = (
+                _QQ_TIMING_LEGACY_DEFAULTS[low_key],
+                _QQ_TIMING_LEGACY_DEFAULTS[high_key],
+            )
+            stored_pair = (
+                timing.get(low_key, legacy_pair[0]),
+                timing.get(high_key, legacy_pair[1]),
+            )
+            if stored_pair == legacy_pair:
+                result[low_key] = _QQ_TIMING_DEFAULTS[low_key]
+                result[high_key] = _QQ_TIMING_DEFAULTS[high_key]
+
+        result["segment_interval_min"] = _QQ_TIMING_DEFAULTS["segment_interval_min"]
+        result["segment_interval_max"] = _QQ_TIMING_DEFAULTS["segment_interval_max"]
+        for key in ("min_reply_interval", "daily_limit_other", "cross_session_context_limit"):
+            legacy_default = _QQ_TIMING_LEGACY_DEFAULTS[key]
+            if key not in timing or timing.get(key) == legacy_default:
+                result[key] = _QQ_TIMING_DEFAULTS[key]
+        result["profile_version"] = _QQ_TIMING_PROFILE_VERSION
+        full.setdefault("qq_bridge", {})["timing"] = result
+        _save_full_config(full)
     return result
 
 

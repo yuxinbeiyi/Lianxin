@@ -24,6 +24,7 @@ class _QQWorker:
         self.running = False
         self.stopped = False
         self.timing_reloads = 0
+        self.fast_reply_enabled = False
 
     def start(self):
         self.running = True
@@ -43,6 +44,9 @@ class _QQWorker:
 
     def reload_bridge_config(self):
         pass
+
+    def set_fast_reply_enabled(self, enabled):
+        self.fast_reply_enabled = bool(enabled)
 
 
 class _WeChatWorker:
@@ -135,6 +139,16 @@ class BridgeControllerTests(unittest.TestCase):
         self.wechat_config["auto_start"] = False
         self.assertFalse(self.controller.should_auto_start_qq())
         self.assertFalse(self.controller.should_auto_start_wechat())
+
+    def test_fast_reply_state_is_runtime_only_and_reaches_worker(self):
+        self.controller.set_qq_fast_reply_enabled(True)
+        self.assertTrue(self.controller.is_qq_fast_reply_enabled())
+
+        self.assertTrue(self.controller.start_qq())
+        self.assertTrue(self.qq_worker.fast_reply_enabled)
+
+        self.controller.set_qq_fast_reply_enabled(False)
+        self.assertFalse(self.qq_worker.fast_reply_enabled)
 
     def test_wechat_lifecycle_and_shutdown(self):
         self.assertTrue(self.controller.start_wechat())

@@ -70,6 +70,7 @@ class BridgeController:
         self.qq_bridge = None
         self.wechat_bridge = None
         self._qq_connected = False
+        self._qq_fast_reply_enabled = False
         self._stopping_qq = False
         self._stopping_wechat = False
         self._qq_log_queue = None
@@ -118,6 +119,7 @@ class BridgeController:
         self._qq_button.setText("QQ聊天 ◷")
         self._qq_button.setStyleSheet(_QQ_CONNECTING_STYLE)
         worker = self._qq_worker_factory()
+        worker.set_fast_reply_enabled(self._qq_fast_reply_enabled)
         self.qq_bridge = worker
         self._register_qq_bridge_func(worker)
 
@@ -149,6 +151,15 @@ class BridgeController:
             return False
         self.qq_bridge.reload_timing_config()
         return True
+
+    def is_qq_fast_reply_enabled(self) -> bool:
+        return self._qq_fast_reply_enabled
+
+    def set_qq_fast_reply_enabled(self, enabled: bool):
+        """Toggle app-session-only fast replies for the owner's private chat."""
+        self._qq_fast_reply_enabled = bool(enabled)
+        if self.qq_bridge:
+            self.qq_bridge.set_fast_reply_enabled(self._qq_fast_reply_enabled)
 
     def reload_qq_bridge_config(self) -> bool:
         if not self.is_qq_running():

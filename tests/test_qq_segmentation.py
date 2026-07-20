@@ -19,6 +19,8 @@ def make_worker():
     worker._segment_user = ""
     worker._request_generations = {}
     worker._request_generation_lock = threading.Lock()
+    worker._fast_reply_enabled = False
+    worker._owner_qq = "10001"
     worker._log_messages = []
     worker._log = worker._log_messages.append
     return worker
@@ -47,6 +49,20 @@ class SemanticSegmentationTests(unittest.TestCase):
 
 
 class QQReplyInterruptionTests(unittest.TestCase):
+    def test_fast_reply_is_scoped_to_owner_private_chat(self):
+        worker = make_worker()
+        worker._fast_reply_enabled = True
+
+        self.assertTrue(worker._is_fast_owner_private({
+            "message_type": "private", "user_id": 10001,
+        }))
+        self.assertFalse(worker._is_fast_owner_private({
+            "message_type": "private", "user_id": 20002,
+        }))
+        self.assertFalse(worker._is_fast_owner_private({
+            "message_type": "group", "user_id": 10001, "group_id": 9,
+        }))
+
     def test_new_request_immediately_discards_same_session_segments(self):
         worker = make_worker()
         worker._queue_segmented_response(

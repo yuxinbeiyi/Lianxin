@@ -270,6 +270,7 @@ class QQBridgeWorker(QThread):
         self._daily_counts = {}       # user_id -> 当天已回复条数（按用户隔离）
         self._daily_counts_date = time.localtime().tm_yday  # 当前日期（年积日）
         self._send_failures = 0       # 连续发送失败次数
+        self._fast_reply_enabled = False  # 仅主人私聊；运行期设置，不持久化
         self._silent_override = False  # 深夜静默：是否被"醒醒"唤醒
         self._session_map = {}        # session_key -> db session_id（持久化映射）
         self._last_global_send = 0.0  # 上次成功发送消息的时间戳 (time.monotonic)
@@ -563,17 +564,6 @@ class QQBridgeWorker(QThread):
             self._process_merged_segments(pending, session_key, request_generation)
             return
 
-        # ── 暗号：解除限制（仅对主人有效） ──────────────────
-        if text.strip() == "解除限制":
-            if user_id == self._owner_qq:
-                self._daily_counts[user_id] = 0
-                self._log(f"[解除] [{session_key}] 博士解除了今日对话限制")
-                self._send_quick_reply(msg, f"好嘞，已解除今天的对话限制，{self._user_display_name}随时可以找我聊~")
-            else:
-                self._log(f"[解除] [{session_key}] 用户尝试解除限制，无权限")
-                self._send_quick_reply(msg, "抱歉，你没有权限")
-            return
-
         # ── 深夜静默 ────────────────────────────────────────
         hour = time.localtime().tm_hour
         in_silent = SILENT_HOUR_START <= hour < SILENT_HOUR_END
@@ -599,10 +589,10 @@ class QQBridgeWorker(QThread):
                     return
 
         # ── 每日上限检查（按用户隔离） ──────────────────────
-        limit = self._daily_limit_owner if user_id == self._owner_qq else self._daily_limit_other
+        limit = self._daily_limit_other
         current = self._daily_counts.get(user_id, 0)
 
-        if current >= limit:
+        if user_id != self._owner_qq and current >= limit:
             if current == limit:
                 # 刚好达到上限：发送提醒，标记为已提醒（limit+1）
                 self._daily_counts[user_id] = limit + 1
@@ -613,7 +603,8 @@ class QQBridgeWorker(QThread):
         # ── 限速检查 ──────────────────────────────────────
         now = time.monotonic()
         last_time = self._last_reply_time.get(session_key, 0.0)
-        if now - last_time < self._min_reply_interval:
+        if (not self._is_fast_owner_private(msg)
+                and now - last_time < self._min_reply_interval):
             self._rate_limit_count[session_key] = self._rate_limit_count.get(session_key, 0) + 1
             if self._rate_limit_count[session_key] <= 3:
                 self._log(f"[限速] [{session_key}] 发送过快，已忽略")
@@ -810,7 +801,7 @@ class QQBridgeWorker(QThread):
             return
 
         # ── 思考延迟（8~15 秒，模拟人类思考） ────────────────
-        if not self._is_direct_cmd:
+        if not self._is_direct_cmd and not self._is_fast_owner_private(msg):
             think = random.uniform(*self._think_delay)
             self._log(f"[思考] [{session_key}] 思考 {think:.1f} 秒...")
             self._sleep_with_check(think)
@@ -841,7 +832,7 @@ class QQBridgeWorker(QThread):
                 return
 
             if len(segments) <= 1:
-                typing_time = self._calc_typing_time(segments[0])
+                typing_time = 0.0 if self._is_fast_owner_private(msg) else self._calc_typing_time(segments[0])
                 if not self._is_direct_cmd:
                     self._log(f"[打字] [{session_key}] 输入 {len(segments[0])} 字，约需 {typing_time:.1f} 秒...")
                     self._sleep_with_check(typing_time)
@@ -1739,9 +1730,9 @@ class QQBridgeWorker(QThread):
             self._log(f"[语音] [{session_key}] 【语音】前缀，将以语音回复")
 
         # ── 每日上限检查 ──────────────────────────────────
-        limit = self._daily_limit_owner if user_id == self._owner_qq else self._daily_limit_other
+        limit = self._daily_limit_other
         current = self._daily_counts.get(user_id, 0)
-        if current >= limit:
+        if user_id != self._owner_qq and current >= limit:
             if current == limit:
                 self._daily_counts[user_id] = limit + 1
                 self._send_quick_reply(msg, "您的今日对话次数已达到今日上限了喵~")
@@ -1849,7 +1840,7 @@ class QQBridgeWorker(QThread):
             return
 
         # ── 思考延迟 ─────────────────────────────────────
-        if not self._is_direct_cmd:
+        if not self._is_direct_cmd and not self._is_fast_owner_private(msg):
             think = random.uniform(*self._think_delay)
             self._log(f"[思考] [{session_key}] 思考 {think:.1f} 秒...")
             self._sleep_with_check(think)
@@ -1881,7 +1872,7 @@ class QQBridgeWorker(QThread):
                 self._after_pending_flush()
                 return
             if len(segments) <= 1:
-                typing_time = self._calc_typing_time(segments[0])
+                typing_time = 0.0 if self._is_fast_owner_private(msg) else self._calc_typing_time(segments[0])
                 if not self._is_direct_cmd:
                     self._log(f"[打字] [{session_key}] 输入 {len(segments[0])} 字，约需 {typing_time:.1f} 秒...")
                     self._sleep_with_check(typing_time)
@@ -1945,8 +1936,21 @@ class QQBridgeWorker(QThread):
         self._segment_pending = ".."
         self._global_send_interval = (timing["global_send_interval_min"], timing["global_send_interval_max"])
         self._min_reply_interval = timing["min_reply_interval"]
-        self._daily_limit_owner = timing["daily_limit_owner"]
         self._daily_limit_other = timing["daily_limit_other"]
+
+    def set_fast_reply_enabled(self, enabled: bool):
+        """Enable artificial-delay bypass for the owner's private chat only."""
+        self._fast_reply_enabled = bool(enabled)
+        state = "开启" if self._fast_reply_enabled else "关闭"
+        self._log(f"[*] 主人私聊极速回复已{state}")
+
+    def _is_fast_owner_private(self, msg_ctx: dict | None) -> bool:
+        if not self._fast_reply_enabled or not msg_ctx:
+            return False
+        return (
+            msg_ctx.get("message_type") == "private"
+            and str(msg_ctx.get("user_id", "")) == str(self._owner_qq)
+        )
 
     def reload_timing_config(self):
         """从配置文件重新加载定时参数（供设置面板热重载调用）。"""
@@ -2159,7 +2163,7 @@ class QQBridgeWorker(QThread):
         # ── 全局限速（在锁外完成，避免长时间持锁阻塞其他发送者） ──
         now = time.monotonic()
         elapsed = now - self._last_global_send
-        if self._last_global_send > 0:
+        if self._last_global_send > 0 and not self._is_fast_owner_private(params):
             required_gap = random.uniform(*self._global_send_interval)
             if elapsed < required_gap:
                 extra = required_gap - elapsed
@@ -2323,7 +2327,7 @@ class QQBridgeWorker(QThread):
                 segment = segment.rstrip() + f" {self._segment_pending}"
 
             # 按字符数计算打字时间
-            typing_time = self._calc_typing_time(segment)
+            typing_time = 0.0 if self._is_fast_owner_private(msg_ctx) else self._calc_typing_time(segment)
             self._log(f"[分段打字] 输入 {len(segment)} 字，约需 {typing_time:.1f} 秒...")
 
             # 打字等待（期间可被中断）
@@ -2373,7 +2377,7 @@ class QQBridgeWorker(QThread):
                 self._send_qq_emotion_image(msg_ctx)
             else:
                 # 段间间隔（期间可被中断）
-                delay = random.uniform(*self._segment_interval)
+                delay = 0.0 if self._is_fast_owner_private(msg_ctx) else random.uniform(*self._segment_interval)
                 self._log(f"[分段] 段间等待 {delay:.1f} 秒...")
                 interrupted = self._sleep_with_interrupt(delay, popped_gen)
                 if interrupted:
