@@ -1,51 +1,152 @@
 (() => {
-  // Mouse parallax and layered nebula depth are the visual foundation.
-  const data = window.LIANXIN_MEMORY_DATA || {};
-  if (window.qt && window.QWebChannel) new QWebChannel(qt.webChannelTransport, ch => { window.lianxinBridge = ch.objects.lianxinBridge; });
-  const bg = document.getElementById('bg'), map = document.getElementById('map');
-  const bx = bg.getContext('2d'), ctx = map.getContext('2d');
-  const core = data.core || {user:'主人', assistant:'莲心'};
-  const COLORS = {人物:'#ffd58a',地点:'#72d9b2',事件:'#ffb454',兴趣:'#ff91c8',项目:'#83e8ff',default:'#9ba9ff'};
-  const GALAXIES = [
-    {id:'people', name:'人物星系', color:'#ffd58a', match:['person','organization','人物']},
-    {id:'places', name:'地点星系', color:'#72d9b2', match:['place','地点']},
-    {id:'events', name:'事件星系', color:'#ffb454', match:['event','events','事件']},
-    {id:'interests', name:'兴趣星系', color:'#ff91c8', match:['interest','preference','preferences','concept','兴趣','偏好']},
-    {id:'projects', name:'项目星系', color:'#83e8ff', match:['project','knowledge','项目','知识']},
-  ];
-  let W=0,H=0,dpr=1,T=0,mx=0,my=0,zoom=1,panX=0,panY=0,drag=false,lx=0,ly=0;
-  let level='universe', activeGalaxy=null, hover=null, selected=null;
-  const stars=Array.from({length:460},()=>({x:Math.random(),y:Math.random(),r:.2+Math.random()*1.3,a:.08+Math.random()*.35,p:Math.random()*7}));
-  const nebulaCache=new Map();
-  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const arr=v=>{try{return typeof v==='string'?JSON.parse(v||'[]'):(v||[])}catch{return[]}};
-  const entityType=e=>String(e.entity_type||e.category||'concept').toLowerCase();
-  function galaxyFor(e){const t=entityType(e);return GALAXIES.find(g=>g.match.some(x=>t.includes(x)))||GALAXIES[4]}
-  function allEntities(){return (data.entities||[]).map(e=>({...e,kind:'entity',label:e.name||'未命名'}))}
-  function galaxyItems(g){
-    const entities=allEntities().filter(e=>galaxyFor(e).id===g.id);
-    if(g.id==='events') entities.push(...(data.episodes||[]).map(e=>({...e,kind:'episode',label:e.title||'未命名经历',entity_type:'event'})));
-    if(g.id==='projects') entities.push(...(data.sagas||[]).map(e=>({...e,kind:'saga',label:e.title||'未命名故事',entity_type:'project'})));
-    return entities;
+  // A self-contained Canvas 2D renderer with mouse parallax. It intentionally mirrors the
+  // MemoryConstellations interaction model while using Lianxin's own records.
+  let data = window.LIANXIN_MEMORY_DATA || {};
+  if (window.qt && window.QWebChannel) {
+    new QWebChannel(qt.webChannelTransport, channel => {
+      window.lianxinBridge = channel.objects.lianxinBridge;
+    });
   }
-  function currentItems(){if(level==='galaxy'&&activeGalaxy)return galaxyItems(activeGalaxy);if(level==='constellation'&&activeGalaxy)return galaxyItems(activeGalaxy);return GALAXIES}
-  function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;[bg,map].forEach(c=>{c.width=W*dpr;c.height=H*dpr;c.style.width=W+'px';c.style.height=H+'px'});bx.setTransform(dpr,0,0,dpr,0,0);ctx.setTransform(dpr,0,0,dpr,0,0);nebulaCache.clear()}
-  function rgba(hex,a){const n=parseInt(hex.slice(1),16);return`rgba(${n>>16},${n>>8&255},${n&255},${a})`}
-  function drawBg(){bx.clearRect(0,0,W,H);bx.fillStyle='#020410';bx.fillRect(0,0,W,H);const g=bx.createRadialGradient(W*.5,H*.44,0,W*.5,H*.44,Math.max(W,H)*.75);g.addColorStop(0,'#141d4a');g.addColorStop(1,'#020410');bx.fillStyle=g;bx.fillRect(0,0,W,H);for(const [x,y,h] of [[.18,.23,235],[.78,.62,260],[.47,.86,205]]){const n=bx.createRadialGradient(W*x+mx*35,H*y+my*24,0,W*x+mx*35,H*y+my*24,Math.max(W,H)*.36);n.addColorStop(0,`hsla(${h},65%,55%,.12)`);n.addColorStop(1,'transparent');bx.fillStyle=n;bx.fillRect(0,0,W,H)}for(const s of stars){bx.beginPath();bx.arc(s.x*W+mx*9,s.y*H+my*7,s.r,0,7);bx.fillStyle=`rgba(210,225,255,${s.a*(.65+.35*Math.sin(T*.8+s.p))})`;bx.fill()}}
-  function prerenderNebula(g){const cv=document.createElement('canvas'),size=Math.ceil(Math.min(W,H)*.38);cv.width=cv.height=size;const c=cv.getContext('2d'),r=size*.5;for(let i=0;i<9;i++){const x=r+(Math.random()-.5)*r,y=r+(Math.random()-.5)*r,br=r*(.25+Math.random()*.3),q=c.createRadialGradient(x,y,0,x,y,br);q.addColorStop(0,rgba(g.color,.16));q.addColorStop(1,'transparent');c.fillStyle=q;c.beginPath();c.arc(x,y,br,0,7);c.fill()}nebulaCache.set(g.id,cv)}
-  function nebula(g,x,y,r){if(!nebulaCache.has(g.id))prerenderNebula(g);const cv=nebulaCache.get(g.id);ctx.globalAlpha=.8;ctx.drawImage(cv,x-cv.width*.5+mx*22,y-cv.height*.5+my*16,cv.width,cv.height);ctx.globalAlpha=1;ctx.strokeStyle=rgba(g.color,.2);ctx.lineWidth=1;ctx.beginPath();ctx.arc(x,y,r*(1+.025*Math.sin(T*.5)),0,7);ctx.stroke()}
-  function world(x,y,d=1){return{x:W/2+(x-W/2)*zoom+panX*d,y:H/2+(y-H/2)*zoom+panY*d}}
-  function galaxyLayout(){const cx=W/2,cy=H/2,rad=Math.min(W,H)*.29;return GALAXIES.map((g,i)=>{const a=i*Math.PI*2/5-.4;return{g,x:cx+Math.cos(a)*rad*(W>H?1.25:.95),y:cy+Math.sin(a)*rad,r:Math.min(W,H)*.12+Math.sqrt(galaxyItems(g).length+1)*5}})}
-  function entityLayout(g){const list=galaxyItems(g),cx=W/2,cy=H/2,rad=Math.min(W,H)*.36;return list.map((it,i)=>{const a=i*2.399+Math.sin(i*5)*.1,r=rad*Math.sqrt((i+.5)/Math.max(1,list.length));return{it,x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r,r:8+Math.min(10,Math.sqrt(it.mention_count||1)),depth:.95}})}
-  function star(x,y,r,color,a=1,hot=false){const q=ctx.createRadialGradient(x,y,0,x,y,r*4);q.addColorStop(0,rgba(color,.38*a));q.addColorStop(1,'transparent');ctx.fillStyle=q;ctx.beginPath();ctx.arc(x,y,r*4,0,7);ctx.fill();ctx.fillStyle=color;ctx.globalAlpha=a;ctx.beginPath();ctx.arc(x,y,r*(hot?1.3:1),0,7);ctx.fill();ctx.globalAlpha=1;if(hot){ctx.strokeStyle=rgba(color,.8);ctx.beginPath();ctx.arc(x,y,r*2.3,0,7);ctx.stroke()}}
-  function drawCore(){const p=world(W/2,H/2,1),x=p.x+mx*25,y=p.y+my*18;ctx.strokeStyle='rgba(190,220,255,.3)';ctx.beginPath();ctx.moveTo(x-48,y);ctx.lineTo(x+48,y);ctx.stroke();star(x-48,y,10,'#ffd58a',1,hover&&hover.type==='core'&&hover.side==='user');star(x+48,y,9,'#83e8ff',1,hover&&hover.type==='core'&&hover.side==='ai');ctx.textAlign='center';ctx.font='12px Microsoft YaHei';ctx.fillStyle='#ffe0aa';ctx.fillText(core.user,x-48,y+30);ctx.fillStyle='#a5ecff';ctx.fillText(core.assistant,x+48,y+30)}
-  function drawBridges(points){const byId=Object.fromEntries(points.map(p=>[p.it.id,p]));for(const ep of data.episodes||[]){const ids=arr(ep.entity_ids).map(Number).filter(id=>byId[id]);for(let i=1;i<ids.length;i++){const a=byId[ids[i-1]],b=byId[ids[i]],pa=world(a.x,a.y,.9),pb=world(b.x,b.y,.9);ctx.strokeStyle='rgba(140,190,255,.22)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);ctx.stroke()}}}
-  function draw(){drawBg();ctx.clearRect(0,0,W,H);drawCore();if(level==='universe'){const ls=galaxyLayout();for(const p of ls){const q=world(p.x,p.y,.55);nebula(p.g,q.x,q.y,p.r);star(q.x,q.y,15,p.g.color,.9,hover&&hover.g===p.g);ctx.fillStyle=rgba(p.g.color,.85);ctx.font='13px Microsoft YaHei';ctx.textAlign='center';ctx.fillText(p.g.name,q.x,q.y+p.r+20)}}else{const g=activeGalaxy||GALAXIES[0],ls=entityLayout(g);drawBridges(ls);for(const p of ls){const q=world(p.x,p.y,p.depth),c=COLORS[galaxyFor(p.it).name]||g.color;star(q.x,q.y,p.r,c,.8,hover&&hover.it===p.it);ctx.fillStyle='rgba(225,235,255,.8)';ctx.font='12px Microsoft YaHei';ctx.textAlign='left';ctx.fillText(p.it.label,q.x+14,q.y+4)}}requestAnimationFrame(draw);T+=.015}
-  function hit(x,y){if(level==='universe'){for(const p of galaxyLayout()){const q=world(p.x,p.y,.55);if(Math.hypot(x-q.x,y-q.y)<p.r)return{type:'galaxy',g:p.g}}}else{for(const p of entityLayout(activeGalaxy||GALAXIES[0])){const q=world(p.x,p.y,p.depth);if(Math.hypot(x-q.x,y-q.y)<p.r*2.5)return{type:'entity',it:p.it}}}const c=world(W/2,H/2,1);if(Math.hypot(x-c.x,y-c.y)<80)return{type:'core',side:x<c.x?'user':'ai'};return null}
-  function showEntity(it){selected=it;const ids=data.source_ids?.[String(it.id)]||[];const kind=it.kind==='episode'?'经历星座':it.kind==='saga'?'长期故事':'人物与实体';document.getElementById('panel-content').innerHTML=`<h2>${esc(it.label)}</h2><div class="meta">${kind} · 置信度 ${Math.round((it.confidence||.6)*100)}%</div><div class="summary">${esc(it.summary||it.current_status||'暂无摘要')}</div><div class="tags"><span class="tag">${esc(it.entity_type||it.category||'concept')}</span><span class="tag">来源 ${ids.length?ids.length+' 条':'待补充'}</span></div><button class="panel-action" id="open-source">打开原始消息</button>`;document.getElementById('open-source').onclick=()=>window.lianxinBridge?.openOriginalMessages(JSON.stringify(ids));document.getElementById('panel').classList.remove('hidden')}
-  function showModel(){const m=data.model||{};document.getElementById('model-body').innerHTML=`<b>叙事整合模型</b><span>状态：${esc(m.status||'未运行')}</span><span>候选碎片：${m.candidates||0}</span><span>最近完成：${esc(m.finished_at||'暂无')}</span>`;document.getElementById('model-panel').classList.toggle('collapsed')}
-  function showDust(){const body=document.getElementById('dust-body');body.innerHTML=(data.events||[]).slice(-20).reverse().map(e=>`<div class="dust-row"><b>${esc(e.event_type)}</b><span>${esc(e.created_at||'')}</span><small>${esc(e.entity_type||'')} #${e.entity_id||''}</small></div>`).join('')||'<div class="empty">暂无星尘事件</div>';document.getElementById('dust-panel').classList.toggle('collapsed')}
-  function setLevel(next,g){level=next;activeGalaxy=g||activeGalaxy;document.getElementById('breadcrumb').textContent=next==='universe'?'记忆宇宙 · 双星核心':`记忆宇宙 · ${activeGalaxy?.name||''} · ${next==='galaxy'?'星座导航':'记忆星体'}`}
-  function init(){resize();const nav=document.getElementById('filters');for(const g of GALAXIES){const b=document.createElement('button');b.className='pill';b.textContent=g.name;b.onclick=()=>{activeGalaxy=g;setLevel('galaxy',g);document.querySelectorAll('.pill').forEach(x=>x.classList.remove('active'));b.classList.add('active')};nav.appendChild(b)}document.getElementById('count').textContent=`· ${(data.entities||[]).length} 实体 / ${(data.episodes||[]).length} 经历星座`;document.getElementById('close').onclick=()=>document.getElementById('panel').classList.add('hidden');document.getElementById('stardust').onclick=showDust;document.getElementById('model-toggle').onclick=showModel;document.getElementById('dust-close').onclick=()=>document.getElementById('dust-panel').classList.add('collapsed');document.getElementById('model-close').onclick=()=>document.getElementById('model-panel').classList.add('collapsed');document.getElementById('refresh').onclick=()=>location.reload();map.onmousemove=e=>{mx=(e.offsetX/W-.5)*2;my=(e.offsetY/H-.5)*2;hover=hit(e.offsetX,e.offsetY)};map.onmouseleave=()=>{mx=my=0;hover=null};map.onwheel=e=>{e.preventDefault();zoom=Math.max(.55,Math.min(2.5,zoom*(e.deltaY<0?1.1:.9)))};map.onmousedown=e=>{drag=true;map.classList.add('dragging');lx=e.clientX;ly=e.clientY};window.onmouseup=()=>{drag=false;map.classList.remove('dragging')};window.onmousemove=e=>{if(drag){panX+=e.clientX-lx;panY+=e.clientY-ly;lx=e.clientX;ly=e.clientY}};map.onclick=e=>{if(drag)return;const h=hit(e.offsetX,e.offsetY);if(!h){if(level!=='universe')setLevel('universe');return}if(h.type==='galaxy'){activeGalaxy=h.g;setLevel('galaxy',h.g)}else if(h.type==='entity'){showEntity(h.it);setLevel('constellation',activeGalaxy)}else if(h.type==='core'){showModel()}};document.getElementById('back').onclick=()=>setLevel(level==='constellation'?'galaxy':'universe',level==='constellation'?activeGalaxy:null);window.onresize=resize;draw()}
+
+  const bg = document.getElementById('bg');
+  const map = document.getElementById('map');
+  const bx = bg.getContext('2d');
+  const ctx = map.getContext('2d');
+  let W = 0, H = 0, dpr = 1, time = 0;
+  let mx = 0, my = 0, zoom = 1, panX = 0, panY = 0;
+  let dragging = false, moved = false, lastX = 0, lastY = 0;
+  let level = 'universe', activeGalaxy = null, selected = null, hover = null;
+  let hitPoints = [];
+  const nebulaCache = new Map();
+  const stars = Array.from({ length: 520 }, (_, i) => ({
+    x: (i * 0.61803398875) % 1, y: (i * 0.38196601125) % 1,
+    r: .2 + (i % 9) * .13, phase: i * .73, alpha: .08 + (i % 7) * .035
+  }));
+  const core = data.core || { user: '主人', assistant: '莲心' };
+  // Legacy 人物星系 is intentionally presented as the clearer 社交星系 in Lianxin.
+  const GALAXIES = [
+    { id: 'hobbies', name: '爱好星系', color: '#ff91c8', match: ['interest', 'preference', 'hobby', 'preferences', '爱好', '偏好'] },
+    { id: 'contribution', name: '贡献星系', color: '#f5e4a9', match: ['contribution', 'project', 'work', 'achievement', '贡献', '项目'] },
+    { id: 'places', name: '地点星系', color: '#72d9b2', match: ['place', 'location', '地点'] },
+    { id: 'social', name: '社交星系', color: '#d5ae72', match: ['person', 'people', 'organization', 'social', '人物', '社交'] },
+    { id: 'events', name: '事件星系', color: '#71e19a', match: ['event', 'events', 'episode', '经历', '事件'] },
+    { id: 'persona', name: '人格星系', color: '#b98cff', match: ['profile', 'behavior', 'behaviors', 'persona', '人格', '行为'] }
+  ];
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const arr = value => { try { return typeof value === 'string' ? JSON.parse(value || '[]') : (value || []); } catch (_) { return []; } };
+  const typeOf = item => String(item.entity_type || item.category || '').toLowerCase();
+  const keyOf = item => `${item.kind || 'entity'}:${item.id}`;
+  const galaxyFor = item => {
+    const type = typeOf(item);
+    return GALAXIES.find(g => g.match.some(token => type.includes(token))) || GALAXIES[1];
+  };
+  const entities = () => (data.entities || []).map(item => ({ ...item, kind: 'entity', label: item.name || '未命名实体' }));
+  const facts = () => (data.facts || []).map(item => ({ ...item, kind: 'fact', label: item.label || item.content || '未命名记忆' }));
+  function galaxyItems(galaxy) {
+    const items = [...entities(), ...facts()].filter(item => galaxyFor(item).id === galaxy.id);
+    if (galaxy.id === 'events') {
+      items.push(...(data.episodes || []).map(item => ({ ...item, kind: 'episode', label: item.title || '未命名经历', entity_type: 'event' })));
+    }
+    if (galaxy.id === 'contribution') {
+      items.push(...(data.sagas || []).map(item => ({ ...item, kind: 'saga', label: item.title || '未命名故事', entity_type: 'project' })));
+    }
+    if (galaxy.id === 'persona') {
+      items.unshift({ id: 'user-core', kind: 'core', side: 'user', label: core.user, entity_type: 'profile' });
+      items.unshift({ id: 'assistant-core', kind: 'core', side: 'ai', label: core.assistant, entity_type: 'persona' });
+    }
+    return items;
+  }
+  function sourceIds(item) { return data.source_ids?.[keyOf(item)] || data.source_ids?.[String(item.id)] || []; }
+  function relatedItems(item) {
+    const ids = new Set(arr(item.entity_ids).map(Number));
+    const factIds = new Set(arr(item.source_fact_ids).map(Number));
+    if (item.kind === 'saga') {
+      for (const episodeId of arr(item.episode_ids)) {
+        const episode = (data.episodes || []).find(row => Number(row.id) === Number(episodeId));
+        if (episode) arr(episode.entity_ids).forEach(id => ids.add(Number(id)));
+      }
+    }
+    const rows = entities().filter(row => ids.has(Number(row.id)));
+    rows.push(...facts().filter(row => factIds.has(Number(row.id))));
+    if (item.kind === 'entity') {
+      rows.push(...(data.episodes || []).filter(row => arr(row.entity_ids).map(Number).includes(Number(item.id))).map(row => ({ ...row, kind: 'episode', label: row.title || '未命名经历', entity_type: 'event' })));
+    }
+    return rows.filter(row => keyOf(row) !== keyOf(item)).slice(0, 80);
+  }
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight;
+    [bg, map].forEach(canvas => { canvas.width = W * dpr; canvas.height = H * dpr; canvas.style.width = `${W}px`; canvas.style.height = `${H}px`; });
+    bx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); nebulaCache.clear();
+  }
+  const rgba = (hex, alpha) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${n >> 8 & 255},${n & 255},${alpha})`; };
+  function drawBackground() {
+    bx.clearRect(0, 0, W, H); bx.fillStyle = '#020410'; bx.fillRect(0, 0, W, H);
+    const gradient = bx.createRadialGradient(W * .5, H * .44, 0, W * .5, H * .44, Math.max(W, H) * .78);
+    gradient.addColorStop(0, '#141d4a'); gradient.addColorStop(1, '#020410'); bx.fillStyle = gradient; bx.fillRect(0, 0, W, H);
+    for (const [x, y, hue] of [[.18, .23, 235], [.78, .62, 280], [.47, .86, 205]]) {
+      const neb = bx.createRadialGradient(W * x + mx * 35, H * y + my * 24, 0, W * x + mx * 35, H * y + my * 24, Math.max(W, H) * .36);
+      neb.addColorStop(0, `hsla(${hue},65%,55%,.12)`); neb.addColorStop(1, 'transparent'); bx.fillStyle = neb; bx.fillRect(0, 0, W, H);
+    }
+    for (const star of stars) { bx.beginPath(); bx.arc(star.x * W + mx * 9, star.y * H + my * 7, star.r, 0, Math.PI * 2); bx.fillStyle = `rgba(210,225,255,${star.alpha * (.65 + .35 * Math.sin(time * .8 + star.phase))})`; bx.fill(); }
+  }
+  function prerenderNebula(galaxy) {
+    const canvas = document.createElement('canvas'); const size = Math.ceil(Math.min(W, H) * .4); canvas.width = canvas.height = size;
+    const neb = canvas.getContext('2d'), radius = size * .5;
+    let seed = galaxy.id.split('').reduce((sum, char) => sum + char.charCodeAt(0), 17);
+    const random = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+    for (let i = 0; i < 12; i++) { const x = radius + (random() - .5) * radius, y = radius + (random() - .5) * radius, br = radius * (.22 + random() * .34); const glow = neb.createRadialGradient(x, y, 0, x, y, br); glow.addColorStop(0, rgba(galaxy.color, .18)); glow.addColorStop(1, 'transparent'); neb.fillStyle = glow; neb.beginPath(); neb.arc(x, y, br, 0, Math.PI * 2); neb.fill(); }
+    nebulaCache.set(galaxy.id, canvas);
+  }
+  const world = (x, y, depth = 1) => ({ x: W / 2 + (x - W / 2) * zoom + panX * depth, y: H / 2 + (y - H / 2) * zoom + panY * depth });
+  function nebula(galaxy, x, y, radius) { if (!nebulaCache.has(galaxy.id)) prerenderNebula(galaxy); const image = nebulaCache.get(galaxy.id); ctx.globalAlpha = .8; ctx.drawImage(image, x - image.width * .5 + mx * 22, y - image.height * .5 + my * 16, image.width, image.height); ctx.globalAlpha = 1; ctx.strokeStyle = rgba(galaxy.color, .22); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, radius * (1 + .025 * Math.sin(time * .5)), 0, Math.PI * 2); ctx.stroke(); }
+  function galaxyLayout() { const centerX = W / 2, centerY = H / 2, radius = Math.min(W, H) * .29; return GALAXIES.map((galaxy, index) => { const angle = index * Math.PI * 2 / GALAXIES.length - .5; return { galaxy, x: centerX + Math.cos(angle) * radius * (W > H ? 1.28 : .92), y: centerY + Math.sin(angle) * radius, radius: Math.min(W, H) * .105 + Math.sqrt(galaxyItems(galaxy).length + 1) * 4 }; }); }
+  function itemLayout(galaxy) { const list = galaxyItems(galaxy), centerX = W / 2, centerY = H / 2, radius = Math.min(W, H) * .37; return list.map((item, index) => { const angle = index * 2.399 + Math.sin(index * 5) * .1, distance = radius * Math.sqrt((index + .5) / Math.max(1, list.length)); return { item, x: centerX + Math.cos(angle) * distance, y: centerY + Math.sin(angle) * distance, radius: 7 + Math.min(11, Math.sqrt(Number(item.mention_count) || 1)), depth: .94 }; }); }
+  function detailLayout(item) { const rows = relatedItems(item), centerX = W / 2, centerY = H / 2; return [{ item, x: centerX, y: centerY, radius: 19, depth: 1 }, ...rows.map((row, index) => { const angle = index * 2.399, distance = Math.min(W, H) * (.18 + .15 * Math.sqrt((index + 1) / Math.max(1, rows.length))); return { item: row, x: centerX + Math.cos(angle) * distance, y: centerY + Math.sin(angle) * distance, radius: 7 + Math.min(8, Math.sqrt(Number(row.mention_count) || 1)), depth: .95 }; })]; }
+  function star(x, y, radius, color, alpha = 1, hot = false) { const glow = ctx.createRadialGradient(x, y, 0, x, y, radius * 4); glow.addColorStop(0, rgba(color, .4 * alpha)); glow.addColorStop(1, 'transparent'); ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(x, y, radius * 4, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, radius * (hot ? 1.35 : 1), 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; if (hot) { ctx.strokeStyle = rgba(color, .8); ctx.beginPath(); ctx.arc(x, y, radius * 2.3, 0, Math.PI * 2); ctx.stroke(); } }
+  function drawCore() { const position = world(W / 2, H / 2), x = position.x + mx * 25, y = position.y + my * 18; ctx.strokeStyle = 'rgba(190,220,255,.3)'; ctx.beginPath(); ctx.moveTo(x - 48, y); ctx.lineTo(x + 48, y); ctx.stroke(); star(x - 48, y, 10, '#ffd58a', 1, hover?.type === 'core' && hover.side === 'user'); star(x + 48, y, 9, '#b98cff', 1, hover?.type === 'core' && hover.side === 'ai'); ctx.textAlign = 'center'; ctx.font = '12px Microsoft YaHei'; ctx.fillStyle = '#ffe0aa'; ctx.fillText(core.user, x - 48, y + 30); ctx.fillStyle = '#d9c4ff'; ctx.fillText(core.assistant, x + 48, y + 30); }
+  function drawBridges(points) { const byId = Object.fromEntries(points.map(point => [point.item.id, point])); for (const episode of data.episodes || []) { const ids = arr(episode.entity_ids).map(Number).filter(id => byId[id]); for (let i = 1; i < ids.length; i++) { const a = byId[ids[i - 1]], b = byId[ids[i]], pa = world(a.x, a.y, .9), pb = world(b.x, b.y, .9); ctx.save(); ctx.setLineDash([3, 8]); ctx.lineDashOffset = -time * 28; ctx.strokeStyle = 'rgba(140,190,255,.28)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke(); ctx.restore(); } } }
+  function draw() {
+    drawBackground(); ctx.clearRect(0, 0, W, H); drawCore(); hitPoints = [];
+    if (level === 'universe') {
+      for (const point of galaxyLayout()) { const position = world(point.x, point.y, .55); nebula(point.galaxy, position.x, position.y, point.radius); star(position.x, position.y, 15, point.galaxy.color, .9, hover?.galaxy === point.galaxy); ctx.fillStyle = rgba(point.galaxy.color, .9); ctx.font = '13px Microsoft YaHei'; ctx.textAlign = 'center'; ctx.fillText(point.galaxy.name, position.x, position.y + point.radius + 19); ctx.fillStyle = 'rgba(190,205,245,.65)'; ctx.font = '11px Microsoft YaHei'; ctx.fillText(`${galaxyItems(point.galaxy).length} 星座`, position.x, position.y + point.radius + 36); hitPoints.push({ type: 'galaxy', galaxy: point.galaxy, x: position.x, y: position.y, radius: point.radius }); }
+    } else if (level === 'galaxy') {
+      const galaxy = activeGalaxy || GALAXIES[0], points = itemLayout(galaxy); drawBridges(points);
+      points.forEach(point => { const position = world(point.x, point.y, point.depth), color = point.item.kind === 'core' ? (point.item.side === 'ai' ? '#b98cff' : '#ffd58a') : galaxy.color; star(position.x, position.y, point.radius, color, .85, hover?.item === point.item); ctx.fillStyle = 'rgba(225,235,255,.84)'; ctx.font = '12px Microsoft YaHei'; ctx.textAlign = 'left'; ctx.fillText(point.item.label, position.x + 14, position.y + 4); hitPoints.push({ type: 'item', item: point.item, x: position.x, y: position.y, radius: point.radius * 2.5 }); });
+    } else {
+      const points = selected ? (level === 'constellation' ? detailLayout(selected) : [{ item: selected, x: W / 2, y: H / 2, radius: 25, depth: 1 }]) : [];
+      if (points.length) { const center = points[0], centerPosition = world(center.x, center.y, center.depth); points.slice(1).forEach(point => { const position = world(point.x, point.y, point.depth); ctx.strokeStyle = 'rgba(140,190,255,.28)'; ctx.setLineDash([2, 7]); ctx.lineDashOffset = -time * 24; ctx.beginPath(); ctx.moveTo(centerPosition.x, centerPosition.y); ctx.lineTo(position.x, position.y); ctx.stroke(); ctx.setLineDash([]); }); points.forEach(point => { const position = world(point.x, point.y, point.depth), galaxy = galaxyFor(point.item); star(position.x, position.y, point.radius, galaxy.color, .95, hover?.item === point.item || point === center); ctx.fillStyle = 'rgba(225,235,255,.88)'; ctx.textAlign = 'center'; ctx.font = `${point === center ? 14 : 11}px Microsoft YaHei`; ctx.fillText(point.item.label, position.x, position.y + point.radius + 17); hitPoints.push({ type: 'item', item: point.item, x: position.x, y: position.y, radius: point.radius * 2.5 }); }); }
+    }
+    requestAnimationFrame(draw); time += .015;
+  }
+  function hit(x, y) { for (let i = hitPoints.length - 1; i >= 0; i--) { const point = hitPoints[i]; if (Math.hypot(x - point.x, y - point.y) < point.radius) return point; } const center = world(W / 2, H / 2); if (Math.hypot(x - center.x, y - center.y) < 80) return { type: 'core', side: x < center.x ? 'user' : 'ai' }; return null; }
+  function updateBottom(item) {
+    const title = document.getElementById('journal-title'), body = document.getElementById('journal-body');
+    if (!item) { title.textContent = '观星手记'; body.textContent = '点击星体查看记忆详情'; return; }
+    title.textContent = item.label || '未命名记忆'; body.textContent = item.summary || item.content || item.current_status || '暂无摘要';
+  }
+  function showDetail(item) {
+    selected = item; updateBottom(item); const ids = sourceIds(item); const kind = item.kind === 'episode' ? '经历星座' : item.kind === 'saga' ? '长期故事' : item.kind === 'fact' ? '历史记忆' : item.kind === 'core' ? '人格核心' : '实体星体';
+    document.getElementById('panel-content').innerHTML = `<h2>${esc(item.label)}</h2><div class="meta">${kind} · 置信度 ${Math.round((Number(item.confidence ?? item.quality_score ?? .6)) * 100)}%</div><div class="summary">${esc(item.summary || item.content || item.current_status || '暂无摘要')}</div><div class="tags"><span class="tag">${esc(item.entity_type || item.category || 'memory')}</span><span class="tag">来源 ${ids.length ? `${ids.length} 条` : '待补充'}</span></div>${item.kind === 'core' ? '' : '<button class="panel-action" id="open-source">打开原始消息</button>'}`;
+    const sourceButton = document.getElementById('open-source'); if (sourceButton) sourceButton.onclick = () => window.lianxinBridge?.openOriginalMessages(JSON.stringify(ids));
+    document.getElementById('panel').classList.remove('hidden');
+  }
+  function renderDust() { const dateSelect = document.getElementById('dust-date'); if (dateSelect && dateSelect.options.length === 1) { [...new Set((data.events || []).map(event => String(event.created_at || '').slice(0, 10)).filter(Boolean))].sort().reverse().forEach(date => { const option = document.createElement('option'); option.value = date; option.textContent = date; dateSelect.appendChild(option); }); } const query = (document.getElementById('dust-query')?.value || '').trim().toLowerCase(), date = dateSelect?.value || 'all'; let events = [...(data.events || [])].reverse(); if (query) events = events.filter(event => JSON.stringify(event).toLowerCase().includes(query)); if (date !== 'all') events = events.filter(event => String(event.created_at || '').startsWith(date)); document.getElementById('dust-body').innerHTML = events.slice(0, 40).map(event => `<div class="dust-row"><b>${esc(event.event_type || 'memory')}</b><span>${esc(event.created_at || '')}</span><small>${esc(event.entity_type || '')} #${esc(event.entity_id || '')}</small></div>`).join('') || '<div class="empty">暂无符合条件的星尘事件</div>'; }
+  function showDust() { document.getElementById('dust-panel').classList.toggle('collapsed'); renderDust(); }
+  function showModel() { const model = data.model || {}, maintenance = data.maintenance || {}, stats = maintenance.stats || {}; document.getElementById('model-body').innerHTML = `<h3>认知模型状态</h3><span>叙事整合：${esc(model.status || '未运行')}</span><span>候选碎片：${esc(model.candidates || 0)}</span><span>最近完成：${esc(model.finished_at || '暂无')}</span><hr><span>后台维护：${esc(maintenance.status || '未运行')}</span><span>维护统计：清理 ${esc(stats.expired || 0)} · 合并 ${esc(stats.merged || 0)} · 冲突 ${esc(stats.conflicts || 0)}</span><span>维护完成：${esc(maintenance.finished_at || '暂无')}</span>`; document.getElementById('model-panel').classList.toggle('collapsed'); }
+  function showTooltip(target, x, y) { const tip = document.getElementById('tooltip'); if (!target) { tip.style.display = 'none'; return; } const label = target.type === 'galaxy' ? `${target.galaxy.name} · ${galaxyItems(target.galaxy).length} 星座` : target.type === 'core' ? `${target.side === 'user' ? core.user : core.assistant} · 双星核心` : target.item?.label || ''; tip.textContent = label; tip.style.left = `${Math.min(innerWidth - 280, x + 14)}px`; tip.style.top = `${Math.min(innerHeight - 46, y + 14)}px`; tip.style.display = 'block'; }
+  function setLevel(next, galaxy = activeGalaxy) { level = next; activeGalaxy = galaxy || activeGalaxy; const path = next === 'universe' ? '记忆宇宙 · 双星核心' : `记忆宇宙 · ${activeGalaxy?.name || ''} · ${next === 'galaxy' ? '星座导航' : next === 'constellation' ? '星体关联' : '记忆详情'}`; document.getElementById('breadcrumb').textContent = path; document.getElementById('back').style.display = next === 'universe' ? 'none' : 'block'; }
+  function rebuildFilters() { const nav = document.getElementById('filters'); nav.querySelectorAll('.galaxy-pill').forEach(button => button.remove()); GALAXIES.forEach(galaxy => { const button = document.createElement('button'); button.className = 'pill galaxy-pill'; button.textContent = galaxy.name; button.onclick = () => { activeGalaxy = galaxy; selected = null; setLevel('galaxy', galaxy); nav.querySelectorAll('.pill').forEach(item => item.classList.remove('active')); button.classList.add('active'); }; nav.appendChild(button); }); }
+  function updateCount() { document.getElementById('count').textContent = `· ${(data.entities || []).length + (data.facts || []).length} fragments / ${GALAXIES.length} galaxies`; }
+  function refreshSnapshot() { if (!window.lianxinBridge?.refreshSnapshot) { location.reload(); return; } window.lianxinBridge.refreshSnapshot(raw => { try { const next = JSON.parse(raw || '{}'); if (next.error) throw new Error(next.error); data = next; selected = null; rebuildFilters(); updateCount(); const dateSelect = document.getElementById('dust-date'); if (dateSelect) dateSelect.innerHTML = '<option value="all">全部日期</option>'; setLevel('universe', null); updateBottom(null); toast('记忆快照已刷新'); } catch (error) { toast(`刷新失败：${error.message}`); } }); }
+  let toastTimer; function toast(message) { const element = document.getElementById('toast'); element.textContent = message; element.classList.add('toast-show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => element.classList.remove('toast-show'), 2200); }
+  function init() {
+    resize(); rebuildFilters(); setLevel('universe', null); updateBottom(null); updateCount();
+    document.getElementById('close').onclick = () => document.getElementById('panel').classList.add('hidden'); document.getElementById('refresh').onclick = refreshSnapshot; document.getElementById('stardust').onclick = showDust; document.getElementById('model-toggle').onclick = showModel; document.getElementById('dust-close').onclick = () => document.getElementById('dust-panel').classList.add('collapsed'); document.getElementById('model-close').onclick = () => document.getElementById('model-panel').classList.add('collapsed');
+    document.getElementById('dust-query')?.addEventListener('input', renderDust); document.getElementById('dust-date')?.addEventListener('change', renderDust); document.getElementById('cognition-open')?.addEventListener('click', showModel);
+    map.addEventListener('mousemove', event => { mx = (event.offsetX / W - .5) * 2; my = (event.offsetY / H - .5) * 2; if (!dragging) { hover = hit(event.offsetX, event.offsetY); showTooltip(hover, event.clientX, event.clientY); } }); map.addEventListener('mouseleave', () => { mx = my = 0; hover = null; showTooltip(null); }); map.addEventListener('wheel', event => { event.preventDefault(); zoom = Math.max(.55, Math.min(2.5, zoom * (event.deltaY < 0 ? 1.1 : .9))); }, { passive: false }); map.addEventListener('mousedown', event => { dragging = true; moved = false; map.classList.add('dragging'); lastX = event.clientX; lastY = event.clientY; }); window.addEventListener('mouseup', () => { dragging = false; map.classList.remove('dragging'); }); window.addEventListener('mousemove', event => { if (dragging) { const dx = event.clientX - lastX, dy = event.clientY - lastY; if (Math.abs(dx) + Math.abs(dy) > 2) moved = true; panX += dx; panY += dy; lastX = event.clientX; lastY = event.clientY; } });
+    let touchDistance = 0; map.addEventListener('touchstart', event => { if (event.touches.length === 2) touchDistance = Math.hypot(event.touches[1].clientX - event.touches[0].clientX, event.touches[1].clientY - event.touches[0].clientY); }, { passive: true }); map.addEventListener('touchmove', event => { if (event.touches.length === 2 && touchDistance) { event.preventDefault(); const distance = Math.hypot(event.touches[1].clientX - event.touches[0].clientX, event.touches[1].clientY - event.touches[0].clientY); zoom = Math.max(.55, Math.min(2.5, zoom * distance / touchDistance)); touchDistance = distance; } }, { passive: false }); map.addEventListener('touchend', () => { touchDistance = 0; });
+    map.addEventListener('click', event => { if (moved) return; const target = hit(event.offsetX, event.offsetY); if (!target) return; if (target.type === 'galaxy') { activeGalaxy = target.galaxy; setLevel('galaxy', target.galaxy); } else if (target.type === 'item') { if (level === 'galaxy') { activeGalaxy = activeGalaxy || galaxyFor(target.item); showDetail(target.item); setLevel('constellation', activeGalaxy); } else if (level === 'constellation') { showDetail(target.item); setLevel('star', activeGalaxy); } else { showDetail(target.item); } } else if (target.type === 'core') showModel(); });
+    document.getElementById('back').onclick = () => { if (level === 'star') { setLevel('constellation', activeGalaxy); } else if (level === 'constellation') { selected = null; setLevel('galaxy', activeGalaxy); } else setLevel('universe', null); }; window.addEventListener('keydown', event => { if (event.target.matches('input,select,textarea')) return; if (event.key === '0' || event.key === '`') setLevel('universe', null); else if (event.key === 'Escape') document.getElementById('back').click(); else if (/^[1-6]$/.test(event.key)) { activeGalaxy = GALAXIES[Number(event.key) - 1]; setLevel('galaxy', activeGalaxy); } }); window.addEventListener('resize', resize); draw();
+  }
   init();
 })();

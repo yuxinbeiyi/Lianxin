@@ -9,17 +9,27 @@
 <body>
   <canvas id="bg"></canvas><canvas id="map"></canvas>
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">✦</span><span>莲心 · 记忆星图</span><small id="count"></small></div>
+    <div class="brand"><span class="brand-mark">✧</span><span>MEMORY UNIVERSE · 记忆宇宙</span><small id="count"></small></div>
     <nav id="filters"><button class="pill active" data-filter="all">全部</button></nav>
-    <button id="refresh" class="icon-btn" title="刷新记忆">↻</button>
+    <button id="refresh" class="icon-btn" title="刷新记忆快照">↻</button>
     <button id="stardust" class="icon-btn" title="星尘观测日志">✦</button>
-    <button id="model-toggle" class="icon-btn" title="模型状态">◌</button>
+    <button id="model-toggle" class="icon-btn" title="认知模型状态">◉</button>
   </header>
-  <div id="breadcrumb">记忆宇宙 · 双星核心</div><button id="back" class="back-btn">↑ 返回上层</button>
+  <div id="breadcrumb">记忆宇宙 · 双星核心</div>
+  <button id="back" class="back-btn" style="display:none">← 返回上层</button>
   <aside id="panel" class="panel hidden"><button id="close" class="panel-close">×</button><div id="panel-content"></div></aside>
-  <aside id="dust-panel" class="floating-panel collapsed"><button id="dust-close" class="panel-close">×</button><h3>✦ 星尘观测日志</h3><div id="dust-body"></div></aside>
+  <aside id="dust-panel" class="floating-panel collapsed">
+    <button id="dust-close" class="panel-close">×</button><h3>✦ 星尘观测日志</h3>
+    <div class="filter-row"><input id="dust-query" placeholder="搜索事件、来源或实体"><select id="dust-date"><option value="all">全部日期</option></select></div>
+    <div id="dust-body"></div>
+  </aside>
   <aside id="model-panel" class="floating-panel collapsed"><button id="model-close" class="panel-close">×</button><div id="model-body"></div></aside>
   <aside id="legend" class="legend"><b>观测提示</b><span>移动鼠标：星云视差</span><span>滚轮：缩放</span><span>拖动：漫游</span><span>点击星体：查看记忆</span></aside>
+  <section id="bottom-dock" class="bottom-dock">
+    <div class="cognition-card"><button id="cognition-open" class="dock-icon">◉</button><div><small>认知模型</small><strong>莲心双星核心</strong></div></div>
+    <div class="journal-card"><span class="journal-label">观星手记</span><strong id="journal-title">观星手记</strong><p id="journal-body">点击任意星体查看记忆详情与关联来源</p></div>
+  </section>
+  <div id="tooltip" class="tooltip"></div>
   <div id="toast"></div>
   <!-- LIANXIN_DATA -->
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>

@@ -17,6 +17,25 @@ from PyQt5.QtWebChannel import QWebChannel
 
 
 class _ConstellationBridge(QObject):
+    """Small, read-only bridge used by the Canvas page.
+
+    The page is deliberately not allowed to mutate memory directly.  It asks
+    the Python side for a fresh snapshot and opens source messages through the
+    existing database layer, keeping the visualizer safe and auditable.
+    """
+
+    def __init__(self, snapshot_provider=None, parent=None):
+        super().__init__(parent)
+        self._snapshot_provider = snapshot_provider
+
+    @pyqtSlot(result=str)
+    def refreshSnapshot(self):
+        try:
+            payload = self._snapshot_provider() if self._snapshot_provider else {}
+            return json.dumps(payload, ensure_ascii=False, default=str)
+        except Exception as exc:
+            return json.dumps({"error": f"snapshot refresh failed: {exc}"}, ensure_ascii=False)
+
     @pyqtSlot(str)
     def openOriginalMessages(self, raw_ids: str):
         try:
@@ -62,7 +81,7 @@ class MemoryConstellationWebWindow(QMainWindow):
         self._view = QWebEngineView(self)
         self._view.setAttribute(Qt.WA_OpaquePaintEvent, True)
         self._view.page().setBackgroundColor(QColor("#020410"))
-        self._bridge = _ConstellationBridge()
+        self._bridge = _ConstellationBridge(self._snapshot)
         channel = QWebChannel(self._view)
         channel.registerObject("lianxinBridge", self._bridge)
         self._view.page().setWebChannel(channel)
@@ -74,29 +93,64 @@ class MemoryConstellationWebWindow(QMainWindow):
         self.setCentralWidget(root)
         self._load_map()
 
-    def _load_map(self):
+    def _snapshot(self):
         from brain.memory_narrative import list_entity_profiles, list_episodes, list_sagas, list_narrative_events, get_last_narrative_run
         from config import get_user_name
 
         entities = list_entity_profiles(300)
         episodes = list_episodes(300)
         sagas = list_sagas(100)
+        try:
+            from brain.graph_memory import list_all_facts
+            facts_by_category = list_all_facts() or {}
+        except Exception:
+            facts_by_category = {}
+        facts = []
+        for category, rows in facts_by_category.items():
+            for row in rows or []:
+                item = dict(row)
+                item["category"] = category
+                item["kind"] = "fact"
+                item["label"] = item.get("content") or "未命名记忆"
+                facts.append(item)
         source_ids = {}
         try:
             from brain.graph_memory import get_fact_fragments
-            for item in entities + episodes:
+            def collect_fact_ids(item):
                 fact_ids = []
+                if item.get("kind") == "fact" and str(item.get("id", "")).isdigit():
+                    fact_ids.append(int(item["id"]))
                 for key in ("source_fact_ids", "fragment_ids"):
                     try:
                         values = json.loads(item.get(key, "[]") or "[]")
                         if key == "source_fact_ids": fact_ids.extend(int(v) for v in values)
                     except (TypeError, ValueError, json.JSONDecodeError):
                         pass
+                return fact_ids
+
+            def collect_sources(item):
                 ids = []
-                for fact_id in fact_ids:
+                for fact_id in collect_fact_ids(item):
                     for fragment in get_fact_fragments(fact_id, include_inactive=True):
                         ids.extend(int(v) for v in fragment.get("source_message_ids", []) if str(v).isdigit())
-                source_ids[str(item.get("id"))] = sorted(set(ids))
+                return sorted(set(ids))
+
+            for item in entities:
+                source_ids[f"entity:{item.get('id')}"] = collect_sources(item)
+                source_ids.setdefault(str(item.get("id")), source_ids[f"entity:{item.get('id')}"])
+            for item in episodes:
+                source_ids[f"episode:{item.get('id')}"] = collect_sources(item)
+                source_ids.setdefault(str(item.get("id")), source_ids[f"episode:{item.get('id')}"])
+            for item in facts:
+                source_ids[f"fact:{item.get('id')}"] = collect_sources(item)
+                source_ids.setdefault(str(item.get("id")), source_ids[f"fact:{item.get('id')}"])
+            for saga in sagas:
+                try:
+                    episode_ids = [int(v) for v in json.loads(saga.get("episode_ids", "[]") or "[]")]
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    episode_ids = []
+                source_ids[f"saga:{saga.get('id')}"] = sorted({sid for eid in episode_ids for sid in source_ids.get(f"episode:{eid}", source_ids.get(str(eid), []))})
+                source_ids.setdefault(str(saga.get("id")), source_ids[f"saga:{saga.get('id')}"])
         except Exception:
             pass
         try:
@@ -104,12 +158,22 @@ class MemoryConstellationWebWindow(QMainWindow):
             assistant_name = PersonaManager().get_snapshot().profile.assistant_name or "莲心"
         except Exception:
             assistant_name = "莲心"
+        try:
+            from brain.memory_maintenance import get_last_maintenance_run
+            maintenance = get_last_maintenance_run()
+        except Exception:
+            maintenance = None
         payload = {
-            "entities": entities, "episodes": episodes, "sagas": sagas,
+            "entities": entities, "episodes": episodes, "sagas": sagas, "facts": facts,
             "events": list_narrative_events(80), "source_ids": source_ids,
             "core": {"user": get_user_name() or "主人", "assistant": assistant_name},
             "model": get_last_narrative_run() or {"status": "未运行"},
+            "maintenance": maintenance or {"status": "未运行", "stats": {}},
         }
+        return payload
+
+    def _load_map(self):
+        payload = self._snapshot()
         template = (self._asset_dir / "index.html").read_text(encoding="utf-8")
         injected = "<script>window.LIANXIN_MEMORY_DATA=" + json.dumps(
             payload, ensure_ascii=False, default=str
