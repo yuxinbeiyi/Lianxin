@@ -18,7 +18,7 @@ from PyQt5.QtGui import (
 from PyQt5.QtWidgets import (
     QComboBox, QFrame, QGraphicsItem, QGraphicsObject, QGraphicsScene,
     QGraphicsSimpleTextItem, QGraphicsView, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPushButton, QSlider, QTextBrowser, QVBoxLayout, QWidget,
+    QDialog, QMainWindow, QPushButton, QSlider, QTextBrowser, QVBoxLayout, QWidget,
 )
 
 
@@ -37,12 +37,14 @@ _ACCENTS = {
 class _StarNode(QGraphicsObject):
     clicked = pyqtSignal(object)
 
-    def __init__(self, payload: dict, color: QColor, radius: float, parent=None):
+    def __init__(self, payload: dict, color: QColor, radius: float, event_kind: str = "", parent=None):
         super().__init__(parent)
         self.payload = payload
         self.color = color
         self.radius = radius
         self.phase = random.random() * math.pi * 2
+        self.event_kind = event_kind
+        self.flash = 1.0 if event_kind else 0.0
         self.setAcceptHoverEvents(True)
         self._hover = False
 
@@ -65,6 +67,17 @@ class _StarNode(QGraphicsObject):
         painter.drawEllipse(QRectF(-radius, -radius, radius * 2, radius * 2))
         painter.setBrush(QColor(255, 255, 255, 180))
         painter.drawEllipse(QRectF(-radius * 0.28, -radius * 0.38, radius * 0.55, radius * 0.55))
+        if self.flash > 0:
+            event_color = {
+                "correction": QColor("#FF6978"),
+                "episode_merged": QColor("#FFB454"),
+                "saga_merged": QColor("#FFB454"),
+                "quality_changed": QColor("#83E8FF"),
+            }.get(self.event_kind, QColor("#83E8FF"))
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor(event_color.red(), event_color.green(), event_color.blue(), int(210 * self.flash)), 2.0))
+            ring = radius * (1.4 + self.flash * .8)
+            painter.drawEllipse(QRectF(-ring, -ring, ring * 2, ring * 2))
 
     def hoverEnterEvent(self, event):
         self._hover = True
@@ -93,10 +106,14 @@ class _UniverseView(QGraphicsView):
         self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setCacheMode(QGraphicsView.CacheBackground)
+        self.setOptimizationFlag(QGraphicsView.DontSavePainterState, True)
+        self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
         self.setStyleSheet("background: transparent; border: 0;")
 
     def advance_animation(self):
         self._phase += 0.035
+        self.invalidateScene(self.sceneRect(), QGraphicsScene.BackgroundLayer)
         self.viewport().update()
 
     def wheelEvent(self, event):
@@ -143,9 +160,14 @@ class MemoryUniverseWindow(QMainWindow):
         else:
             self.resize(1440, 900)
         self._selected = None
+        self._source_message_ids = []
         self._layer_history = []
         self._last_layer = "universe"
         self._all_data = {"entities": [], "episodes": [], "sagas": []}
+        self._event_kinds = {}
+        self._last_event_id = int(self._settings.value("last_event_id", 0) or 0)
+        self._reduced_motion = self._settings.value("reduced_motion", "false") == "true"
+        self._max_visible_nodes = 700
         self._build_ui()
         self._reload_data()
 
@@ -195,6 +217,9 @@ class MemoryUniverseWindow(QMainWindow):
         refresh = QPushButton("刷新")
         refresh.clicked.connect(self._reload_data)
         toolbar.addWidget(refresh)
+        self._motion_btn = QPushButton("动效：关" if self._reduced_motion else "动效：开")
+        self._motion_btn.clicked.connect(self._toggle_motion)
+        toolbar.addWidget(self._motion_btn)
         fullscreen = QPushButton("全屏")
         fullscreen.clicked.connect(self._toggle_fullscreen)
         toolbar.addWidget(fullscreen)
@@ -226,6 +251,9 @@ class MemoryUniverseWindow(QMainWindow):
         self._source_btn = QPushButton("查看来源链")
         self._source_btn.clicked.connect(self._show_sources)
         side_layout.addWidget(self._source_btn)
+        self._open_msg_btn = QPushButton("打开原始消息")
+        self._open_msg_btn.clicked.connect(self._open_original_messages)
+        side_layout.addWidget(self._open_msg_btn)
         self._review_btn = QPushButton("标记为需要复核")
         self._review_btn.clicked.connect(self._mark_review)
         side_layout.addWidget(self._review_btn)
@@ -252,6 +280,13 @@ class MemoryUniverseWindow(QMainWindow):
     def _reload_data(self):
         try:
             from brain.memory_narrative import list_entity_profiles, list_episodes, list_sagas
+            from brain.memory_narrative import list_narrative_events
+            events = list_narrative_events(300, since_id=self._last_event_id)
+            for event in events:
+                key = (event.get("entity_type", ""), int(event.get("entity_id") or 0))
+                self._event_kinds[key] = event.get("event_type", "")
+                self._last_event_id = max(self._last_event_id, int(event.get("id", 0) or 0))
+            self._settings.setValue("last_event_id", self._last_event_id)
             self._all_data = {
                 "entities": list_entity_profiles(300),
                 "episodes": list_episodes(300),
@@ -304,6 +339,7 @@ class MemoryUniverseWindow(QMainWindow):
 
     def _render(self, layer, data):
         self._scene.clear()
+        self._hidden_count = 0
         if layer == "universe":
             self._render_universe(data)
         elif layer == "entities":
@@ -314,7 +350,8 @@ class MemoryUniverseWindow(QMainWindow):
             self._render_ring(data["sagas"], "sagas", "title", "summary")
         self._stats.setText(
             f"实体 {len(data['entities'])} · Episode {len(data['episodes'])} · Saga {len(data['sagas'])}\n"
-            "亮度：质量/置信度 · 线条：共享实体或叙事关系"
+            "亮度：质量/置信度 · 线条：共享实体或叙事关系\n"
+            f"当前显示 {max(0, len(data.get(layer, [])) - self._hidden_count)}/{len(data.get(layer, []))} 星体"
         )
 
     def _render_universe(self, data):
@@ -331,13 +368,30 @@ class MemoryUniverseWindow(QMainWindow):
             empty.setDefaultTextColor(QColor("#8D9AC8"))
             empty.setPos(-130, -20)
             return
+        original_count = len(items)
+        if original_count > self._max_visible_nodes:
+            items = sorted(
+                items,
+                key=lambda value: (
+                    float(value.get("confidence", 0) or 0),
+                    int(value.get("mention_count", 0) or 0),
+                ),
+                reverse=True,
+            )[: self._max_visible_nodes]
+            self._hidden_count = original_count - len(items)
         radius = max(190.0, 58.0 * math.sqrt(len(items)))
         color = _ACCENTS.get(layer, _ACCENTS["entities"])
+        event_type = {"entities": "entity", "episodes": "episode", "sagas": "saga"}.get(layer, "")
         for index, item in enumerate(items):
             angle = index * math.pi * 2 / max(1, len(items))
             x, y = radius * math.cos(angle), radius * math.sin(angle)
             confidence = float(item.get("confidence", 0.8) or 0.8)
-            node = _StarNode(item, color, 14 + confidence * 12)
+            try:
+                item_id = int(item.get("id", 0) or 0)
+            except (TypeError, ValueError):
+                item_id = 0
+            event_kind = self._event_kinds.get((event_type, item_id), "")
+            node = _StarNode(item, color, 14 + confidence * 12, event_kind)
             node.setPos(x, y)
             node.clicked.connect(self._select_item)
             self._scene.addItem(node)
@@ -366,6 +420,7 @@ class MemoryUniverseWindow(QMainWindow):
         item = self._selected
         fact_ids = []
         fragment_ids = []
+        self._source_message_ids = []
         for key, target in (("source_fact_ids", fact_ids), ("fragment_ids", fragment_ids)):
             try:
                 target.extend(json.loads(item.get(key, "[]") or "[]"))
@@ -392,10 +447,56 @@ class MemoryUniverseWindow(QMainWindow):
                 fact = get_fact_by_id(int(fact_id))
                 if fact:
                     lines.append(f"\n事实#{fact_id}：{fact.get('content', '')}")
-                    lines.extend(f"  来源消息：{fragment.get('source_message_ids', [])}" for fragment in get_fact_fragments(int(fact_id), include_inactive=True)[:5])
+                    for fragment in get_fact_fragments(int(fact_id), include_inactive=True)[:5]:
+                        message_ids = fragment.get("source_message_ids", []) or []
+                        self._source_message_ids.extend(
+                            int(value) for value in message_ids if str(value).isdigit()
+                        )
+                        lines.append(f"  来源消息：{message_ids}")
+            self._source_message_ids = sorted(set(self._source_message_ids))
+            if self._source_message_ids:
+                lines.append(f"\n可打开原始消息：{len(self._source_message_ids)} 条")
         except Exception as exc:
             lines.append(f"来源读取失败：{exc}")
         self._detail.setPlainText("\n".join(lines))
+
+    def _open_original_messages(self):
+        """Show the immutable chat rows referenced by the selected memory."""
+        if not self._selected:
+            self._detail.setPlainText("请先点击一颗记忆星体并查看来源链。")
+            return
+        if not self._source_message_ids:
+            self._show_sources()
+        if not self._source_message_ids:
+            self._detail.append("\n未找到可定位的原始消息引用。")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("原始消息来源")
+        dialog.resize(760, 520)
+        layout = QVBoxLayout(dialog)
+        browser = QTextBrowser(dialog)
+        try:
+            from brain.graph_memory import _get_conn
+            conn = _get_conn()
+            placeholders = ",".join("?" for _ in self._source_message_ids)
+            rows = conn.execute(
+                f"SELECT id,session_id,role,content,timestamp FROM messages WHERE id IN ({placeholders}) ORDER BY timestamp,id",
+                tuple(self._source_message_ids),
+            ).fetchall()
+            text = []
+            for row in rows:
+                text.append(
+                    f"[{row['timestamp'] or ''}] #{row['id']}  {row['role'] or ''}  "
+                    f"session={row['session_id'] or ''}\n{row['content'] or ''}"
+                )
+            browser.setPlainText("\n\n".join(text) or "原始消息已不存在（可能已被清理）。")
+        except Exception as exc:
+            browser.setPlainText(f"读取原始消息失败：{exc}")
+        layout.addWidget(browser)
+        close_btn = QPushButton("关闭", dialog)
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+        dialog.exec_()
 
     def _mark_review(self):
         if not self._selected:
@@ -411,11 +512,21 @@ class MemoryUniverseWindow(QMainWindow):
             self._detail.append(f"\n标记失败：{exc}")
 
     def _animate(self):
+        if self._reduced_motion or not self.isVisible():
+            return
         self._view.advance_animation()
         for item in self._scene.items():
             if isinstance(item, _StarNode):
                 item.phase += 0.035
+                if item.flash > 0:
+                    item.flash = max(0.0, item.flash - 0.018)
                 item.update()
+
+    def _toggle_motion(self):
+        self._reduced_motion = not self._reduced_motion
+        self._settings.setValue("reduced_motion", "true" if self._reduced_motion else "false")
+        self._motion_btn.setText("动效：关" if self._reduced_motion else "动效：开")
+        self._view.viewport().update()
 
     def _toggle_fullscreen(self):
         if self.isFullScreen():

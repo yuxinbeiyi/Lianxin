@@ -18,6 +18,11 @@ class MemoryUniverseUiTests(unittest.TestCase):
         self.assertTrue(window._back_btn)
         self.assertTrue(window._search)
         self.assertTrue(window._timeline)
+        self.assertTrue(window._motion_btn)
+        previous_motion = window._reduced_motion
+        window._toggle_motion()
+        self.assertNotEqual(previous_motion, window._reduced_motion)
+        self.assertLessEqual(window._max_visible_nodes, 1000)
         window._layer.setCurrentIndex(2)
         self.assertTrue(window._back_btn.isEnabled())
         window._go_back()

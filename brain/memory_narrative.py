@@ -88,10 +88,19 @@ def _ensure_tables():
         entities_updated INTEGER NOT NULL DEFAULT 0,
         error TEXT DEFAULT ''
     );
+    CREATE TABLE IF NOT EXISTS memory_narrative_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT NOT NULL,
+        entity_type TEXT DEFAULT '',
+        entity_id INTEGER,
+        details_json TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS idx_entity_profiles_status ON memory_entity_profiles(status);
     CREATE INDEX IF NOT EXISTS idx_episodes_status ON memory_episodes(status);
     CREATE INDEX IF NOT EXISTS idx_episodes_updated ON memory_episodes(updated_at);
     CREATE INDEX IF NOT EXISTS idx_sagas_status ON memory_sagas(status);
+    CREATE INDEX IF NOT EXISTS idx_narrative_events_created ON memory_narrative_events(created_at);
     """)
     for sql in (
         "ALTER TABLE memory_entity_profiles ADD COLUMN graph_entity_id INTEGER",
@@ -193,8 +202,10 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
     with _lock:
         all_fact_ids = sorted({int(item["fact_id"]) for item in candidates})
         for entity in result.get("entities", []) if isinstance(result, dict) else []:
-            if isinstance(entity, dict) and _upsert_entity(conn, entity, all_fact_ids, timestamp):
+            entity_id = _upsert_entity(conn, entity, all_fact_ids, timestamp) if isinstance(entity, dict) else None
+            if entity_id:
                 entities += 1
+                _record_event(conn, "entity_updated", "entity", entity_id, {"source_fact_ids": all_fact_ids})
         for episode in result.get("episodes", []) if isinstance(result, dict) else []:
             if not isinstance(episode, dict):
                 continue
@@ -250,6 +261,7 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
                 )
                 created_episode_ids.append(requested_id)
                 updated += 1
+                _record_event(conn, "episode_updated", "episode", requested_id, {"fragment_ids": fragment_ids})
                 continue
             existing = conn.execute("SELECT id FROM memory_episodes WHERE fingerprint=?", (fingerprint,)).fetchone()
             if existing:
@@ -289,6 +301,7 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
             )
             created_episode_ids.append(int(cur.lastrowid))
             created += 1
+            _record_event(conn, "episode_created", "episode", int(cur.lastrowid), {"fragment_ids": fragment_ids})
 
         for saga in result.get("sagas", []) if isinstance(result, dict) else []:
             if not isinstance(saga, dict):
@@ -326,14 +339,16 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
                        updated_at=? WHERE id=?""",
                     (title, summary, json.dumps(episode_ids), saga_confidence, timestamp, int(existing_saga["id"])),
                 )
+                _record_event(conn, "saga_updated", "saga", int(existing_saga["id"]), {"episode_ids": episode_ids})
             else:
-                conn.execute(
+                cur = conn.execute(
                     """INSERT INTO memory_sagas
                        (title,summary,episode_ids,confidence,created_at,updated_at,fingerprint)
                        VALUES (?,?,?,?,?,?,?)""",
                     (title, summary, json.dumps(episode_ids), saga_confidence,
                      timestamp, timestamp, fingerprint),
                 )
+                _record_event(conn, "saga_created", "saga", int(cur.lastrowid), {"episode_ids": episode_ids})
         conn.commit()
     return {"episodes_created": created, "episodes_updated": updated,
             "entities_updated": entities, "episode_ids": created_episode_ids}
@@ -412,6 +427,37 @@ def get_narrative_statistics() -> dict:
     }
 
 
+def _record_event(conn, event_type: str, entity_type: str = "", entity_id: int | None = None, details=None):
+    conn.execute(
+        """INSERT INTO memory_narrative_events
+           (event_type,entity_type,entity_id,details_json,created_at) VALUES (?,?,?,?,?)""",
+        (str(event_type), str(entity_type or ""), entity_id,
+         json.dumps(details or {}, ensure_ascii=False, default=str), _now()),
+    )
+
+
+def record_narrative_event(event_type: str, entity_type: str = "", entity_id: int | None = None, details=None):
+    conn = _ensure_tables()
+    _record_event(conn, event_type, entity_type, entity_id, details)
+    conn.commit()
+
+
+def list_narrative_events(limit: int = 100, since_id: int = 0) -> list[dict]:
+    rows = _ensure_tables().execute(
+        "SELECT * FROM memory_narrative_events WHERE id>? ORDER BY id ASC LIMIT ?",
+        (max(0, int(since_id)), max(1, min(500, int(limit)))),
+    ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["details"] = json.loads(item.pop("details_json") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            item["details"] = {}
+        result.append(item)
+    return result
+
+
 def merge_narrative_duplicates(limit: int = 100) -> dict:
     """Merge adjacent derived records while preserving all source IDs."""
     conn = _ensure_tables()
@@ -450,6 +496,7 @@ def merge_narrative_duplicates(limit: int = 100) -> dict:
                  float(duplicate.get("confidence", 0.5) or 0.5), _now(), int(survivor["id"])),
             )
             conn.execute("UPDATE memory_episodes SET status='merged',updated_at=? WHERE id=?", (_now(), int(duplicate["id"])))
+            _record_event(conn, "episode_merged", "episode", int(survivor["id"]), {"merged_id": int(duplicate["id"])})
             for saga_row in conn.execute("SELECT id,episode_ids FROM memory_sagas WHERE status='active'").fetchall():
                 saga_episode_ids = _json(saga_row["episode_ids"], [])
                 if int(duplicate["id"]) not in saga_episode_ids:
@@ -479,6 +526,7 @@ def merge_narrative_duplicates(limit: int = 100) -> dict:
                 summary = (summary + "\n" + duplicate["summary"])[:2000]
             conn.execute("UPDATE memory_sagas SET summary=?,episode_ids=?,updated_at=? WHERE id=?", (summary, json.dumps(episode_ids), _now(), int(survivor["id"])))
             conn.execute("UPDATE memory_sagas SET status='merged',updated_at=? WHERE id=?", (_now(), int(duplicate["id"])))
+            _record_event(conn, "saga_merged", "saga", int(survivor["id"]), {"merged_id": int(duplicate["id"])})
             duplicate["status"] = "merged"
             merged_sagas += 1
     conn.commit()

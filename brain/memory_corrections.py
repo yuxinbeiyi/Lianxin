@@ -69,6 +69,14 @@ def apply_correction_feedback(fact_ids, *, action="update", reason="", conn=None
         (json.dumps(clean_ids), str(action), str(reason or "")[:500], json.dumps(episode_ids),
          json.dumps(entity_ids), json.dumps(saga_ids), _now()),
     )
+    try:
+        from brain.memory_narrative import _record_event
+        _record_event(conn, "correction", "fact", clean_ids[0], {
+            "fact_ids": clean_ids, "episodes": episode_ids,
+            "entities": entity_ids, "sagas": saga_ids,
+        })
+    except Exception:
+        pass
     if commit:
         conn.commit()
     return {"episodes": episode_ids, "entities": entity_ids, "sagas": saga_ids}

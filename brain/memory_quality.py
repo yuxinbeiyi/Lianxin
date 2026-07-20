@@ -171,15 +171,38 @@ def recalculate_memory_quality(
         ids = [int(row["id"]) for row in conn.execute(sql, params).fetchall()]
         current = now or datetime.now().astimezone()
         updated = []
+        quality_events = []
         for item_id in ids:
             result = calculate_memory_quality(item_id, now=current)
+            previous = conn.execute(
+                "SELECT quality_score,review_status,lifecycle_stage FROM memory_facts WHERE id=?",
+                (item_id,),
+            ).fetchone()
             conn.execute(
                 """UPDATE memory_facts SET quality_score=?, review_status=?, lifecycle_stage=?,
                        quality_updated_at=? WHERE id=? AND status='active'""",
                 (result["score"], result["review_status"], result["lifecycle_stage"], current.isoformat(timespec="seconds"), item_id),
             )
+            if previous and (
+                float(previous["quality_score"] or 0) != float(result["score"])
+                or previous["review_status"] != result["review_status"]
+                or previous["lifecycle_stage"] != result["lifecycle_stage"]
+            ):
+                quality_events.append({
+                    "fact_id": item_id,
+                    "score": result["score"],
+                    "review_status": result["review_status"],
+                    "lifecycle_stage": result["lifecycle_stage"],
+                })
             updated.append(result)
         conn.commit()
+        if quality_events:
+            try:
+                from brain.memory_narrative import record_narrative_event
+                for event in quality_events:
+                    record_narrative_event("quality_changed", "fact", event.pop("fact_id"), event)
+            except Exception:
+                pass
         scores = [item["score"] for item in updated]
         return {
             "updated": len(updated),
@@ -205,6 +228,12 @@ def retire_memory(fact_id: int, reason: str = "") -> bool:
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     cur = conn.execute("UPDATE memory_facts SET status='retired',lifecycle_stage='retired',valid_to=?,updated_at=? WHERE id=? AND status='active'", (now, now, int(fact_id)))
     conn.commit()
+    if cur.rowcount > 0:
+        try:
+            from brain.memory_narrative import record_narrative_event
+            record_narrative_event("memory_retired", "fact", int(fact_id), {"reason": reason})
+        except Exception:
+            pass
     return cur.rowcount > 0
 
 
@@ -212,6 +241,12 @@ def restore_memory(fact_id: int) -> bool:
     conn = _ensure_schema()
     cur = conn.execute("UPDATE memory_facts SET status='active',lifecycle_stage='maturing',valid_to='',updated_at=? WHERE id=? AND status='retired'", (datetime.now().astimezone().isoformat(timespec="seconds"), int(fact_id)))
     conn.commit()
+    if cur.rowcount > 0:
+        try:
+            from brain.memory_narrative import record_narrative_event
+            record_narrative_event("memory_restored", "fact", int(fact_id), {})
+        except Exception:
+            pass
     return cur.rowcount > 0
 
 
