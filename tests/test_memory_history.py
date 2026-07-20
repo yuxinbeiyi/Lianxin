@@ -70,6 +70,31 @@ class ConversationHistoryTests(unittest.TestCase):
         legacy_mgr.get_sessions()
         legacy_mgr.close()
         self.assertTrue((Path(self._tmp.name) / "legacy.pre-memory-v3.db").exists())
+        self.assertTrue((Path(self._tmp.name) / "legacy.pre-context-v2.db").exists())
+
+    def test_compression_snapshot_round_trip_and_session_cleanup(self):
+        session_id = self.mgr.new_session(channel="desktop")
+        self.mgr.save_message(session_id, "user", "第一条")
+        snapshot_id = self.mgr.save_compression_snapshot(
+            session_id, "用户确认项目代号为青鸟", 1,
+            covered_user_turns=1, model="test-model", persona_id="default",
+            persona_revision=3, trigger="turns", input_tokens=81_000,
+        )
+        self.assertGreater(snapshot_id, 0)
+        snapshot = self.mgr.get_latest_compression_snapshot(session_id)
+        self.assertEqual("用户确认项目代号为青鸟", snapshot["summary"])
+        self.assertEqual(1, snapshot["covered_message_count"])
+        self.assertEqual(81_000, snapshot["input_tokens"])
+
+        # 完全相同的快照幂等，不制造重复记录。
+        self.assertEqual(
+            snapshot_id,
+            self.mgr.save_compression_snapshot(
+                session_id, "用户确认项目代号为青鸟", 1
+            ),
+        )
+        self.mgr.delete_session(session_id)
+        self.assertIsNone(self.mgr.get_latest_compression_snapshot(session_id))
 
     def test_recent_search_respects_time_channel_and_owner_scope(self):
         desktop = self.mgr.new_session(channel="desktop", owner_scope=True)

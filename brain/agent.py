@@ -29,6 +29,18 @@ from brain.graph_memory import (
 )
 from brain.graph_memory import add_fact as _memory_add
 from memory.history_manager import HistoryManager
+from brain.context_compressor import (
+    build_fallback_summary,
+    compact_summary_text,
+    compact_tool_result,
+    contains_textual_tool_protocol,
+    extract_input_tokens,
+    format_messages_for_summary,
+    memory_persistence_directive,
+    merge_summaries_bounded,
+    prune_stale_tool_outputs,
+    select_history_window,
+)
 from pathlib import Path
 from brain.mcp import get_all_mcp_tool_definitions
 
@@ -96,6 +108,7 @@ _resource_init_lock = threading.Lock()
 # 需要线程亲和性的资源组（浏览器 Playwright / 硬件 event loop）
 # 这些组必须在调用线程上执行，不能进入 ThreadPoolExecutor
 _THREAD_AFFINE_GROUPS = {"browser", "hardware"}
+_MEMORY_WRITE_TOOLS = {"save_memory", "update_memory"}
 
 def _get_group_lock(group: str) -> threading.Lock:
     if group not in _resource_locks:
@@ -286,6 +299,8 @@ class AgentCore:
 
         # 已恢复的历史不应再次进入自动提取队列。
         self._last_extraction_idx = len(self.history)
+        self._session_memory_writes_blocked = self._derive_memory_write_policy()
+        self._request_memory_writes_blocked = self._session_memory_writes_blocked
 
         # 旧 Prompt 保留为人格系统关闭或故障时的一键回退路径。
         self._system_prompt = self._build_system_prompt_once()
@@ -299,6 +314,8 @@ class AgentCore:
         # ── 会话内滑动窗口摘要（Token 优化，仅云端模式生效） ──
         self._conversation_summary = ""
         self._summarized_history_idx = 0
+        self._last_input_tokens = 0
+        self._restore_context_snapshot()
 
         # ── 用户上下文：让 AI 知道当前在跟谁说话 ───────────────
 
@@ -340,6 +357,11 @@ class AgentCore:
             on_progress:       callable(text)，报告进度回复的回调。
             response_guard:    callable() -> bool，False 时丢弃已过期回复且不写入历史。
         """
+        # 用户明确拒绝长期记忆写入时，由代码层执行权限边界，而非仅依赖 Prompt。
+        self._request_memory_writes_blocked = self._update_memory_write_policy(
+            user_message
+        )
+
         # 清除上次探索留存的观察数据，防止脏数据导致"探索被截断"误报
         try:
             from brain.observation_store import clear_latest_chain
@@ -414,7 +436,10 @@ class AgentCore:
         self._history_mgr.save_message(self._session_id, "assistant", display_response)
 
         # ── 自动记忆提取（后台执行，间隔由配置决定） ────────
-        if self._auto_extract:
+        if self._request_memory_writes_blocked:
+            # 防止用户稍后恢复写入后，自动提取器回头处理被明确排除的消息。
+            self._last_extraction_idx = len(self.history)
+        elif self._auto_extract:
             self._extraction_counter += 1
             if self._extraction_counter >= self._extract_interval:
                 self._extraction_counter = 0
@@ -566,6 +591,9 @@ class AgentCore:
     def clear_history(self):
         """清除当次会话的内存历史（数据库记录保留）。"""
         self.history = []
+        self._conversation_summary = ""
+        self._summarized_history_idx = 0
+        self._last_input_tokens = 0
         self._last_persona_key = None
         self._persona_transition_remaining = 0
     def remove_message_by_content(self, content: str) -> bool:
@@ -574,6 +602,10 @@ class AgentCore:
         for i, msg in enumerate(self.history):
             if msg.get("content", "").strip() == content:
                 self.history.pop(i)
+                if i < self._summarized_history_idx:
+                    # 删除发生在已摘要范围内时，旧摘要已无法精确对应原历史。
+                    self._conversation_summary = ""
+                    self._summarized_history_idx = 0
                 return True
         return False
     def new_session(self):
@@ -588,11 +620,14 @@ class AgentCore:
         self._session_titled = False
         self._conversation_summary = ""
         self._summarized_history_idx = 0
+        self._last_input_tokens = 0
         self._last_reply_time = None
         self._last_extraction_idx = 0
         self._prev_session_summary = self._build_session_handoff(previous_session_id)
         self._last_persona_key = None
         self._persona_transition_remaining = 0
+        self._session_memory_writes_blocked = False
+        self._request_memory_writes_blocked = False
 
 
 
@@ -603,6 +638,30 @@ class AgentCore:
     def get_history_summary(self) -> str:
         rounds = len([m for m in self.history if m["role"] == "user"])
         return f"当前对话共 {rounds} 轮"
+
+    def _derive_memory_write_policy(self) -> bool:
+        """从已恢复历史中重建会话级长期记忆写入策略。"""
+        blocked = False
+        for message in self.history:
+            if message.get("role") != "user":
+                continue
+            directive = memory_persistence_directive(message.get("content", ""))
+            if directive == "block_session":
+                blocked = True
+            elif directive == "allow":
+                blocked = False
+        return blocked
+
+    def _update_memory_write_policy(self, user_message: str) -> bool:
+        directive = memory_persistence_directive(user_message)
+        if directive == "allow":
+            self._session_memory_writes_blocked = False
+        elif directive == "block_session":
+            self._session_memory_writes_blocked = True
+        return bool(
+            getattr(self, "_session_memory_writes_blocked", False)
+            or directive == "block_request"
+        )
 
     def _prepare_persona_request(self):
         """取得本轮快照，并生成最多持续两轮的隐藏人格过渡说明。"""
@@ -1036,6 +1095,16 @@ class AgentCore:
         parsed: list[dict] = []
         for tc in tool_calls:
             name = tc.function.name
+            if (getattr(self, "_request_memory_writes_blocked", False)
+                    and name in _MEMORY_WRITE_TOOLS):
+                result = "用户已明确禁止写入长期记忆，本次调用被代码层阻止。"
+                print(f"  [权限边界] 已阻止长期记忆写入: {name}", flush=True)
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id, "content": result,
+                })
+                if on_tool_result:
+                    on_tool_result(name, result, True, 0.0)
+                continue
             raw_args = tc.function.arguments or "{}"
             args = self._extract_json_args(raw_args)
             if not args and raw_args.strip() and raw_args.strip() not in ("{}", "[]"):
@@ -1160,10 +1229,13 @@ class AgentCore:
         for i, item in enumerate(parsed):
             result = results[i]
             if result is not None:
+                cfg = get_memory_config()
                 messages.append({
                     "role": "tool",
                     "tool_call_id": item["tc"].id,
-                    "content": result,
+                    "content": compact_tool_result(
+                        result, cfg.get("tool_result_max_chars", 12_000)
+                    ),
                 })
 
     def _collect_stream(self, response, on_chunk=None, max_retries=2):
@@ -1194,7 +1266,13 @@ class AgentCore:
         while retry_count <= max_retries:
             try:
                 for chunk in response:
-                    delta = chunk.choices[0].delta
+                    input_tokens = extract_input_tokens(getattr(chunk, "usage", None))
+                    if input_tokens:
+                        self._last_input_tokens = input_tokens
+                    choices = getattr(chunk, "choices", None)
+                    if not choices:
+                        continue
+                    delta = choices[0].delta
 
                     # 1) 深度思考（DeepSeek-R1）
                     rc = getattr(delta, "reasoning_content", None)
@@ -1229,7 +1307,7 @@ class AgentCore:
                                     tool_parts[idx]["function"]["arguments"] += tc_delta.function.arguments
 
                     # 4) 结束原因（最后一个 chunk 才有）
-                    fr = getattr(chunk.choices[0], "finish_reason", None)
+                    fr = getattr(choices[0], "finish_reason", None)
                     if fr is not None:
                         final_finish = fr
 
@@ -1259,151 +1337,211 @@ class AgentCore:
 
     # ── 滑动窗口 + 摘要压缩 ────────────────────────────────
 
-    from config import get_memory_config
-    _mem_cfg = get_memory_config()
-    @staticmethod
-    def _split_into_loops(history: list[dict]) -> list[list[dict]]:
-        """按 user 消息切分对话历史为 loops。
-        每个 loop 从一条 user 消息开始，包含后续的 assistant/tool 消息。
-        system 消息被跳过（不属于任何 loop）。"""
-        loops = []
-        current = []
-        for m in history:
-            if m.get("role") == "user":
-                if current:
-                    loops.append(current)
-                current = [m]
-            elif m.get("role") in ("assistant", "tool"):
-                current.append(m)
-            # system 消息跳过
-        if current:
-            loops.append(current)
-        return loops
+    def _restore_context_snapshot(self) -> None:
+        """恢复当前会话的最近压缩快照；不可信游标会被安全忽略。"""
+        try:
+            snapshot = self._history_mgr.get_latest_compression_snapshot(
+                self._session_id
+            )
+            if not snapshot:
+                return
+            covered = int(snapshot.get("covered_message_count", 0))
+            summary = str(snapshot.get("summary", "")).strip()
+            if not summary or covered <= 0 or covered > len(self.history):
+                logger.warning(
+                    "忽略无效上下文快照: session=%s covered=%s history=%s",
+                    self._session_id, covered, len(self.history),
+                )
+                return
+            max_chars = get_memory_config().get("context_summary_max_chars", 4_000)
+            self._conversation_summary = compact_summary_text(summary, max_chars)
+            self._summarized_history_idx = covered
+            logger.info("已恢复上下文快照: %s 条消息", covered)
+            print(
+                f"[上下文快照] 已恢复: session={self._session_id}, "
+                f"覆盖{covered}条, 摘要{len(self._conversation_summary)}字",
+                flush=True,
+            )
+        except Exception as exc:
+            logger.warning("恢复上下文快照失败，使用完整历史: %s", exc)
 
-    def _apply_history_window(self):
-        """对 self.history 应用 loop 切分 + 滑动窗口 + 滚动摘要。
-
-        Returns:
-            (summary_text, recent_messages)
-        """
+    def _apply_history_window(self, persona_snapshot=None):
+        """应用完整 turn 边界、实际 token 触发和可恢复的增量摘要。"""
         cfg = get_memory_config()
-        keep_loops = cfg.get("context_keep_loops", 8)
-        trigger_loops = cfg.get("context_summary_trigger", 12)
-        enable_summary = cfg.get("enable_conversation_summary", True)
-
         history = self.history
-        if not enable_summary:
+        if not cfg.get("enable_conversation_summary", True):
             return None, list(history)
 
-        # 1. 按 user 消息切分为 loops
-        loops = self._split_into_loops(history)
-
-        # 2. 未达触发阈值，返回全部
-        if len(loops) <= trigger_loops:
+        covered = min(
+            max(0, int(getattr(self, "_summarized_history_idx", 0))),
+            len(history),
+        )
+        selection = select_history_window(
+            history,
+            keep_turns=cfg.get("context_keep_loops", 8),
+            trigger_turns=cfg.get("context_summary_trigger", 12),
+            last_input_tokens=getattr(self, "_last_input_tokens", 0),
+            token_threshold=cfg.get("context_summary_token_threshold", 80_000),
+            force=bool(self._conversation_summary and covered),
+        )
+        if not selection.should_compress and not self._conversation_summary:
             return None, list(history)
 
-        # 3. 保留最近 keep_loops 轮完整
-        keep = loops[-keep_loops:] if len(loops) > keep_loops else loops
-        overflow = loops[:-keep_loops] if len(loops) > keep_loops else []
+        target_covered = max(covered, selection.covered_message_count)
+        pending = history[covered:target_covered]
+        batch_size = max(1, int(cfg.get("context_summary_batch_messages", 6)))
+        summary_max_chars = cfg.get("context_summary_max_chars", 4_000)
 
-        # 4. 增量摘要：提取溢出 loop 中的全部消息
-        old_flat = [m for loop in overflow for m in loop]
-        total_overflow = len(old_flat)
-
-        # 只压缩上次摘要游标之后的新内容
-        if self._summarized_history_idx < total_overflow:
-            new_chunk = old_flat[self._summarized_history_idx:]
-        else:
-            new_chunk = []
-
-        if len(new_chunk) >= 6:
-            chunk_summary = self._generate_history_summary(new_chunk)
-            if self._conversation_summary and chunk_summary:
+        # 未积累到安全批次时不推进游标，原消息继续进入 prompt。
+        if len(pending) >= batch_size:
+            chunk_summary = self._generate_history_summary(pending)
+            if not chunk_summary:
+                chunk_summary = build_fallback_summary(
+                    pending, max_chars=summary_max_chars
+                )
+            if self._conversation_summary:
                 self._conversation_summary = self._merge_summaries(
                     self._conversation_summary, chunk_summary
                 )
             else:
-                self._conversation_summary = chunk_summary or self._conversation_summary
+                self._conversation_summary = chunk_summary
+            self._summarized_history_idx = target_covered
+            covered = target_covered
 
-        # 更新摘要游标
-        self._summarized_history_idx = total_overflow
+            try:
+                profile = getattr(persona_snapshot, "profile", None)
+                snapshot_id = self._history_mgr.save_compression_snapshot(
+                    self._session_id,
+                    self._conversation_summary,
+                    covered,
+                    covered_user_turns=sum(
+                        1 for m in history[:covered] if m.get("role") == "user"
+                    ),
+                    model=self._model,
+                    persona_id=getattr(profile, "id", ""),
+                    persona_revision=getattr(persona_snapshot, "revision", 0),
+                    trigger=selection.trigger,
+                    input_tokens=getattr(self, "_last_input_tokens", 0),
+                )
+                print(
+                    f"[上下文快照] 已保存: id={snapshot_id}, "
+                    f"覆盖{covered}条, 摘要{len(self._conversation_summary)}字, "
+                    f"触发={selection.trigger}",
+                    flush=True,
+                )
+            except Exception as exc:
+                logger.warning("保存上下文快照失败（本轮摘要仍可用）: %s", exc)
 
-        # 5. 构建返回
-        recent = [m for loop in keep for m in loop]
         summary = None
         if self._conversation_summary:
-            omitted = self._summarized_history_idx
             summary = (
-                f"【对话历史摘要 — 前 {omitted} 条消息已压缩】\n"
+                f"【对话历史摘要 — 前 {covered} 条消息已压缩】\n"
                 f"{self._conversation_summary}"
             )
+        return summary, list(history[covered:])
 
-        return summary, recent
+    def _stream_summary_text(self, messages: list[dict], max_tokens: int = 500) -> str | None:
+        """使用与主聊天相同的流式协议获取摘要正文，但不覆盖聊天 token 统计。"""
+        response = litellm.completion(
+            model=self._model,
+            max_tokens=max_tokens,
+            messages=messages,
+            api_key=self._api_key,
+            api_base=self._api_base,
+            stream=True,
+            timeout=30,
+        )
+        parts: list[str] = []
+        for chunk in response:
+            choices = (
+                chunk.get("choices") if isinstance(chunk, dict)
+                else getattr(chunk, "choices", None)
+            )
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = (
+                choice.get("delta") if isinstance(choice, dict)
+                else getattr(choice, "delta", None)
+            )
+            if delta is None:
+                continue
+            content = (
+                delta.get("content") if isinstance(delta, dict)
+                else getattr(delta, "content", None)
+            )
+            if content:
+                parts.append(str(content))
+        result = "".join(parts).strip()
+        return result or None
 
     def _generate_history_summary(self, history_chunk: list[dict]) -> str | None:
         """将一段对话历史压缩为简洁摘要（调用 LLM）。"""
-        lines = []
-        for m in history_chunk:
-            role = "用户" if m["role"] == "user" else "莲心"
-            content = m.get("content", "")
-            if len(content) > 400:
-                content = content[:400] + "…"
-            if content.strip():
-                lines.append(f"{role}：{content}")
-
-        if not lines:
+        transcript = format_messages_for_summary(history_chunk)
+        if not transcript:
             return None
 
-        transcript = "\n".join(lines)
+        max_chars = get_memory_config().get("context_summary_max_chars", 4_000)
 
         try:
-            response = litellm.completion(
-                model=self._model,
-                max_tokens=300,
-                messages=[
+            result = self._stream_summary_text(
+                [
                     {
                         "role": "system",
                         "content": (
                             "你是一个对话摘要助手。将以下对话压缩为一段简洁摘要（200字以内）。"
-                            "只保留：讨论主题、用户个人情况、重要决策、进行中任务。"
-                            "省略寒暄、闲聊、情绪表达。用第三人称叙述。"
+                            "只保留：讨论主题、已确认事实、用户偏好、重要决策、"
+                            "进行中任务、未解决问题和必要的情绪状态。"
+                            "摘要必须人格中立，不继承助手名称、口头禅、语气或人设。"
+                            "省略无信息量的寒暄，用第三人称叙述。"
                         ),
                     },
                     {"role": "user", "content": transcript},
-                ],
-                api_key=self._api_key,
-                api_base=self._api_base,
-                timeout=20,
+                ]
             )
-            result = response.choices[0].message.content
-            return result.strip() if result else None
-        except Exception:
-            return f"（早期对话，含 {len(history_chunk)} 条消息）"
+            if result:
+                result = compact_summary_text(result, max_chars)
+                print(
+                    f"[上下文摘要] 模型摘要成功: {len(history_chunk)}条 → {len(result)}字",
+                    flush=True,
+                )
+                return result
+            print("[上下文摘要] 模型未返回正文，启用确定性降级", flush=True)
+            return None
+        except Exception as exc:
+            logger.warning("生成历史摘要失败，将使用确定性降级摘要: %s", exc)
+            print(f"[上下文摘要] 生成失败，启用确定性降级: {exc}", flush=True)
+            return None
 
     def _merge_summaries(self, old_summary: str, new_summary: str) -> str:
         """将新旧两段摘要合并为一段（调用 LLM）。"""
+        max_chars = get_memory_config().get("context_summary_max_chars", 4_000)
         try:
-            response = litellm.completion(
-                model=self._model,
-                max_tokens=300,
-                messages=[
+            result = self._stream_summary_text(
+                [
                     {
                         "role": "system",
-                        "content": "将以下两段对话摘要合并为一段简洁摘要（200字以内），去重，保持第三人称。",
+                        "content": (
+                            "将以下两段对话摘要合并为一段简洁摘要（400字以内），去重。"
+                            "保留已确认事实、用户偏好、决策、待办和未解决问题；"
+                            "保持人格中立，不继承助手的名称、语气或口头禅。"
+                        ),
                     },
                     {
                         "role": "user",
                         "content": f"旧摘要：\n{old_summary}\n\n新摘要：\n{new_summary}",
                     },
-                ],
-                api_key=self._api_key,
-                api_base=self._api_base,
-                timeout=20,
+                ]
             )
-            result = response.choices[0].message.content
-            return result.strip() if result else f"{old_summary}\n{new_summary}"
-        except Exception:
-            return f"{old_summary}\n{new_summary}"
+            if result:
+                result = compact_summary_text(result, max_chars)
+                print(f"[上下文摘要] 滚动合并成功: {len(result)}字", flush=True)
+                return result
+            print("[上下文摘要] 合并未返回正文，使用有界降级", flush=True)
+        except Exception as exc:
+            logger.warning("合并历史摘要失败，使用有界降级: %s", exc)
+            print(f"[上下文摘要] 合并失败，使用有界降级: {exc}", flush=True)
+        return merge_summaries_bounded(old_summary, new_summary, max_chars)
 
 
     def _function_calling_loop(self, on_tool_call=None, on_tool_result=None, forced_tool: str = None,
@@ -1416,6 +1554,16 @@ class AgentCore:
        
         _t0 = time.time()
         messages = self._build_request_system_messages(persona_snapshot)
+        _text_protocol_retry_count = 0
+
+        def _guarded_progress(text: str):
+            """流式阶段即阻止内部工具协议进入界面。"""
+            if not on_progress:
+                return
+            stripped = str(text or "").lstrip()
+            if stripped.startswith("<") or contains_textual_tool_protocol(text):
+                return
+            on_progress(text)
 
         # ── 注入实时时间信息（自适应精度：间隔>15分钟用分钟级，否则小时级） ──
         messages.append(self._build_realtime_message())
@@ -1529,7 +1677,7 @@ class AgentCore:
         if self._use_local:
             messages.extend(self.history[-20:])
         else:
-            summary_text, recent_history = self._apply_history_window()
+            summary_text, recent_history = self._apply_history_window(persona_snapshot)
             if summary_text:
                 messages.append({"role": "system", "content": summary_text})
             messages.extend(recent_history)
@@ -1555,10 +1703,13 @@ class AgentCore:
             from config import get_builtin_tool_config
             builtin_cfg = get_builtin_tool_config()
             disabled_tool_names = {name for name, enabled in builtin_cfg.items() if not enabled}
-            if disabled_tool_names:
+            runtime_disabled_names = set(disabled_tool_names)
+            if getattr(self, "_request_memory_writes_blocked", False):
+                runtime_disabled_names.update(_MEMORY_WRITE_TOOLS)
+            if runtime_disabled_names:
                 all_tools = [
                     t for t in all_tools
-                    if t.get("function", {}).get("name", "") not in disabled_tool_names
+                    if t.get("function", {}).get("name", "") not in runtime_disabled_names
                 ]
 
             # 注入工具目录（技能/MCP 标为 📋，模型主动点名后才注入）
@@ -1568,21 +1719,31 @@ class AgentCore:
                 loaded_categories,
                 skill_tool_names=_skill_names if _skill_names else None,
                 mcp_tool_names=_mcp_names if _mcp_names else None,
-                disabled_tool_names=disabled_tool_names,
+                disabled_tool_names=runtime_disabled_names,
             )
             messages.append({"role": "system", "content": catalog_text})
 
 
         # ── 长期记忆说明（必须在对话历史之前注入） ────────────
-        messages.append({
-            "role": "system",
-            "content": (
-                "【长期记忆】\n"
-                "相关记忆已自动注入上方消息中，你无需主动搜索。\n"
-                "仅在用户明确说\"你还记得XXX吗\"\"我之前说过XXX\"\"帮我查一下记忆\"时才调用 search_graph_memory。\n"
-                "用户说\"记住XXX\"时调用 save_memory 保存。"
-            )
-        })
+        if getattr(self, "_request_memory_writes_blocked", False):
+            messages.append({
+                "role": "system",
+                "content": (
+                    "【长期记忆权限】用户已明确禁止向长期记忆写入内容。"
+                    "本轮不得调用 save_memory 或 update_memory；"
+                    "可以正常使用当前会话上下文回答。"
+                ),
+            })
+        else:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "【长期记忆】\n"
+                    "相关记忆已自动注入上方消息中，你无需主动搜索。\n"
+                    "仅在用户明确说\"你还记得XXX吗\"\"我之前说过XXX\"\"帮我查一下记忆\"时才调用 search_graph_memory。\n"
+                    "用户说\"记住XXX\"时调用 save_memory 保存。"
+                )
+            })
 
         # ── 防幻觉提醒（最后一条 system 消息，利用近因效应） ──
         if not disable_tools:
@@ -1613,6 +1774,19 @@ class AgentCore:
                         import time as _time
                         _time.sleep(1.5)
                         continue
+                    if contains_textual_tool_protocol(content):
+                        print("[协议防泄漏] 纯文本模式检测到伪工具调用，已拦截", flush=True)
+                        if retry < 1:
+                            messages.append({
+                                "role": "system",
+                                "content": (
+                                    "上一条输出包含内部工具调用标签，已被系统丢弃。"
+                                    "当前禁止调用工具；只用自然语言回答用户，"
+                                    "不得输出任何 tool_call、function 或 parameter 标签。"
+                                ),
+                            })
+                            continue
+                        return "（检测到异常的内部工具协议，已阻止其显示。请重新发送消息。）"
                     self._last_reasoning = reasoning if reasoning else None
                     return content or "（莲心没有说话）"
                 except Exception as e:
@@ -1662,6 +1836,7 @@ class AgentCore:
 
         while iteration < MAX_ITERATIONS:
             iteration += 1
+            _prompt_build_started = _t0 if iteration == 1 else time.time()
 
             if self._cancel_event.is_set():
                 print("  [循环终止] 收到取消信号", flush=True)
@@ -1720,7 +1895,8 @@ class AgentCore:
 
 
             # 确定 tool_choice（熔断器可强制设为 "none"）
-            if _force_text_response:
+            forcing_text_response = bool(_force_text_response)
+            if forcing_text_response:
                 tool_choice = "none"
                 _force_text_response = False
             elif forced_tool and forced_tool in [t["function"]["name"] for t in all_tools]:
@@ -1728,11 +1904,20 @@ class AgentCore:
             else:
                 tool_choice = "auto"
 
+            # 同一请求中的旧工具结果会快速膨胀；只压缩 content，保留调用配对。
+            _tool_cfg = get_memory_config()
+            messages = prune_stale_tool_outputs(
+                messages,
+                keep_recent=_tool_cfg.get("tool_result_keep_recent", 4),
+                latest_max_chars=_tool_cfg.get("tool_result_max_chars", 12_000),
+                stale_max_chars=_tool_cfg.get("stale_tool_result_max_chars", 2_400),
+            )
+
             # 诊断：打印 system prompt 构建耗时和大小
             _t1 = time.time()
             _total_chars = sum(len(m.get("content", "")) for m in messages)
             _tool_count = len(all_tools)
-            print(f"[诊断] 第{iteration}轮 prompt 构建: {_t1 - _t0:.1f}s, "
+            print(f"[诊断] 第{iteration}轮 prompt 构建: {_t1 - _prompt_build_started:.1f}s, "
                   f"{len(messages)}条消息, {_total_chars}字符, {_tool_count}个工具", flush=True)
 
             # ── Prompt 调试转储 ──
@@ -1759,7 +1944,9 @@ class AgentCore:
                     stream_options={"include_usage": True},
                     timeout=120,
                 )
-                content, reasoning, stream_tool_calls, finish = self._collect_stream(stream, on_chunk=on_progress)
+                content, reasoning, stream_tool_calls, finish = self._collect_stream(
+                    stream, on_chunk=_guarded_progress
+                )
                 _api_elapsed = time.time() - _api_start
                 _content_len = len(content) if content else 0
                 print(f"[诊断] 第{iteration}轮 API 完成: {_api_elapsed:.1f}s, "
@@ -1789,6 +1976,28 @@ class AgentCore:
                 self._last_reasoning = reasoning
 
             if finish == "stop" or finish == "length":
+                if contains_textual_tool_protocol(content):
+                    _text_protocol_retry_count += 1
+                    print(
+                        "[协议防泄漏] 检测到正文伪工具调用，已丢弃并请求安全收尾",
+                        flush=True,
+                    )
+                    if _text_protocol_retry_count <= 1:
+                        _force_text_response = True
+                        messages.append({
+                            "role": "system",
+                            "content": (
+                                "【协议纠错】上一条输出把工具调用写成了普通文本，"
+                                "该内容已被系统丢弃且不会执行。工具调用阶段已经结束。"
+                                "现在必须仅根据已有工具结果生成最终自然语言回答；"
+                                "禁止输出 <tool_call>、<function>、<parameter>、JSON调用或代码块。"
+                            ),
+                        })
+                        continue
+                    return (
+                        "（工具结果已经取得，但模型连续输出了异常的内部调用协议。"
+                        "系统已阻止其显示，请让我重新总结现有结果。）"
+                    )
                 # 工具激活重试：模型暗示需要未加载的工具（仅触发一次）
                 if (not self._use_local and not _full_tools_injected
                         and detect_tool_request(content or "")):
@@ -1796,15 +2005,15 @@ class AgentCore:
                     print("[工具激活] 检测到模型需要未激活工具，全量注入重试", flush=True)
                     loaded_categories = set(CATEGORY_ORDER)  # 全部激活
                     all_tools = TOOL_DEFINITIONS + skill_tools + mcp_tools
-                    if disabled_tool_names:
+                    if runtime_disabled_names:
                         all_tools = [t for t in all_tools
-                                     if t.get("function", {}).get("name", "") not in disabled_tool_names]
+                                     if t.get("function", {}).get("name", "") not in runtime_disabled_names]
                     # 替换最后一条目录消息为全量激活版（技能/MCP 也标 ✅）
                     catalog_text = build_tool_catalog(
                         loaded_categories,
                         skill_tool_names=_skill_names if _skill_names else None,
                         mcp_tool_names=_mcp_names if _mcp_names else None,
-                        disabled_tool_names=disabled_tool_names,
+                        disabled_tool_names=runtime_disabled_names,
                         skill_mcp_active=True,
                     )
                     for i in range(len(messages) - 1, -1, -1):

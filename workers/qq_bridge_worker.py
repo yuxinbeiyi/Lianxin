@@ -689,6 +689,15 @@ class QQBridgeWorker(QThread):
         def _on_tool_call(name, args):
             tool_calls_made.append(name)
 
+        def _on_tool_result(name, result, is_error=False, elapsed_ms=0.0):
+            """Deliver captured media to QQ as soon as the tool completes."""
+            if is_error or name not in ("capture_desktop", "capture_from_camera"):
+                return
+            if self._send_observation_image(msg):
+                self._log(f"[图片] [{session_key}] 已发送 {name} 采集的图片")
+            else:
+                self._log(f"[图片] [{session_key}] {name} 已完成，但图片发送失败")
+
         # ── 设置日记消息源（供 write_diary 工具使用） ──────
         from brain.tools import set_diary_message_source
         set_diary_message_source(lambda: self._get_session_messages(session_key))
@@ -720,6 +729,8 @@ class QQBridgeWorker(QThread):
                     result = execute_tool(forced, args)
                     response = _strip_roleplay(str(result))
                     self._update_shoulder_state(forced, args)
+                    if forced in ("capture_desktop", "capture_from_camera"):
+                        self._send_observation_image(msg)
                     self._log(f"[指令] 执行成功: {forced}")
                 except Exception as e:
                     response = f"（{forced} 执行失败：{e}）"
@@ -731,6 +742,7 @@ class QQBridgeWorker(QThread):
                     response = _strip_roleplay(agent.chat(
                         cmd_text,
                         on_tool_call=_on_tool_call,
+                        on_tool_result=_on_tool_result,
                         response_guard=lambda: self._is_request_current(
                             session_key, request_generation
                         ),
@@ -772,6 +784,7 @@ class QQBridgeWorker(QThread):
                 response = _strip_roleplay(agent.chat(
                     text,
                     on_tool_call=_on_tool_call,
+                    on_tool_result=_on_tool_result,
                     disable_tools=is_chat,
                     response_guard=lambda: self._is_request_current(
                         session_key, request_generation
@@ -1757,6 +1770,14 @@ class QQBridgeWorker(QThread):
         def _on_tool_call(name, args):
             tool_calls_made.append(name)
 
+        def _on_tool_result(name, result, is_error=False, elapsed_ms=0.0):
+            if is_error or name not in ("capture_desktop", "capture_from_camera"):
+                return
+            if self._send_observation_image(msg):
+                self._log(f"[图片] [{session_key}] 已发送 {name} 采集的图片")
+            else:
+                self._log(f"[图片] [{session_key}] {name} 已完成，但图片发送失败")
+
         # ── 【指令】前缀检测 ──────────────────────────────
         has_cmd, cmd_text = self._strip_command_prefix(merged_text)
 
@@ -1777,6 +1798,8 @@ class QQBridgeWorker(QThread):
                     result = execute_tool(forced, args)
                     response = _strip_roleplay(str(result))
                     self._update_shoulder_state(forced, args)
+                    if forced in ("capture_desktop", "capture_from_camera"):
+                        self._send_observation_image(msg)
                 except Exception as e:
                     response = f"（{forced} 执行失败：{e}）"
             else:
@@ -1784,6 +1807,7 @@ class QQBridgeWorker(QThread):
                     response = _strip_roleplay(agent.chat(
                         cmd_text,
                         on_tool_call=_on_tool_call,
+                        on_tool_result=_on_tool_result,
                         response_guard=lambda: self._is_request_current(
                             session_key, request_generation
                         ),
@@ -1801,6 +1825,7 @@ class QQBridgeWorker(QThread):
                 response = _strip_roleplay(agent.chat(
                     merged_text,
                     on_tool_call=_on_tool_call,
+                    on_tool_result=_on_tool_result,
                     disable_tools=is_chat,
                     response_guard=lambda: self._is_request_current(
                         session_key, request_generation
@@ -2082,6 +2107,29 @@ class QQBridgeWorker(QThread):
 
         self._log(f"[表情包] 发送 {emotion or '?'} -> {img_path}")
         self._send_msg(params)
+
+    def _send_observation_image(self, msg_ctx: dict) -> bool:
+        """Send the most recent desktop/camera capture as a QQ image message."""
+        try:
+            from brain.tools import get_observation_image
+            observation = get_observation_image()
+            image_path = observation.get("path") if observation else None
+            if not image_path or not Path(image_path).is_file():
+                self._log(f"[图片] 采集图片不存在: {image_path}")
+                return False
+
+            normalized = str(Path(image_path).resolve()).replace("\\", "/")
+            params = {
+                "message_type": msg_ctx.get("message_type", "private"),
+                "user_id": msg_ctx.get("user_id"),
+                "message": [{"type": "image", "data": {"file": f"file:///{normalized}"}}],
+            }
+            if msg_ctx.get("group_id"):
+                params["group_id"] = msg_ctx["group_id"]
+            return self._send_msg(params)
+        except Exception as exc:
+            self._log(f"[图片] 发送采集图片异常: {exc}")
+            return False
 
     def send_file_to_qq(self, file_path: str, name: str = "", user_id: str = "") -> str:
         """将本地文件发送到主人的 QQ 私聊。

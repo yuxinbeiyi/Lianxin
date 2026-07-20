@@ -113,6 +113,10 @@ class ProactivePresentationController:
         if not text:
             return
         text = self._clean_text(text)
+        # Empty/placeholder proactive output must never become a user-visible message.
+        if re.fullmatch(r"[（(]?[^（）()\n]{1,20}沉默了[）)]?", text):
+            self._pending_mooyu_sources = []
+            return
         pending_sources = self._pending_mooyu_sources
         self._pending_mooyu_sources = []
 

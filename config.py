@@ -722,6 +722,12 @@ _MEMORY_DEFAULTS = {
     "context_window_size": 20,          # 滑动窗口：保留最近 N 条完整消息
     "context_keep_loops": 8,            # Loop 模式：保留最近 N 轮对话完整
     "context_summary_trigger": 12,      # Loop 模式：超过 N 轮时触发摘要压缩
+    "context_summary_token_threshold": 80000,  # 上次请求输入 token 达到该值时提前压缩
+    "context_summary_batch_messages": 6,       # 至少累计 N 条新消息才推进摘要游标
+    "context_summary_max_chars": 4000,         # 滚动摘要硬字符预算，防止降级拼接膨胀
+    "tool_result_max_chars": 12000,     # 最近工具结果注入模型的最大字符数
+    "stale_tool_result_max_chars": 2400,  # 较早工具结果的最大字符数
+    "tool_result_keep_recent": 4,       # 保持较完整的最近工具结果数量
     "summary_trigger_threshold": 30,    # 摘要触发：超过 N 条才开始压缩（0=始终压缩）
     "enable_conversation_summary": True,  # 是否启用对话摘要压缩
 }

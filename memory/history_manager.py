@@ -62,18 +62,30 @@ def _migrate_db(conn: sqlite3.Connection):
     """安全为 sessions 表添加新列（幂等，已存在时忽略）。"""
     existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
     needs_memory_v3 = "updated_at" not in existing_columns
-    if needs_memory_v3:
+    existing_tables = {
+        row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    needs_context_v2 = "compression_snapshots" not in existing_tables
+    if needs_memory_v3 or needs_context_v2:
         message_count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
         db_row = conn.execute("PRAGMA database_list").fetchone()
         if message_count and db_row and db_row[2]:
             db_path = Path(db_row[2])
-            backup_path = db_path.with_name(f"{db_path.stem}.pre-memory-v3.db")
-            if not backup_path.exists():
-                backup_conn = sqlite3.connect(str(backup_path))
-                try:
-                    conn.backup(backup_conn)
-                finally:
-                    backup_conn.close()
+            backup_names = []
+            if needs_memory_v3:
+                backup_names.append(f"{db_path.stem}.pre-memory-v3.db")
+            if needs_context_v2:
+                backup_names.append(f"{db_path.stem}.pre-context-v2.db")
+            for backup_name in backup_names:
+                backup_path = db_path.with_name(backup_name)
+                if not backup_path.exists():
+                    backup_conn = sqlite3.connect(str(backup_path))
+                    try:
+                        conn.backup(backup_conn)
+                    finally:
+                        backup_conn.close()
 
     for sql in (
         "ALTER TABLE sessions ADD COLUMN summary   TEXT    DEFAULT ''",
@@ -99,12 +111,28 @@ def _migrate_db(conn: sqlite3.Connection):
         WHERE updated_at IS NULL OR updated_at = ''
     """)
     conn.executescript("""
+        CREATE TABLE IF NOT EXISTS compression_snapshots (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id            INTEGER NOT NULL,
+            summary               TEXT    NOT NULL,
+            covered_message_count INTEGER NOT NULL DEFAULT 0,
+            covered_user_turns    INTEGER NOT NULL DEFAULT 0,
+            model                 TEXT    DEFAULT '',
+            persona_id            TEXT    DEFAULT '',
+            persona_revision      INTEGER DEFAULT 0,
+            trigger               TEXT    DEFAULT '',
+            input_tokens          INTEGER DEFAULT 0,
+            created_at            TEXT    NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions(id)
+        );
         CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
         CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(channel);
         CREATE INDEX IF NOT EXISTS idx_sessions_owner_scope ON sessions(owner_scope);
         CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
         CREATE INDEX IF NOT EXISTS idx_messages_session_timestamp
             ON messages(session_id, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_compression_snapshots_session_id
+            ON compression_snapshots(session_id, id);
     """)
     conn.commit()
 
@@ -298,6 +326,72 @@ class HistoryManager:
         )
         conn.commit()
 
+    # ── 会话内上下文压缩快照 ────────────────────────────────
+
+    def save_compression_snapshot(
+        self, session_id: int, summary: str, covered_message_count: int, *,
+        covered_user_turns: int = 0, model: str = "", persona_id: str = "",
+        persona_revision: int = 0, trigger: str = "", input_tokens: int = 0,
+    ) -> int:
+        """保存一份可恢复的会话摘要游标，并限制每个会话的快照数量。"""
+        summary = str(summary or "").strip()
+        covered_message_count = max(0, int(covered_message_count))
+        if not summary or covered_message_count <= 0:
+            return 0
+
+        conn = self._conn()
+        latest = conn.execute(
+            """SELECT id, summary, covered_message_count
+               FROM compression_snapshots
+               WHERE session_id=? ORDER BY id DESC LIMIT 1""",
+            (session_id,),
+        ).fetchone()
+        if (latest and latest["summary"] == summary
+                and latest["covered_message_count"] == covered_message_count):
+            return int(latest["id"])
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cur = conn.execute(
+            """INSERT INTO compression_snapshots (
+                   session_id, summary, covered_message_count, covered_user_turns,
+                   model, persona_id, persona_revision, trigger, input_tokens, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                session_id, summary, covered_message_count,
+                max(0, int(covered_user_turns)), str(model or ""),
+                str(persona_id or ""), max(0, int(persona_revision or 0)),
+                str(trigger or ""), max(0, int(input_tokens or 0)), now,
+            ),
+        )
+        conn.execute(
+            """DELETE FROM compression_snapshots
+               WHERE session_id=? AND id NOT IN (
+                   SELECT id FROM compression_snapshots
+                   WHERE session_id=? ORDER BY id DESC LIMIT 20
+               )""",
+            (session_id, session_id),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+    def get_latest_compression_snapshot(self, session_id: int) -> dict | None:
+        row = self._conn().execute(
+            """SELECT id, session_id, summary, covered_message_count,
+                      covered_user_turns, model, persona_id, persona_revision,
+                      trigger, input_tokens, created_at
+               FROM compression_snapshots
+               WHERE session_id=? ORDER BY id DESC LIMIT 1""",
+            (session_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def delete_compression_snapshots(self, session_id: int) -> None:
+        conn = self._conn()
+        conn.execute(
+            "DELETE FROM compression_snapshots WHERE session_id=?", (session_id,)
+        )
+        conn.commit()
+
     def toggle_pin(self, session_id: int):
         """切换置顶状态。"""
         conn = self._conn()
@@ -311,6 +405,7 @@ class HistoryManager:
     def delete_session(self, session_id: int):
         """删除会话及其所有消息。"""
         conn = self._conn()
+        conn.execute("DELETE FROM compression_snapshots WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         conn.commit()

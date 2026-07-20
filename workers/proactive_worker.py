@@ -340,8 +340,9 @@ class ProactiveWorker(QThread):
             ],
             timeout=30,
         )
-        text = response.choices[0].message.content or "（莲心沉默了）"
-        return text.strip()
+        # An empty proactive response means the model chose not to interrupt the user.
+        # Keep it empty so the presentation layer can suppress the notification.
+        return (response.choices[0].message.content or "").strip()
 
     # ── B站冲浪 ──────────────────────────────────────────────
 
@@ -473,6 +474,4 @@ class ProactiveWorker(QThread):
                 {"role": "user", "content": prompt},
             ],
         )
-        return (
-            response.choices[0].message.content or f"（{assistant_name}沉默了）"
-        ).strip()
+        return (response.choices[0].message.content or "").strip()

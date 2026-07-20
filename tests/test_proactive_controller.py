@@ -99,6 +99,14 @@ class ProactivePresentationControllerTests(unittest.TestCase):
         self.assertEqual(["你好"], self.bridge.messages)
         self.assertEqual([{"flash_count": 0}], self.flashes)
 
+    def test_silence_placeholder_is_not_presented_or_sent(self):
+        self.controller.handle_proactive_response("（璃弥娜沉默了）")
+
+        self.assertEqual([], self.chat.ai_messages)
+        self.assertEqual([], self.history.messages)
+        self.assertEqual([], self.spoken)
+        self.assertEqual([], self.bridge.messages)
+
     def test_observation_respects_qq_privacy_switch(self):
         self.controller.set_behavior("observe")
         self.controller.handle_proactive_response("观察消息")
