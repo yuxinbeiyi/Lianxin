@@ -38,11 +38,16 @@ def update_working_topic(*, user_message: str, recent_messages: list[dict] | Non
                          session_id: int | None = None, ttl_minutes: int = 120) -> dict:
     conn = _ensure()
     now = _now()
-    key = _topic_key(user_message)
-    active = conn.execute("SELECT * FROM memory_working_topics WHERE status='active' ORDER BY last_active_at DESC LIMIT 1").fetchone()
+    semantic_key = _topic_key(user_message)
+    key = f"session:{session_id or 0}|{semantic_key}"
+    active = conn.execute(
+        "SELECT * FROM memory_working_topics WHERE status='active' AND session_id IS ? ORDER BY last_active_at DESC LIMIT 1",
+        (session_id,),
+    ).fetchone()
     if active:
-        overlap = len(_tokens(key) & _tokens(active["topic_key"])) / max(1, len(_tokens(key) | _tokens(active["topic_key"])))
-        if overlap < 0.12 and key != "general":
+        active_semantic = str(active["topic_key"]).split("|", 1)[-1]
+        overlap = len(_tokens(semantic_key) & _tokens(active_semantic)) / max(1, len(_tokens(semantic_key) | _tokens(active_semantic)))
+        if overlap < 0.12 and semantic_key != "general":
             conn.execute("UPDATE memory_working_topics SET status='archived',updated_at=? WHERE id=?", (now.isoformat(timespec="seconds"), int(active["id"])))
             active = None
     messages = list(recent_messages or [])[-8:]

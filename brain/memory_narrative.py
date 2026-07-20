@@ -295,6 +295,24 @@ def get_narrative_context(query: str, limit: int = 4) -> list[dict]:
             for score, row in scored[:max(1, min(20, int(limit)))]]
 
 
+def get_entity_context(query: str, limit: int = 8) -> list[dict]:
+    """Aggregate an entity profile and its connected episodes for entity queries."""
+    text = " ".join(str(query or "").lower().split())
+    if not text:
+        return []
+    rows = list_entity_profiles(300)
+    output = []
+    for row in rows:
+        name = str(row.get("name", "")).lower()
+        summary = f"{row.get('summary', '')} {row.get('current_status', '')}".lower()
+        if name not in text and not any(term in summary for term in text.split() if len(term) > 1):
+            continue
+        output.append({**row, "narrative_score": 1.0 if name in text else 0.45,
+                       "source_table": "memory_entity_profiles"})
+    output.sort(key=lambda item: (item["narrative_score"], item.get("mention_count", 0)), reverse=True)
+    return output[:max(1, min(30, int(limit)))]
+
+
 def get_narrative_statistics() -> dict:
     conn = _ensure_tables()
     return {
@@ -302,6 +320,79 @@ def get_narrative_statistics() -> dict:
         "episodes": conn.execute("SELECT COUNT(*) FROM memory_episodes WHERE status='active'").fetchone()[0],
         "sagas": conn.execute("SELECT COUNT(*) FROM memory_sagas WHERE status='active'").fetchone()[0],
     }
+
+
+def merge_narrative_duplicates(limit: int = 100) -> dict:
+    """Merge adjacent derived records while preserving all source IDs."""
+    conn = _ensure_tables()
+    merged_episodes = 0
+    merged_sagas = 0
+
+    def overlap(left: str, right: str) -> float:
+        a = {token for token in re.findall(r"[\w\u4e00-\u9fff]{2,}", left.lower())}
+        b = {token for token in re.findall(r"[\w\u4e00-\u9fff]{2,}", right.lower())}
+        return len(a & b) / max(1, len(a | b))
+
+    episodes = list_episodes(limit)
+    for index, survivor in enumerate(episodes):
+        if survivor.get("status") != "active":
+            continue
+        survivor_entities = _json(survivor.get("entity_ids"), [])
+        survivor_fragments = _json(survivor.get("fragment_ids"), [])
+        survivor_facts = _json(survivor.get("source_fact_ids"), [])
+        for duplicate in episodes[index + 1:]:
+            if duplicate.get("status") != "active" or duplicate.get("category") != survivor.get("category"):
+                continue
+            duplicate_entities = _json(duplicate.get("entity_ids"), [])
+            same_entity = bool(set(survivor_entities) & set(duplicate_entities))
+            if not same_entity and overlap(survivor.get("title", ""), duplicate.get("title", "")) < 0.55:
+                continue
+            fragments = list(dict.fromkeys(survivor_fragments + _json(duplicate.get("fragment_ids"), [])))
+            facts = list(dict.fromkeys(survivor_facts + _json(duplicate.get("source_fact_ids"), [])))
+            entities = list(dict.fromkeys(survivor_entities + duplicate_entities))
+            summary = survivor.get("summary", "")
+            if duplicate.get("summary") and duplicate["summary"] not in summary:
+                summary = (summary + "\n" + duplicate["summary"])[:1800]
+            conn.execute(
+                """UPDATE memory_episodes SET summary=?,entity_ids=?,fragment_ids=?,source_fact_ids=?,
+                   confidence=MAX(confidence,?),updated_at=? WHERE id=?""",
+                (summary, json.dumps(entities), json.dumps(fragments), json.dumps(facts),
+                 float(duplicate.get("confidence", 0.5) or 0.5), _now(), int(survivor["id"])),
+            )
+            conn.execute("UPDATE memory_episodes SET status='merged',updated_at=? WHERE id=?", (_now(), int(duplicate["id"])))
+            for saga_row in conn.execute("SELECT id,episode_ids FROM memory_sagas WHERE status='active'").fetchall():
+                saga_episode_ids = _json(saga_row["episode_ids"], [])
+                if int(duplicate["id"]) not in saga_episode_ids:
+                    continue
+                saga_episode_ids = [
+                    int(survivor["id"]) if int(value) == int(duplicate["id"]) else int(value)
+                    for value in saga_episode_ids
+                ]
+                conn.execute(
+                    "UPDATE memory_sagas SET episode_ids=?,updated_at=? WHERE id=?",
+                    (json.dumps(list(dict.fromkeys(saga_episode_ids))), _now(), int(saga_row["id"])),
+                )
+            survivor_fragments, survivor_facts, survivor_entities = fragments, facts, entities
+            duplicate["status"] = "merged"
+            merged_episodes += 1
+
+    sagas = list_sagas(limit)
+    for index, survivor in enumerate(sagas):
+        if survivor.get("status") != "active":
+            continue
+        for duplicate in sagas[index + 1:]:
+            if duplicate.get("status") != "active" or overlap(survivor.get("title", ""), duplicate.get("title", "")) < 0.55:
+                continue
+            episode_ids = list(dict.fromkeys(_json(survivor.get("episode_ids"), []) + _json(duplicate.get("episode_ids"), [])))
+            summary = survivor.get("summary", "")
+            if duplicate.get("summary") and duplicate["summary"] not in summary:
+                summary = (summary + "\n" + duplicate["summary"])[:2000]
+            conn.execute("UPDATE memory_sagas SET summary=?,episode_ids=?,updated_at=? WHERE id=?", (summary, json.dumps(episode_ids), _now(), int(survivor["id"])))
+            conn.execute("UPDATE memory_sagas SET status='merged',updated_at=? WHERE id=?", (_now(), int(duplicate["id"])))
+            duplicate["status"] = "merged"
+            merged_sagas += 1
+    conn.commit()
+    return {"episodes_merged": merged_episodes, "sagas_merged": merged_sagas}
 
 
 def start_narrative_run(candidates: int) -> int:

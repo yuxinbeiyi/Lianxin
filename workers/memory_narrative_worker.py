@@ -38,7 +38,7 @@ class MemoryNarrativeWorker(QThread):
         try:
             from brain.memory_narrative import (
                 apply_narrative_result, collect_narrative_candidates,
-                finish_narrative_run, start_narrative_run,
+                finish_narrative_run, merge_narrative_duplicates, start_narrative_run,
             )
             candidates = collect_narrative_candidates(self.max_candidates)
             run_id = start_narrative_run(len(candidates))
@@ -74,6 +74,7 @@ class MemoryNarrativeWorker(QThread):
             if result.get("entities") and not result.get("episodes"):
                 result["episodes"] = []
             stats = apply_narrative_result(result, candidates)
+            stats.update(merge_narrative_duplicates())
             finish_narrative_run(
                 run_id, status="success",
                 episodes_created=stats.get("episodes_created", 0),

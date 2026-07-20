@@ -336,13 +336,16 @@ def _lexical_memory_results(query: str, category: str | None = None) -> list[tup
 def _merge_hybrid_results(query: str, vector_results: list[tuple[float, dict]],
                           *, category: str | None, top_k: int) -> list[tuple[float, dict]]:
     """RRF merge with an intent-specific narrative boost."""
-    from brain.memory_narrative import get_narrative_context
+    from brain.memory_narrative import get_entity_context, get_narrative_context
 
     intent = route_memory_intent(query)
     channels: list[list[tuple[float, dict]]] = [vector_results, _lexical_memory_results(query, category)]
     narratives = get_narrative_context(query, limit=max(4, top_k * 2))
+    entities = get_entity_context(query, limit=max(4, top_k * 2))
     if intent in {"long_term", "summary", "entity"}:
         channels.append([(item.get("narrative_score", 0.0), item) for item in narratives])
+    if intent == "entity":
+        channels.append([(item.get("narrative_score", 0.0), item) for item in entities])
     ranks: dict[str, float] = {}
     items: dict[str, dict] = {}
     for channel in channels:
@@ -377,6 +380,13 @@ def format_rag_context(memories: list[tuple[float, dict]]) -> str:
             lines.append(
                 f"· [叙事#{mem.get('id', '?')}] {mem.get('title', '相关经历')}：{mem.get('summary', '')} "
                 f"(融合相关度:{float(mem.get('rrf_score', sim)):.1%}, 来源:叙事记忆)"
+            )
+            continue
+        if mem.get("source_table") == "memory_entity_profiles":
+            lines.append(
+                f"· [实体#{mem.get('id', '?')}] {mem.get('name', '')}：{mem.get('summary', '')} "
+                f"当前状态：{mem.get('current_status', '')} "
+                f"(融合相关度:{float(mem.get('rrf_score', sim)):.1%})"
             )
             continue
         source = mem.get("source_channel") or mem.get("source") or "unknown"

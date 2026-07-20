@@ -926,6 +926,15 @@ def update_facts(
     target_facts = [dict(row) for row in conn.execute(
         target_sql, target_params
     ).fetchall()]
+    if target_facts:
+        try:
+            from brain.memory_corrections import apply_correction_feedback
+            apply_correction_feedback(
+                [fact["id"] for fact in target_facts], action="update",
+                reason=f"用户将记忆修正为：{new_content[:240]}", conn=conn, commit=False,
+            )
+        except Exception:
+            pass
     new_embedding = None
     try:
         from brain.memory_rag import embed_bytes
@@ -999,6 +1008,14 @@ def delete_facts(keyword: str, category: str | None = None) -> int:
         select_sql, select_params
     ).fetchall()]
     if fact_ids:
+        try:
+            from brain.memory_corrections import apply_correction_feedback
+            apply_correction_feedback(
+                fact_ids, action="delete", reason=f"用户删除记忆：{keyword[:240]}",
+                conn=conn, commit=False,
+            )
+        except Exception:
+            pass
         placeholders = ",".join("?" for _ in fact_ids)
         conn.execute(
             f"DELETE FROM memory_fragments WHERE fact_id IN ({placeholders})",
