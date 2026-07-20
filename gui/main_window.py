@@ -8,7 +8,7 @@ import ctypes
 from ctypes import wintypes
 from typing import Optional
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QDialog, QTextEdit, QMenu, QCheckBox
+    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QDialog, QTextEdit, QMenu, QCheckBox
 )
 from PyQt5.QtCore import (
     Qt, QTimer, QAbstractNativeEventFilter, QPoint, QObject,
@@ -346,6 +346,13 @@ class MainWindow(QMainWindow):
         self._heartbeat_timer = QTimer(self)
         self._heartbeat_timer.timeout.connect(self._touch_heartbeat)
         self._heartbeat_timer.start(5000)
+        # QApplication.activeModalWidget() must only be queried on the Qt
+        # main thread.  The watchdog reads this plain boolean from its worker
+        # thread instead of touching Qt objects cross-thread.
+        self._modal_active = False
+        self._modal_state_timer = QTimer(self)
+        self._modal_state_timer.timeout.connect(self._sample_modal_state)
+        self._modal_state_timer.start(500)
         # 后台监控线程：不依赖 Qt 事件循环，卡顿时能实时捕获堆栈
         self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
         self._watchdog_thread.start()
@@ -3403,7 +3410,6 @@ class MainWindow(QMainWindow):
 
     def _watchdog_loop(self):
         """后台线程：轮询心跳时间戳，卡顿时实时抓取主线程调用堆栈。"""
-        from PyQt5.QtWidgets import QApplication
         import traceback
         while True:
             time.sleep(1.0)
@@ -3411,7 +3417,7 @@ class MainWindow(QMainWindow):
             if elapsed <= 7.0:
                 continue
             # 如果当前有模态对话框打开，不误报冻结
-            if QApplication.activeModalWidget() is not None:
+            if self._modal_active:
                 self._heartbeat_frozen = False
                 self._heartbeat_time = time.monotonic()
                 continue
@@ -3427,6 +3433,7 @@ class MainWindow(QMainWindow):
                         else:
                             print(f"[看门狗] WARN 主线程已卡住 {elapsed:.1f} 秒（无法获取堆栈）")
                         break
+
             elif round(elapsed) % 30 == 0:
                 # 长时间卡顿，每 30 秒再抓一次堆栈看有没有变化
                 for t in threading.enumerate():
@@ -3436,6 +3443,10 @@ class MainWindow(QMainWindow):
                             stacks = "".join(traceback.format_stack(frame))
                             print(f"[看门狗] 仍在卡顿中 ({elapsed:.0f}s) 堆栈：\n{stacks}")
                         break
+
+    def _sample_modal_state(self):
+        """Sample modal-dialog state on the Qt GUI thread for the watchdog."""
+        self._modal_active = QApplication.activeModalWidget() is not None
 
     def _check_reminders(self):
         due = self.reminder_manager.get_due_reminders()
