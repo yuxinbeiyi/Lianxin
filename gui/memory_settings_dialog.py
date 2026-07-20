@@ -8,6 +8,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from config import get_memory_config, save_memory_config
 from brain.graph_memory import list_all_facts, delete_facts, add_fact, update_facts, ALL_MEMORY_CATEGORIES
+from gui.current_state_panel import CurrentStatePanel
 
 class MemorySettingsDialog(QDialog):
     """记忆系统独立设置对话框"""
@@ -82,6 +83,7 @@ class MemorySettingsDialog(QDialog):
 
         # 选项卡
         tabs = QTabWidget()
+        self._tabs = tabs
         tabs.setStyleSheet("""
             QTabWidget::pane {
                 border: 0;
@@ -341,7 +343,11 @@ class MemorySettingsDialog(QDialog):
         tab3_layout.addStretch()
         tabs.addTab(tab3, "⚙️ 上下文压缩")
 
-        # ── 选项卡 4：记忆浏览 ─────────────────────────────
+        # ── 选项卡 4：当前状态 ───────────────────────────────
+        self._current_state_panel = CurrentStatePanel()
+        tabs.addTab(self._current_state_panel, "◉ 当前状态")
+
+        # ── 选项卡 5：记忆浏览 ─────────────────────────────
         tab4 = QWidget()
         tab4_layout = QVBoxLayout(tab4)
         tab4_layout.setSpacing(10)
@@ -495,6 +501,13 @@ class MemorySettingsDialog(QDialog):
         btn_row.addWidget(btn_save)
 
         outer_layout.addLayout(btn_row)
+
+    def showEvent(self, event):
+        """Refresh persisted memory data whenever the cached dialog is reopened."""
+        self._all_facts = list_all_facts()
+        self._refresh_memory_list()
+        self._current_state_panel.refresh()
+        super().showEvent(event)
 
     def _load_from_config(self):
         from config import get_memory_config, get_graph_config

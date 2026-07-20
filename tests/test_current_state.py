@@ -72,11 +72,14 @@ class CurrentStateLifecycleTests(unittest.TestCase):
             persona_id="lianxin", now=self.now,
         )
         updated = current_state.update_current_state(
-            state["id"], content="用户在杭州出差", now=self.now + timedelta(hours=1)
+            state["id"], content="用户在杭州出差", confidence=0.75,
+            source_quality="user_confirmed", now=self.now + timedelta(hours=1)
         )
 
         self.assertEqual(9, updated["source_session_id"])
         self.assertEqual([10], updated["source_message_ids"])
+        self.assertEqual(0.75, updated["confidence"])
+        self.assertEqual("user_confirmed", updated["source_quality"])
         resolved = current_state.resolve_current_state(
             state["id"], "用户已回家", source_message_ids=[12],
             now=self.now + timedelta(days=1),

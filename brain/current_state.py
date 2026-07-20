@@ -369,6 +369,8 @@ def update_current_state(
     state_type: str | None = None,
     expires_at: str = "",
     duration_days: int | None = None,
+    confidence: float | None = None,
+    source_quality: str | None = None,
     source_session_id: int | None = None,
     source_channel: str = "",
     source_message_ids: list[int] | None = None,
@@ -385,13 +387,25 @@ def update_current_state(
     ).fetchone())
     if not existing:
         raise ValueError(f"没有找到活跃状态#{state_id}")
-    if content is None and state_type is None and not expires_at and duration_days is None:
-        raise ValueError("update 至少需要修改内容、类型或有效期")
+    if (content is None and state_type is None and not expires_at
+            and duration_days is None and confidence is None
+            and source_quality is None):
+        raise ValueError("update 至少需要修改内容、类型、有效期或可信度")
 
     new_content = existing["content"] if content is None else _normalize_content(content)
     if not new_content:
         raise ValueError("状态内容不能为空")
     new_type = existing["state_type"] if state_type is None else _normalize_type(state_type)
+    new_quality = (
+        existing["source_quality"]
+        if source_quality is None
+        else _normalize_quality(source_quality)
+    )
+    new_confidence = (
+        float(existing["confidence"])
+        if confidence is None
+        else _normalize_confidence(confidence, new_quality)
+    )
     new_expiry = existing["expires_at"]
     if expires_at or duration_days is not None:
         new_expiry = _resolve_expiry(
@@ -417,11 +431,13 @@ def update_current_state(
     try:
         conn.execute(
             """UPDATE memory_current_states
-               SET content=?, state_type=?, expires_at=?, source_session_id=?,
+               SET content=?, state_type=?, confidence=?, source_quality=?,
+                   expires_at=?, source_session_id=?,
                    source_channel=?, source_message_ids=?, persona_id=?, updated_at=?
                WHERE id=? AND status='active'""",
             (
-                new_content, new_type, new_expiry, effective_session_id,
+                new_content, new_type, new_confidence, new_quality,
+                new_expiry, effective_session_id,
                 effective_channel, message_ids_json, effective_persona_id,
                 timestamp, int(state_id),
             ),

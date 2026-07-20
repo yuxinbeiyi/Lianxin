@@ -2318,8 +2318,8 @@ def manage_current_state(
     state_type: str | None = None,
     expires_at: str = "",
     duration_days: int | None = None,
-    confidence: float = 0.9,
-    source_quality: str = "direct_statement",
+    confidence: float | None = None,
+    source_quality: str | None = None,
     resolve_reason: str = "",
 ) -> str:
     """Model-facing adapter for the time-bounded current-state store."""
@@ -2339,7 +2339,8 @@ def manage_current_state(
             state = _state_set(
                 content, state_type or "other",
                 expires_at=expires_at, duration_days=duration_days,
-                confidence=confidence, source_quality=source_quality,
+                confidence=0.9 if confidence is None else confidence,
+                source_quality=source_quality or "direct_statement",
                 **source,
             )
             verb = "已确认原有状态" if state.get("operation") == "duplicate" else "已记录当前状态"
@@ -2350,6 +2351,7 @@ def manage_current_state(
             state = _state_update(
                 state_id, content=content, state_type=state_type,
                 expires_at=expires_at, duration_days=duration_days,
+                confidence=confidence, source_quality=source_quality,
                 **source,
             )
             return f"已更新当前状态 #{state['id']}：{state['content']}（有效至 {state['expires_at']}）"
@@ -5257,8 +5259,8 @@ TOOL_EXECUTORS = {
         inp.get("action", ""),
         state_id=inp.get("state_id"), content=inp.get("content"),
         state_type=inp.get("state_type"), expires_at=inp.get("expires_at", ""),
-        duration_days=inp.get("duration_days"), confidence=inp.get("confidence", 0.9),
-        source_quality=inp.get("source_quality", "direct_statement"),
+        duration_days=inp.get("duration_days"), confidence=inp.get("confidence"),
+        source_quality=inp.get("source_quality"),
         resolve_reason=inp.get("resolve_reason", ""),
     ),
     "open_app":       lambda inp: open_app(inp["name"]),
