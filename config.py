@@ -777,6 +777,9 @@ _MEMORY_DEFAULTS = {
     "tool_result_keep_recent": 4,       # 保持较完整的最近工具结果数量
     "summary_trigger_threshold": 30,    # 摘要触发：超过 N 条才开始压缩（0=始终压缩）
     "enable_conversation_summary": True,  # 是否启用对话摘要压缩
+    "maintenance_enabled": True,       # 是否启用低频后台记忆维护
+    "maintenance_interval_hours": 6,   # 后台维护间隔（小时）
+    "maintenance_conflict_scan_batch": 10,  # 每轮最多扫描的冲突候选事实数
 }
 
 

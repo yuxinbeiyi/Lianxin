@@ -37,7 +37,8 @@ CATEGORIES = {
         "capture_from_camera", "capture_desktop",
     ],
     "🧠 记忆知识": [
-        "save_memory", "update_current_state", "search_memory", "trace_memory_source", "update_memory",
+        "save_memory", "update_current_state", "review_memory_conflict",
+        "search_memory", "trace_memory_source", "explain_memory_quality", "update_memory",
         "delete_memory", "list_memories",
         "search_graph_memory", "discover_connections", "query_connected_entities",
         "delete_graph_entity", "add_graph_edge", "remove_graph_edge",

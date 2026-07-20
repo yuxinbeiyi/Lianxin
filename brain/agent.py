@@ -123,6 +123,7 @@ _RESOURCE_GROUPS = {
     "fetch_webpage_browser": "browser",
     # SQLite 写入（共享数据库连接）
     "save_memory": "db_write",
+    "review_memory_conflict": "db_write",
     "update_current_state": "db_write",
     "update_memory": "db_write",
     "delete_memory": "db_write",
@@ -146,9 +147,13 @@ _resource_init_lock = threading.Lock()
 # 需要线程亲和性的资源组（浏览器 Playwright / 硬件 event loop）
 # 这些组必须在调用线程上执行，不能进入 ThreadPoolExecutor
 _THREAD_AFFINE_GROUPS = {"browser", "hardware"}
-_MEMORY_WRITE_TOOLS = {"save_memory", "update_memory", "update_current_state"}
+_MEMORY_WRITE_TOOLS = {
+    "save_memory", "update_memory", "update_current_state",
+    "review_memory_conflict",
+}
 _OWNER_MEMORY_TOOLS = {
-    "save_memory", "update_current_state", "search_memory", "trace_memory_source", "update_memory",
+    "save_memory", "update_current_state", "review_memory_conflict",
+    "search_memory", "trace_memory_source", "explain_memory_quality", "update_memory",
     "delete_memory", "list_memories", "search_graph_memory",
     "discover_connections", "query_connected_entities",
     "delete_graph_entity", "add_graph_edge", "remove_graph_edge",
@@ -589,6 +594,7 @@ class AgentCore:
                 memories = result.get("memories", [])
 
                 added = 0
+                pending_conflicts: dict[int, list[int]] = {}
                 for mem in memories:
                     if not isinstance(mem, dict):
                         continue
@@ -616,7 +622,89 @@ class AgentCore:
                                 extraction_model=self._model,
                                 occurred_at=occurred_at,
                             )
+                            try:
+                                from brain.memory_conflicts import list_conflict_candidates
+                                for candidate in list_conflict_candidates(
+                                    status="pending", fact_id=fact_id, limit=3
+                                ):
+                                    pending_conflicts[int(candidate["id"])] = source_message_ids
+                            except Exception:
+                                pass
                             added += 1
+                if pending_conflicts:
+                    try:
+                        from brain.memory_conflicts import (
+                            DECISIONS,
+                            get_conflict_candidate,
+                            resolve_conflict_candidate,
+                        )
+                        candidates = [
+                            get_conflict_candidate(candidate_id)
+                            for candidate_id in pending_conflicts
+                        ]
+                        candidates = [candidate for candidate in candidates if candidate]
+                        review_payload = [{
+                            "candidate_id": candidate["id"],
+                            "old_fact": candidate["existing_content"],
+                            "new_fact": candidate["new_content"],
+                            "category": candidate["category"],
+                        } for candidate in candidates]
+                        review_response = litellm.completion(
+                            model=self._model,
+                            messages=[{
+                                "role": "system",
+                                "content": (
+                                    "你是长期记忆语义裁决器。相似度只用于生成候选，不能作为结论。"
+                                    "逐对判断新事实相对于旧事实：duplicate=完全相同语义；"
+                                    "complements=可同时成立且互相补充；contradicts=互不相容但无法确定时间替代；"
+                                    "supersedes=新事实明确在时间上取代旧事实；unrelated=无关。"
+                                    "只有文本包含明确纠正、变化或时间先后时才能用 supersedes。"
+                                    "返回JSON：{\"reviews\":[{\"candidate_id\":整数,"
+                                    "\"decision\":枚举,\"confidence\":0到1,\"rationale\":理由}]}。"
+                                ),
+                            }, {
+                                "role": "user",
+                                "content": json.dumps(review_payload, ensure_ascii=False),
+                            }],
+                            response_format={"type": "json_object"},
+                            temperature=0.0,
+                            api_key=self._api_key,
+                            api_base=self._api_base,
+                            timeout=90,
+                        )
+                        review_raw = review_response.choices[0].message.content or "{}"
+                        reviews = json.loads(review_raw).get("reviews", [])
+                        allowed_ids = set(pending_conflicts)
+                        for review in reviews:
+                            if not isinstance(review, dict):
+                                continue
+                            try:
+                                candidate_id = int(review.get("candidate_id"))
+                            except (TypeError, ValueError):
+                                continue
+                            decision = str(review.get("decision", "")).lower()
+                            if candidate_id not in allowed_ids or decision not in DECISIONS:
+                                continue
+                            try:
+                                resolve_conflict_candidate(
+                                    candidate_id, decision,
+                                    confidence=review.get("confidence", 0.0),
+                                    rationale=review.get("rationale", ""),
+                                    review_model=self._model,
+                                    source_session_id=self._session_id,
+                                    source_channel=self._source_channel,
+                                    source_message_ids=pending_conflicts[candidate_id],
+                                    persona_id=extraction_persona_id,
+                                )
+                            except (TypeError, ValueError) as exc:
+                                logging.getLogger("MemoryConflict").warning(
+                                    "忽略无效或已失效的冲突裁决 candidate=%s: %s",
+                                    candidate_id, exc,
+                                )
+                    except Exception as exc:
+                        logging.getLogger("MemoryConflict").warning(
+                            "自动记忆冲突裁决失败，候选将保留待处理: %s", exc
+                        )
                 classification_ok = True
             except Exception:
                 pass
@@ -1261,7 +1349,7 @@ class AgentCore:
         import time as _perf_time
         def _run_one(item: dict):
             """执行单个工具调用（在 worker 线程内）。"""
-            _set_ctx(self._session_id, self._history_mgr)
+            _set_ctx(self._session_id, self._history_mgr, self._model)
             name, args = item["name"], item["args"]
             if on_tool_call:
                 on_tool_call(name, args)
@@ -1865,6 +1953,8 @@ class AgentCore:
                     "用户说\"记住XXX\"时调用 save_memory 保存。"
                     "用户描述生病、情绪、所在地、短期项目或计划等会变化的信息时，"
                     "调用 update_current_state 保存为带有效期的当前状态，不要混入永久记忆。"
+                    "save_memory 返回冲突候选时，必须继续调用 review_memory_conflict；"
+                    "只能根据语义和时间关系裁决，不得用相似度替代判断。"
                 )
             })
 

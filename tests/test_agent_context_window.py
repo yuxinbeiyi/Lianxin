@@ -1,4 +1,5 @@
 import unittest
+import threading
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -85,6 +86,82 @@ class AgentContextWindowTests(unittest.TestCase):
         self.assertEqual([], ids)
         self.assertEqual(0.5, confidence)
         self.assertEqual("", occurred_at)
+
+    def test_auto_extraction_uses_model_to_review_conflict_candidates(self):
+        agent = AgentCore.__new__(AgentCore)
+        agent._use_local = False
+        agent._owner_scope = True
+        agent._extraction_lock = threading.Lock()
+        agent._extraction_inflight = False
+        agent._last_extraction_idx = 0
+        agent._extract_msg_count = 20
+        agent.history = [
+            {"role": "user", "content": "我已经从上海搬到杭州了，这是新的居住地"},
+            {"role": "assistant", "content": "好的，我知道了"},
+            {"role": "user", "content": "以后按杭州来理解"},
+        ]
+        source_rows = [{
+            "id": 10, "role": "user",
+            "content": "我已经从上海搬到杭州了，这是新的居住地",
+            "timestamp": "2026-07-20 12:00:00",
+        }]
+        agent._history_mgr = SimpleNamespace(
+            get_messages_with_ids=lambda *_args, **_kwargs: source_rows
+        )
+        agent._session_id = 7
+        agent._source_channel = "desktop"
+        agent._model = "test-model"
+        agent._api_key = "key"
+        agent._api_base = "https://example.invalid"
+        agent._graph_enabled = False
+        agent._auto_extract_quintuples = False
+
+        extraction = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+            content='{"memories":[{"content":"用户已搬到杭州居住",'
+                    '"category":"profile","source_message_ids":[10],'
+                    '"confidence":0.96}]}'
+        ))])
+        review = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+            content='{"reviews":[{"candidate_id":88,"decision":"supersedes",'
+                    '"confidence":0.95,"rationale":"用户明确说明已经搬家"}]}'
+        ))])
+
+        class ImmediateThread:
+            def __init__(self, target, **_kwargs):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        candidate = {
+            "id": 88, "existing_content": "用户住在上海",
+            "new_content": "用户已搬到杭州居住", "category": "profile",
+        }
+        with patch(
+            "brain.agent.threading.Thread", ImmediateThread
+        ), patch(
+            "brain.agent._memory_add", return_value=2
+        ), patch(
+            "brain.agent._memory_add_fragment"
+        ), patch(
+            "brain.agent.litellm.completion", side_effect=[extraction, review]
+        ) as completion, patch(
+            "brain.memory_conflicts.list_conflict_candidates",
+            return_value=[{"id": 88}],
+        ), patch(
+            "brain.memory_conflicts.get_conflict_candidate", return_value=candidate
+        ), patch(
+            "brain.memory_conflicts.resolve_conflict_candidate"
+        ) as resolve:
+            agent._trigger_auto_extraction()
+
+        self.assertEqual(2, completion.call_count)
+        resolve.assert_called_once()
+        args, kwargs = resolve.call_args
+        self.assertEqual((88, "supersedes"), args)
+        self.assertEqual([10], kwargs["source_message_ids"])
+        self.assertEqual("test-model", kwargs["review_model"])
+        self.assertFalse(agent._extraction_inflight)
 
     def test_successful_summary_advances_cursor_and_persists_snapshot(self):
         agent = self._agent(turns=5)  # 溢出 3 turn / 6 message

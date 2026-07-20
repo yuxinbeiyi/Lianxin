@@ -140,11 +140,12 @@ def _get_proxies() -> dict | None:
 
 
 
-def set_cross_session_context(session_id: int, history_mgr):
+def set_cross_session_context(session_id: int, history_mgr, model: str = ""):
     """设置当前线程的跨端搜索上下文（供 search_cross_session 工具使用）。"""
     _tool_context.cross_session = {
         "session_id": session_id,
         "history_mgr": history_mgr,
+        "model": str(model or ""),
     }
 
 
@@ -156,10 +157,12 @@ def _current_memory_provenance() -> dict:
         "source_message_ids": [],
         "persona_id": "",
         "occurred_at": "",
+        "review_model": "",
     }
     ctx = getattr(_tool_context, "cross_session", None)
     if ctx is not None:
         provenance["source_session_id"] = ctx.get("session_id")
+        provenance["review_model"] = ctx.get("model", "")
         try:
             session = ctx["history_mgr"].get_session(provenance["source_session_id"])
             provenance["source_channel"] = (session or {}).get("channel", "")
@@ -1327,6 +1330,66 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "explain_memory_quality",
+            "description": (
+                "解释一条长期记忆的质量评分、证据数量、来源可靠性、新鲜度、召回次数"
+                "和当前复核状态。用户质疑莲心为什么保留或召回某条记忆时调用。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "memory_id": {
+                        "type": "integer", "description": "记忆编号"
+                    }
+                },
+                "required": ["memory_id"],
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "review_memory_conflict",
+            "description": (
+                "对长期记忆冲突候选进行语义裁决。代码只提供候选，相似度不能代替语义判断。"
+                "action=list 查看待裁决候选；action=resolve 时判断新记忆相对于旧记忆是："
+                "duplicate（重复）、complements（补充）、contradicts（矛盾但不能确定谁取代谁）、"
+                "supersedes（新事实明确取代旧事实）或 unrelated（无关）。"
+                "只有语义和时间关系明确时才能选择 supersedes。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string", "enum": ["list", "resolve"],
+                        "description": "查看候选或提交语义裁决"
+                    },
+                    "candidate_id": {
+                        "type": "integer", "description": "resolve 时使用的冲突候选编号"
+                    },
+                    "decision": {
+                        "type": "string",
+                        "enum": ["duplicate", "complements", "contradicts", "supersedes", "unrelated"],
+                        "description": "新记忆相对于旧记忆的语义关系"
+                    },
+                    "confidence": {
+                        "type": "number", "minimum": 0, "maximum": 1,
+                        "description": "本次语义裁决的置信度"
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "基于两条事实语义和时间关系的简短理由"
+                    }
+                },
+                "required": ["action"],
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "update_memory",
             "description": (
                 "更新或覆盖长期记忆中已存在的事实。"
@@ -2307,7 +2370,71 @@ def save_memory(fact: str, category: str | None = None) -> str:
             confidence=1.0,
             occurred_at=occurred_at,
         )
-    return f"好的，我记住了（分类：{category}）：{fact}"
+    result = f"好的，我记住了（分类：{category}）：{fact}"
+    if fact_id:
+        try:
+            from brain.memory_conflicts import (
+                format_candidate_list, list_conflict_candidates,
+            )
+            candidates = list_conflict_candidates(
+                status="pending", fact_id=fact_id, limit=3
+            )
+            if candidates:
+                result += (
+                    "\n\n检测到可能相关的旧记忆。相似度不是裁决；"
+                    "请继续调用 review_memory_conflict 做语义判断。\n"
+                    + format_candidate_list(candidates)
+                )
+        except Exception:
+            pass
+    return result
+
+
+def review_memory_conflict(
+    action: str,
+    *,
+    candidate_id: int | None = None,
+    decision: str = "",
+    confidence: float | None = None,
+    rationale: str = "",
+) -> str:
+    """Model-facing adapter for audited semantic fact reconciliation."""
+    from brain.memory_conflicts import (
+        format_candidate_list,
+        list_conflict_candidates,
+        resolve_conflict_candidate,
+    )
+
+    action = str(action or "").strip().lower()
+    if action == "list":
+        candidates = list_conflict_candidates(status="pending")
+        candidates += list_conflict_candidates(status="needs_confirmation")
+        return format_candidate_list(candidates)
+    if action != "resolve":
+        return "action 必须是 list 或 resolve。"
+    if candidate_id is None or not decision or confidence is None or not rationale.strip():
+        return "resolve 必须提供 candidate_id、decision、confidence 和 rationale。"
+    provenance = _current_memory_provenance()
+    try:
+        result = resolve_conflict_candidate(
+            candidate_id, decision, confidence=confidence, rationale=rationale,
+            review_model=provenance["review_model"],
+            source_session_id=provenance["source_session_id"],
+            source_channel=provenance["source_channel"],
+            source_message_ids=provenance["source_message_ids"],
+            persona_id=provenance["persona_id"],
+        )
+    except (TypeError, ValueError) as exc:
+        return f"记忆冲突裁决失败：{exc}"
+    if not result["applied"]:
+        return (
+            f"候选#{candidate_id} 的 {decision} 判断置信度不足，"
+            "已标记为需要用户确认，没有修改任何事实。"
+        )
+    return (
+        f"已完成候选#{candidate_id} 的语义裁决：{decision}。"
+        f"旧记忆#{result['existing_fact_id']}，新记忆#{result['new_fact_id']}。"
+    )
 
 
 def manage_current_state(
@@ -4494,6 +4621,14 @@ def trace_memory_source(memory_id: int) -> str:
     return "\n".join(lines)
 
 
+def explain_memory_quality(memory_id: int) -> str:
+    try:
+        from brain.memory_quality import explain_memory_quality as _explain
+        return _explain(memory_id)
+    except (TypeError, ValueError) as exc:
+        return f"记忆质量解释失败：{exc}"
+
+
 def _update_memory(old_keyword: str, new_fact: str, category: str | None = None) -> str:
     """更新长期记忆中匹配的事实（分类更新）。"""
     from datetime import datetime
@@ -5255,6 +5390,11 @@ TOOL_EXECUTORS = {
     "get_file_info_everything": lambda inp: get_file_info_everything(inp["filepath"]),
     "run_command":    lambda inp: run_command(inp["command"]),
     "save_memory":    lambda inp: save_memory(inp["fact"], inp.get("category")),
+    "review_memory_conflict": lambda inp: review_memory_conflict(
+        inp.get("action", ""), candidate_id=inp.get("candidate_id"),
+        decision=inp.get("decision", ""), confidence=inp.get("confidence"),
+        rationale=inp.get("rationale", ""),
+    ),
     "update_current_state": lambda inp: manage_current_state(
         inp.get("action", ""),
         state_id=inp.get("state_id"), content=inp.get("content"),
@@ -5304,6 +5444,7 @@ TOOL_EXECUTORS = {
     "deactivate_skill": lambda inp: _deactivate_skill(inp["name"]),
     "search_memory":   lambda inp: _search_memory(inp["keyword"], inp.get("category")),
     "trace_memory_source": lambda inp: trace_memory_source(inp["memory_id"]),
+    "explain_memory_quality": lambda inp: explain_memory_quality(inp["memory_id"]),
     "update_memory":   lambda inp: _update_memory(inp["old_keyword"], inp["new_fact"], inp.get("category")),
     "delete_memory":   lambda inp: _delete_memory(inp["keyword"], inp.get("category")),
     "list_memories":   lambda inp: _list_memories(),

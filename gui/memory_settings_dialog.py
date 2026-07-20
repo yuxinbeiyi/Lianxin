@@ -195,6 +195,36 @@ class MemorySettingsDialog(QDialog):
         max_vbox.addWidget(max_desc)
         tab1_layout.addWidget(max_frame)
 
+        # 后台维护
+        maintenance_frame = self._create_frame()
+        maintenance_layout = QVBoxLayout(maintenance_frame)
+        maintenance_layout.setSpacing(8)
+        self._maintenance_enabled_cb = QCheckBox("启用后台记忆维护")
+        self._maintenance_enabled_cb.setFont(
+            QFont("Microsoft YaHei UI", 10, QFont.Bold)
+        )
+        maintenance_layout.addWidget(self._maintenance_enabled_cb)
+        maintenance_row = QHBoxLayout()
+        maintenance_row.addWidget(QLabel("维护间隔"))
+        self._maintenance_interval_spin = QSpinBox()
+        self._maintenance_interval_spin.setRange(1, 168)
+        self._maintenance_interval_spin.setSuffix(" 小时")
+        maintenance_row.addWidget(self._maintenance_interval_spin)
+        maintenance_row.addSpacing(16)
+        maintenance_row.addWidget(QLabel("每轮冲突扫描"))
+        self._maintenance_conflict_batch_spin = QSpinBox()
+        self._maintenance_conflict_batch_spin.setRange(1, 50)
+        self._maintenance_conflict_batch_spin.setSuffix(" 条")
+        maintenance_row.addWidget(self._maintenance_conflict_batch_spin)
+        maintenance_row.addStretch()
+        maintenance_layout.addLayout(maintenance_row)
+        self._maintenance_status_label = QLabel("")
+        self._maintenance_status_label.setStyleSheet(
+            "color: #9298B7; font-size: 12px;"
+        )
+        maintenance_layout.addWidget(self._maintenance_status_label)
+        tab1_layout.addWidget(maintenance_frame)
+
         # 默认保存分类
         cat_frame = self._create_frame()
         cat_vbox = QVBoxLayout(cat_frame)
@@ -507,6 +537,7 @@ class MemorySettingsDialog(QDialog):
         self._all_facts = list_all_facts()
         self._refresh_memory_list()
         self._current_state_panel.refresh()
+        self._refresh_maintenance_status()
         super().showEvent(event)
 
     def _load_from_config(self):
@@ -534,6 +565,16 @@ class MemorySettingsDialog(QDialog):
         self._context_window_spin.setValue(self._mem_cfg.get("context_window_size", 20))
         self._summary_enabled_cb.setChecked(self._mem_cfg.get("enable_conversation_summary", True))
         self._summary_trigger_spin.setValue(self._mem_cfg.get("summary_trigger_threshold", 30))
+        self._maintenance_enabled_cb.setChecked(
+            self._mem_cfg.get("maintenance_enabled", True)
+        )
+        self._maintenance_interval_spin.setValue(
+            self._mem_cfg.get("maintenance_interval_hours", 6)
+        )
+        self._maintenance_conflict_batch_spin.setValue(
+            self._mem_cfg.get("maintenance_conflict_scan_batch", 10)
+        )
+        self._refresh_maintenance_status()
 
     def _on_save(self):
         cfg = {
@@ -545,6 +586,9 @@ class MemorySettingsDialog(QDialog):
             "context_window_size": self._context_window_spin.value(),
             "enable_conversation_summary": self._summary_enabled_cb.isChecked(),
             "summary_trigger_threshold": self._summary_trigger_spin.value(),
+            "maintenance_enabled": self._maintenance_enabled_cb.isChecked(),
+            "maintenance_interval_hours": self._maintenance_interval_spin.value(),
+            "maintenance_conflict_scan_batch": self._maintenance_conflict_batch_spin.value(),
         }
         from config import save_memory_config
         save_memory_config(cfg)
@@ -559,6 +603,23 @@ class MemorySettingsDialog(QDialog):
         save_graph_config(graph_cfg)
 
         self.accept()
+
+    def _refresh_maintenance_status(self):
+        try:
+            from brain.memory_maintenance import get_last_maintenance_run
+            last = get_last_maintenance_run()
+        except Exception:
+            last = None
+        if not last:
+            self._maintenance_status_label.setText("尚未执行后台维护")
+            return
+        status = {
+            "success": "成功", "failed": "失败", "running": "运行中",
+        }.get(last.get("status"), last.get("status", "未知"))
+        finished = str(last.get("finished_at") or last.get("started_at") or "").replace("T", " ")[:19]
+        self._maintenance_status_label.setText(
+            f"最近维护：{finished} · {status} · {float(last.get('duration_ms') or 0):.0f} ms"
+        )
 
     def _refresh_memory_list(self):
         """根据搜索关键词和分类过滤，重建记忆列表。"""
@@ -598,6 +659,8 @@ class MemorySettingsDialog(QDialog):
                 strength = item.get("strength", 1)
                 source = "自动" if item.get("source") == "auto_extracted" else "手动"
                 created = item.get("created_at", "")[:10] if item.get("created_at") else ""
+                quality = float(item.get("quality_score", 0.5) or 0.5)
+                review_status = item.get("review_status", "normal")
 
                 row = QFrame()
                 row.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -630,7 +693,12 @@ class MemorySettingsDialog(QDialog):
                 row_layout.addWidget(content_label, 1)
 
                 # 右侧：元信息
-                meta = f"<span style='color:#CCCCCC;'>强度:{strength} · {source}</span>"
+                meta = (
+                    f"<span style='color:#CCCCCC;'>强度:{strength} · "
+                    f"质量:{quality:.0%} · {source}</span>"
+                )
+                if review_status != "normal":
+                    meta += f"<span style='color:#F0B35A;'> · {review_status}</span>"
                 if created:
                     meta += f"<span style='color:#1ABC9C;'> · {created}</span>"
                 meta_label = QLabel(meta)

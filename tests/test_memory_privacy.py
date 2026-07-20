@@ -180,6 +180,27 @@ class OwnerMemoryBoundaryTests(unittest.TestCase):
         self.assertEqual("tool", messages[0]["role"])
         self.assertIn("privacy-state-1", messages[0]["tool_call_id"])
 
+    def test_non_owner_conflict_review_is_blocked_at_execution_boundary(self):
+        agent = AgentCore.__new__(AgentCore)
+        agent._owner_scope = False
+        agent._request_memory_writes_blocked = False
+        agent._loop_tool_call_history = set()
+        messages = []
+        tool_call = SimpleNamespace(
+            id="privacy-conflict-1",
+            function=SimpleNamespace(
+                name="review_memory_conflict",
+                arguments='{"action":"list"}',
+            ),
+        )
+
+        with patch("brain.tools.execute_tool") as execute_tool:
+            agent._execute_tool_calls_parallel([tool_call], messages)
+
+        execute_tool.assert_not_called()
+        self.assertEqual("tool", messages[0]["role"])
+        self.assertIn("privacy-conflict-1", messages[0]["tool_call_id"])
+
     def test_disabled_core_memory_tools_are_hidden_from_catalog(self):
         catalog = build_tool_catalog(
             set(),

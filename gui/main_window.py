@@ -290,7 +290,8 @@ class MainWindow(QMainWindow):
 
         # ── 统一后台职责调度器（替代 3 个独立 QTimer）─────────
         from utils.duty_scheduler import (
-            DutyScheduler, ProactiveDuty, HeartbeatDuty, SmartReminderDuty, register_duty
+            DutyScheduler, ProactiveDuty, HeartbeatDuty, SmartReminderDuty,
+            MemoryMaintenanceDuty, register_duty,
         )
         self._duty_scheduler = DutyScheduler(self)
         self._duty_scheduler.setup(
@@ -310,6 +311,7 @@ class MainWindow(QMainWindow):
         register_duty(self._duty_scheduler, ProactiveDuty())
         register_duty(self._duty_scheduler, HeartbeatDuty())
         register_duty(self._duty_scheduler, SmartReminderDuty())
+        register_duty(self._duty_scheduler, MemoryMaintenanceDuty())
 
         self._duty_scheduler.proactive_response.connect(self._on_proactive_response)
         self._duty_scheduler.proactive_error.connect(self._on_proactive_error)

@@ -153,6 +153,8 @@ class DutyScheduler(QObject):
     heartbeat_silent = pyqtSignal()                   # nothing to report
 
     reminder_response = pyqtSignal(str)               # reminder text
+    memory_maintenance_completed = pyqtSignal(object) # maintenance result dict
+    memory_maintenance_failed = pyqtSignal(str)
 
     # 摸鱼数据源透明信号
     mooyu_data_sources = pyqtSignal(str, object)      # action_name, list[MooyuDataSource]
@@ -1034,6 +1036,92 @@ class SlackDuty(Duty):
     @_scheduler.setter
     def _scheduler(self, s):
         self.__scheduler = s
+
+
+# ═══════════════════════════════════════════════════════════════
+# MemoryMaintenanceDuty
+# ═══════════════════════════════════════════════════════════════
+
+class MemoryMaintenanceDuty(Duty):
+    """Low-frequency deterministic maintenance; semantic review stays elsewhere."""
+
+    def __init__(self):
+        super().__init__("memory_maintenance", "记忆维护", tick_interval_seconds=300)
+
+    @staticmethod
+    def _config() -> dict:
+        try:
+            from config import get_memory_config
+            return get_memory_config()
+        except Exception:
+            return {
+                "maintenance_enabled": True,
+                "maintenance_interval_hours": 6,
+                "maintenance_conflict_scan_batch": 10,
+            }
+
+    def _check_enabled(self, state: SchedulerState) -> bool:
+        return bool(self._config().get("maintenance_enabled", True))
+
+    def _should_fire(self, state: SchedulerState) -> bool:
+        if state.agent_busy:
+            return False
+        # Avoid competing with a just-started user turn even if agent_busy has
+        # not propagated yet.
+        if state.last_user_message_time and state.now - state.last_user_message_time < 120:
+            return False
+        try:
+            from brain.memory_maintenance import should_run_maintenance
+            interval = self._config().get("maintenance_interval_hours", 6)
+            return should_run_maintenance(interval)
+        except Exception:
+            return False
+
+    def _create_worker(self, state: SchedulerState, **kwargs):
+        from workers.memory_maintenance_worker import MemoryMaintenanceWorker
+        cfg = self._config()
+        return MemoryMaintenanceWorker(
+            trigger=str(kwargs.get("trigger", "scheduled")),
+            conflict_scan_batch=int(
+                kwargs.get(
+                    "conflict_scan_batch",
+                    cfg.get("maintenance_conflict_scan_batch", 10),
+                )
+            ),
+        )
+
+    def _wire_worker(self, worker):
+        worker.completed.connect(self._on_completed)
+        worker.failed.connect(self._on_failed)
+
+    def _on_completed(self, result: dict):
+        self.status.is_running = False
+        status = result.get("status", "success")
+        self.status.last_result = status
+        self.status.last_result_text = (
+            f"质量更新 {result.get('quality', {}).get('updated', 0)} 条，"
+            f"过期状态 {result.get('current_states_expired', 0)} 条"
+        )
+        if status == "success":
+            self.status.success_count += 1
+        self._scheduler.memory_maintenance_completed.emit(result)
+        self._scheduler.duty_completed.emit(self.name, self.status.last_result_text)
+
+    def _on_failed(self, error: str):
+        self.status.is_running = False
+        self.status.last_result = "failed"
+        self.status.last_result_text = str(error)
+        self.status.fail_count += 1
+        self._scheduler.memory_maintenance_failed.emit(str(error))
+        self._scheduler.duty_failed.emit(self.name, str(error))
+
+    @property
+    def _scheduler(self):
+        return self.__scheduler
+
+    @_scheduler.setter
+    def _scheduler(self, scheduler):
+        self.__scheduler = scheduler
 
 
 # ═══════════════════════════════════════════════════════════════

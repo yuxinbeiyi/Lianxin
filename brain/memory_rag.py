@@ -136,6 +136,7 @@ def search_similar(
     top_k: int = 3,
     threshold: float = 0.5,
     category: str = None,
+    track_access: bool = True,
 ) -> list[tuple[float, dict]]:
     """向量语义搜索与 query 最相似的记忆。
 
@@ -165,7 +166,8 @@ def search_similar(
         if category:
             rows = conn.execute(
                 """SELECT id, content, category, source, strength, embedding,
-                          created_at, updated_at, source_channel
+                          created_at, updated_at, source_channel, quality_score,
+                          review_status, access_count
                    FROM memory_facts
                    WHERE embedding IS NOT NULL AND category = ? AND status='active'
                    ORDER BY strength DESC""",
@@ -174,7 +176,8 @@ def search_similar(
         else:
             rows = conn.execute(
                 """SELECT id, content, category, source, strength, embedding,
-                          created_at, updated_at, source_channel
+                          created_at, updated_at, source_channel, quality_score,
+                          review_status, access_count
                    FROM memory_facts
                    WHERE embedding IS NOT NULL AND status='active'
                    ORDER BY strength DESC"""
@@ -210,7 +213,11 @@ def search_similar(
                 except (TypeError, ValueError):
                     pass
                 strength_score = min(max(int(r["strength"] or 1), 1), 5) / 5.0
-                combined = sim * 0.85 + recency * 0.10 + strength_score * 0.05
+                quality_score = min(1.0, max(0.0, float(r["quality_score"] or 0.5)))
+                combined = (
+                    sim * 0.75 + quality_score * 0.10
+                    + recency * 0.10 + strength_score * 0.05
+                )
                 results.append((combined, {
                     "memory_id": r["id"],
                     "content": r["content"],
@@ -221,10 +228,26 @@ def search_similar(
                     "updated_at": timestamp,
                     "source_channel": r["source_channel"],
                     "evidence_count": evidence_counts.get(int(r["id"]), 0),
+                    "quality_score": quality_score,
+                    "review_status": r["review_status"] or "normal",
+                    "access_count": int(r["access_count"] or 0),
                 }))
 
         results.sort(key=lambda x: x[0], reverse=True)
-        return results[:top_k]
+        ranked = results[:top_k]
+        try:
+            from brain.memory_conflicts import get_fact_relations
+            for _score, memory in ranked:
+                memory["fact_relations"] = get_fact_relations(memory["memory_id"])
+        except Exception:
+            pass
+        if track_access and ranked:
+            try:
+                from brain.memory_quality import record_memory_access
+                record_memory_access([memory["memory_id"] for _score, memory in ranked])
+            except Exception:
+                pass
+        return ranked
 
     except Exception as e:
         logger.debug(f"RAG search failed: {e}")
@@ -238,7 +261,10 @@ def find_similar_memory(
 ) -> Optional[tuple[float, dict]]:
     """查找与 content 语义相近的已有记忆（用于去重合并）。
     返回最相似的那条 (相似度, 记忆dict) 或 None。"""
-    results = search_similar(content, top_k=1, threshold=threshold, category=category)
+    results = search_similar(
+        content, top_k=1, threshold=threshold, category=category,
+        track_access=False,
+    )
     return results[0] if results else None
 
 
@@ -254,8 +280,23 @@ def format_rag_context(memories: list[tuple[float, dict]]) -> str:
         lines.append(
             f"· [记忆#{mem.get('memory_id', '?')}] {mem['content']} "
             f"(语义相关:{semantic:.0%}, 更新:{updated}, 来源:{source}, "
-            f"证据:{mem.get('evidence_count', 0)}条)"
+            f"证据:{mem.get('evidence_count', 0)}条, "
+            f"质量:{float(mem.get('quality_score', 0.5)):.0%})"
         )
+        for relation in mem.get("fact_relations", []):
+            if relation.get("relation") != "contradicts":
+                continue
+            memory_id = int(mem.get("memory_id", 0) or 0)
+            if int(relation.get("source_fact_id", 0)) == memory_id:
+                other_id = relation.get("target_fact_id")
+                other_content = relation.get("target_content", "")
+            else:
+                other_id = relation.get("source_fact_id")
+                other_content = relation.get("source_content", "")
+            lines.append(
+                f"  ⚠ 与记忆#{other_id}存在已识别的语义矛盾：{other_content}。"
+                "不得擅自选择其中一条，应保留不确定性或向用户确认。"
+            )
     return "\n".join(lines)
 
 

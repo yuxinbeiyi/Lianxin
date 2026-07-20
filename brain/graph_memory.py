@@ -62,6 +62,11 @@ def _init_tables(conn: sqlite3.Connection):
             category TEXT NOT NULL DEFAULT 'knowledge',
             source TEXT NOT NULL DEFAULT 'user_saved',
             strength INTEGER DEFAULT 1,
+            last_accessed_at TEXT DEFAULT '',
+            access_count INTEGER NOT NULL DEFAULT 0,
+            quality_score REAL NOT NULL DEFAULT 0.5,
+            review_status TEXT NOT NULL DEFAULT 'normal',
+            quality_updated_at TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now', 'localtime')),
             UNIQUE(content, category)
         );
@@ -108,6 +113,11 @@ def _init_tables(conn: sqlite3.Connection):
         "ALTER TABLE memory_facts ADD COLUMN status TEXT DEFAULT 'active'",
         "ALTER TABLE memory_facts ADD COLUMN valid_from TEXT DEFAULT ''",
         "ALTER TABLE memory_facts ADD COLUMN valid_to TEXT DEFAULT ''",
+        "ALTER TABLE memory_facts ADD COLUMN last_accessed_at TEXT DEFAULT ''",
+        "ALTER TABLE memory_facts ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE memory_facts ADD COLUMN quality_score REAL NOT NULL DEFAULT 0.5",
+        "ALTER TABLE memory_facts ADD COLUMN review_status TEXT NOT NULL DEFAULT 'normal'",
+        "ALTER TABLE memory_facts ADD COLUMN quality_updated_at TEXT DEFAULT ''",
         "ALTER TABLE graph_edges ADD COLUMN updated_at TEXT DEFAULT ''",
         "ALTER TABLE graph_edges ADD COLUMN status TEXT DEFAULT 'active'",
         "ALTER TABLE graph_edges ADD COLUMN source_session_id INTEGER",
@@ -126,6 +136,8 @@ def _init_tables(conn: sqlite3.Connection):
            WHERE updated_at IS NULL OR updated_at=''"""
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_facts_status ON memory_facts(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_facts_quality ON memory_facts(status, quality_score)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_facts_review ON memory_facts(review_status)")
     conn.commit()
 
 
@@ -264,7 +276,14 @@ def query_by_entity(keyword: str, entity_type: str = None) -> list[dict]:
             ORDER BY e.strength DESC
             LIMIT 30
         """, (q, q)).fetchall()
-    return [dict(r) for r in rows]
+    result = [dict(r) for r in rows]
+    if result:
+        try:
+            from brain.memory_quality import record_memory_access
+            record_memory_access([item["id"] for item in result])
+        except Exception:
+            pass
+    return result
 
 
 def query_by_relation(relation_keyword: str, head_type: str = None,
@@ -626,7 +645,11 @@ CATEGORY_DESCRIPTIONS = {
 def add_fact(content: str, category: str = "knowledge",
              source: str = "user_saved", source_session_id: int | None = None,
              source_channel: str = "", occurred_at: str = "") -> int:
-    """插入一条分类事实。自动生成 embedding 向量。同分类下内容重复则 strength+1。"""
+    """Insert a fact; only exact matches are strengthened automatically.
+
+    Semantic similarity is never treated as proof of duplication.  Related facts
+    are recorded as conflict candidates for a model to review.
+    """
     content = content.strip()
     if not content:
         return 0
@@ -634,46 +657,10 @@ def add_fact(content: str, category: str = "knowledge",
         category = "knowledge"
 
     conn = _get_conn()
-
-    # ── 语义去重：插入前检查相似记忆，避免重复存储 ──
-    try:
-        from brain.memory_rag import find_similar_memory
-        similar = find_similar_memory(content, category, threshold=0.85)
-        if similar:
-            sim, existing = similar
-            # 保留更完整的内容，强度叠加
-            keep_content = content if len(content) >= len(existing["content"]) else existing["content"]
-            new_embedding = None
-            try:
-                from brain.memory_rag import embed_bytes
-                new_embedding = embed_bytes(keep_content)
-            except Exception:
-                pass
-            conn.execute(
-                """UPDATE memory_facts SET content=?, strength=strength+?,
-                   source='merged', embedding=COALESCE(?, embedding),
-                   embedding_model=CASE WHEN ? IS NOT NULL THEN 'BAAI/bge-small-zh-v1.5' ELSE embedding_model END,
-                   updated_at=datetime('now','localtime'), source_session_id=COALESCE(?, source_session_id),
-                   source_channel=CASE WHEN ?<>'' THEN ? ELSE source_channel END,
-                   occurred_at=CASE WHEN ?<>'' THEN ? ELSE occurred_at END,
-                   status='active'
-                   WHERE content=? AND category=?""",
-                (keep_content, 0 if source == "auto_extracted" else 1,
-                 new_embedding, new_embedding, source_session_id,
-                 source_channel, source_channel, occurred_at, occurred_at,
-                 existing["content"], category)
-            )
-            conn.commit()
-            logging.getLogger("MemoryDedup").info(
-                f"Merged '{content[:30]}' ~ '{existing['content'][:30]}' (sim={sim:.2f})"
-            )
-            row = conn.execute(
-                "SELECT id FROM memory_facts WHERE content=? AND category=?",
-                (keep_content, category)
-            ).fetchone()
-            return row["id"] if row else 0
-    except Exception:
-        pass
+    exact_before = conn.execute(
+        "SELECT id FROM memory_facts WHERE content=? AND category=?",
+        (content, category),
+    ).fetchone()
 
     # ── 无相似记忆 → 正常插入 ──
     emb_bytes = None
@@ -715,7 +702,16 @@ def add_fact(content: str, category: str = "knowledge",
         "SELECT id FROM memory_facts WHERE content=? AND category=?",
         (content, category)
     ).fetchone()
-    return row["id"] if row else 0
+    fact_id = row["id"] if row else 0
+    if fact_id and exact_before is None:
+        try:
+            from brain.memory_conflicts import record_conflict_candidates
+            record_conflict_candidates(fact_id)
+        except Exception as exc:
+            logging.getLogger("MemoryConflict").debug(
+                "Conflict candidate discovery skipped: %s", exc
+            )
+    return fact_id
 
 
 def add_memory_fragment(
@@ -819,7 +815,9 @@ def get_fact_fragments(fact_id: int, *, include_inactive: bool = False,
 def get_fact_by_id(fact_id: int) -> dict | None:
     row = _get_conn().execute(
         """SELECT id, content, category, source, strength, created_at,
-                  updated_at, occurred_at, source_session_id, source_channel, status
+                  updated_at, occurred_at, source_session_id, source_channel,
+                  status, valid_from, valid_to, last_accessed_at, access_count,
+                  quality_score, review_status, quality_updated_at
            FROM memory_facts WHERE id=?""",
         (int(fact_id),),
     ).fetchone()
@@ -836,7 +834,8 @@ def _prune_category(conn: sqlite3.Connection, category: str) -> None:
         max_items = 200
 
     count = conn.execute(
-        "SELECT COUNT(*) FROM memory_facts WHERE category=?", (category,)
+        "SELECT COUNT(*) FROM memory_facts WHERE category=? AND status='active'",
+        (category,)
     ).fetchone()[0]
 
     if count <= max_items:
@@ -844,7 +843,7 @@ def _prune_category(conn: sqlite3.Connection, category: str) -> None:
 
     excess = count - max_items
     pruned_ids = [row["id"] for row in conn.execute(
-        """SELECT id FROM memory_facts WHERE category=?
+        """SELECT id FROM memory_facts WHERE category=? AND status='active'
            ORDER BY strength ASC, created_at ASC LIMIT ?""",
         (category, excess),
     ).fetchall()]
@@ -856,7 +855,7 @@ def _prune_category(conn: sqlite3.Connection, category: str) -> None:
         )
     conn.execute(
         """DELETE FROM memory_facts WHERE id IN (
-               SELECT id FROM memory_facts WHERE category=?
+               SELECT id FROM memory_facts WHERE category=? AND status='active'
                ORDER BY strength ASC, created_at ASC LIMIT ?
            )""",
         (category, excess)
@@ -875,6 +874,7 @@ def search_facts(keyword: str, category: str | None = None) -> list[dict]:
     if category:
         rows = conn.execute(
             """SELECT id, content, category, source, strength, created_at,
+                      quality_score, review_status,
                       (SELECT COUNT(*) FROM memory_fragments mf
                        WHERE mf.fact_id=memory_facts.id AND mf.status='active') AS evidence_count
                FROM memory_facts
@@ -885,6 +885,7 @@ def search_facts(keyword: str, category: str | None = None) -> list[dict]:
     else:
         rows = conn.execute(
             """SELECT id, content, category, source, strength, created_at,
+                      quality_score, review_status,
                       (SELECT COUNT(*) FROM memory_fragments mf
                        WHERE mf.fact_id=memory_facts.id AND mf.status='active') AS evidence_count
                FROM memory_facts
@@ -914,7 +915,10 @@ def update_facts(
 
     conn = _get_conn()
     q = "%" + old_keyword + "%"
-    target_sql = "SELECT id, category FROM memory_facts WHERE content LIKE ?"
+    target_sql = (
+        "SELECT id, category FROM memory_facts "
+        "WHERE content LIKE ? AND status='active'"
+    )
     target_params: list = [q]
     if category:
         target_sql += " AND category=?"
@@ -935,7 +939,7 @@ def update_facts(
                source_session_id=COALESCE(?, source_session_id),
                source_channel=CASE WHEN ?<>'' THEN ? ELSE source_channel END,
                status='active'
-               WHERE content LIKE ? AND category=?""",
+               WHERE content LIKE ? AND category=? AND status='active'""",
             (new_content, new_embedding,
              'BAAI/bge-small-zh-v1.5' if new_embedding else '',
              source_session_id, source_channel, source_channel, q, category)
@@ -947,7 +951,7 @@ def update_facts(
                source_session_id=COALESCE(?, source_session_id),
                source_channel=CASE WHEN ?<>'' THEN ? ELSE source_channel END,
                status='active'
-               WHERE content LIKE ?""",
+               WHERE content LIKE ? AND status='active'""",
             (new_content, new_embedding,
              'BAAI/bge-small-zh-v1.5' if new_embedding else '',
              source_session_id, source_channel, source_channel, q)
@@ -1028,6 +1032,7 @@ def unified_search(keyword: str, category: str | None = None) -> dict:
     if category:
         fact_rows = conn.execute(
             """SELECT id, content, category, source, strength, created_at,
+                      quality_score, review_status,
                       (SELECT COUNT(*) FROM memory_fragments mf
                        WHERE mf.fact_id=memory_facts.id AND mf.status='active') AS evidence_count
                FROM memory_facts
@@ -1038,6 +1043,7 @@ def unified_search(keyword: str, category: str | None = None) -> dict:
     else:
         fact_rows = conn.execute(
             """SELECT id, content, category, source, strength, created_at,
+                      quality_score, review_status,
                       (SELECT COUNT(*) FROM memory_fragments mf
                        WHERE mf.fact_id=memory_facts.id AND mf.status='active') AS evidence_count
                FROM memory_facts
@@ -1057,8 +1063,15 @@ def unified_search(keyword: str, category: str | None = None) -> dict:
         ORDER BY e.strength DESC LIMIT 15
     """, (q, q, q)).fetchall()
 
+    facts = [dict(r) for r in fact_rows]
+    if facts:
+        try:
+            from brain.memory_quality import record_memory_access
+            record_memory_access([item["id"] for item in facts])
+        except Exception:
+            pass
     return {
-        "facts": [dict(r) for r in fact_rows],
+        "facts": facts,
         "graph_edges": [dict(r) for r in edge_rows],
     }
 
@@ -1084,7 +1097,9 @@ def format_unified_search_result(result: dict) -> str:
             strength = f.get("strength", 1)
             lines.append(
                 f"  {i}. [记忆#{f.get('id')}] [{cat}] {f['content']} "
-                f"(强度:{strength}, 证据:{f.get('evidence_count', 0)}条, {src})"
+            f"(强度:{strength}, 证据:{f.get('evidence_count', 0)}条, "
+            f"质量:{float(f.get('quality_score', 0.5)):.0%}, "
+            f"复核:{f.get('review_status', 'normal')}, {src})"
             )
 
     if edges:
@@ -1111,12 +1126,13 @@ def format_unified_search_result(result: dict) -> str:
 
 
 def list_all_facts() -> dict[str, list[dict]]:
-    """返回按分类分组的所有事实。"""
+    """返回按分类分组的有效事实；历史状态由审计接口查询。"""
     conn = _get_conn()
     result: dict[str, list[dict]] = {cat: [] for cat in ALL_MEMORY_CATEGORIES}
     rows = conn.execute(
-        """SELECT id, content, category, source, strength, created_at
-           FROM memory_facts ORDER BY created_at ASC"""
+        """SELECT id, content, category, source, strength, created_at,
+                  quality_score, review_status
+           FROM memory_facts WHERE status='active' ORDER BY created_at ASC"""
     ).fetchall()
     for r in rows:
         d = dict(r)

@@ -17,7 +17,8 @@ from typing import List, Dict, Set, Tuple
 # ── 核心工具（始终加载完整定义）────────────────────────────
 CORE_TOOLS: Set[str] = {
     # 记忆系统（仅保留高频 CRUD，其余按需激活）
-    "save_memory", "update_current_state", "search_graph_memory", "update_memory", "delete_memory",
+    "save_memory", "update_current_state", "review_memory_conflict", "explain_memory_quality",
+    "search_graph_memory", "update_memory", "delete_memory",
     "discover_connections",  # 图谱关系发现
     # 时间
     "get_current_time",
