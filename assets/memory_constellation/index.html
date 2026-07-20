@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>莲心 · 记忆星图系统</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <canvas id="bg"></canvas><canvas id="map"></canvas>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">✦</span><span>莲心 · 记忆星图</span><small id="count"></small></div>
+    <nav id="filters"><button class="pill active" data-filter="all">全部</button></nav>
+    <button id="refresh" class="icon-btn" title="刷新记忆">↻</button>
+    <button id="stardust" class="icon-btn" title="星尘观测日志">✦</button>
+  </header>
+  <div id="breadcrumb">记忆宇宙 · 双星核心</div>
+  <aside id="panel" class="panel hidden"><button id="close" class="panel-close">×</button><div id="panel-content"></div></aside>
+  <aside id="legend" class="legend"><b>观测提示</b><span>移动鼠标：星云视差</span><span>滚轮：缩放</span><span>拖动：漫游</span><span>点击星体：查看记忆</span></aside>
+  <div id="toast"></div>
+  <!-- LIANXIN_DATA -->
+  <script src="app.js"></script>
+</body>
+</html>

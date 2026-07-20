@@ -161,6 +161,7 @@ class MainWindow(QMainWindow):
         self._proactive_dialog = None
         self._network_settings_dialog = None
         self._capability_center_dialog = None
+        self._constellation_system = None
         self._persona_hub = None
         self._settings_dialog = None
         self._emotion_debug_dialog = None
@@ -806,6 +807,7 @@ class MainWindow(QMainWindow):
         self._char_widget.get_memory_button().clicked.connect(self._on_memory_settings)
         self._char_widget.get_network_button().clicked.connect(self._show_network_settings)
         self._char_widget.get_capability_button().clicked.connect(self._show_capability_center)
+        self._char_widget.get_constellation_button().clicked.connect(self._show_constellation_system)
         self._char_widget.get_persona_button().clicked.connect(self._show_persona_hub)
         self._char_widget.get_proactive_button().clicked.connect(self._on_proactive_clicked)
         self._char_widget.get_qq_bridge_button().clicked.connect(self._on_qq_bridge_clicked)
@@ -1776,6 +1778,17 @@ class MainWindow(QMainWindow):
         self._capability_center_dialog.show()
         self._capability_center_dialog.raise_()
         self._capability_center_dialog.activateWindow()
+
+    def _show_constellation_system(self):
+        """Open the Canvas-based Memory Constellations comparison view."""
+        from utils.sound import play_sound
+        from gui.memory_constellation_web import MemoryConstellationWebWindow
+        play_sound("ButtonAll.mp3")
+        if self._constellation_system is None:
+            self._constellation_system = MemoryConstellationWebWindow(self)
+        self._constellation_system.show()
+        self._constellation_system.raise_()
+        self._constellation_system.activateWindow()
 
     def _show_persona_hub(self):
         """打开可窗口化、最大化和全屏的人格枢控。"""
