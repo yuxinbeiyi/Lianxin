@@ -250,6 +250,12 @@ def _show_check_dialog(parent, report: str):
 def main():
     autostart_mode = "--autostart" in sys.argv
 
+    # QWebEngineView is loaded lazily by the Canvas memory constellation.
+    # Qt requires shared OpenGL contexts to be enabled before *any* QApplication
+    # is constructed, otherwise opening the star-map window raises an import
+    # error and terminates the process.
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
+
     # ── 第5条：单实例检测（在创建 QApplication 之前执行）────────
     if not _acquire_single_instance_mutex():
         if not autostart_mode:
