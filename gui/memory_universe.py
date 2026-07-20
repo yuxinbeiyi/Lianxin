@@ -384,7 +384,6 @@ class MemoryUniverseWindow(QMainWindow):
         radius = max(190.0, 58.0 * math.sqrt(len(items)))
         color = _ACCENTS.get(layer, _ACCENTS["entities"])
         event_type = {"entities": "entity", "episodes": "episode", "sagas": "saga"}.get(layer, "")
-        entries = []
         for index, item in enumerate(items):
             angle = index * math.pi * 2 / max(1, len(items))
             x, y = radius * math.cos(angle), radius * math.sin(angle)
@@ -394,35 +393,16 @@ class MemoryUniverseWindow(QMainWindow):
             except (TypeError, ValueError):
                 item_id = 0
             event_kind = self._event_kinds.get((event_type, item_id), "")
-            entries.append((item, x, y, 14 + confidence * 12, event_kind))
-        self._scene.setSceneRect(-radius - 220, -radius - 130, radius * 2 + 440, radius * 2 + 260)
-        self._view.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
-        generation = self._render_generation
-        QTimer.singleShot(
-            0,
-            lambda: self._draw_ring_batch(generation, entries, title_key, color, 0),
-        )
-
-    def _draw_ring_batch(self, generation, entries, title_key, color, cursor):
-        """Add a bounded batch so a large constellation never blocks the UI."""
-        if generation != self._render_generation:
-            return
-        batch_size = 80
-        for item, x, y, radius, event_kind in entries[cursor:cursor + batch_size]:
-            node = _StarNode(item, color, radius, event_kind)
+            node = _StarNode(item, color, 14 + confidence * 12, event_kind)
             node.setPos(x, y)
             node.clicked.connect(self._select_item)
             self._scene.addItem(node)
             label = QGraphicsSimpleTextItem(str(item.get(title_key, "未命名"))[:28])
-            label.setDefaultTextColor(QColor("#E7ECFF"))
+            label.setBrush(QColor("#E7ECFF"))
             label.setPos(x + 18, y - 8)
             self._scene.addItem(label)
-        next_cursor = cursor + batch_size
-        if next_cursor < len(entries):
-            QTimer.singleShot(
-                0,
-                lambda: self._draw_ring_batch(generation, entries, title_key, color, next_cursor),
-            )
+        self._scene.setSceneRect(-radius - 220, -radius - 130, radius * 2 + 440, radius * 2 + 260)
+        self._view.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
 
     def _select_item(self, item):
         self._selected = item
@@ -557,6 +537,10 @@ class MemoryUniverseWindow(QMainWindow):
             self.showFullScreen()
 
     def closeEvent(self, event):
+        # Invalidate queued progressive-render callbacks before Qt destroys
+        # the scene; otherwise a fast test/close can leave a stale batch task.
+        self._render_generation += 1
+        self._scene.clear()
         self._settings.setValue("geometry", self.saveGeometry())
         self._timer.stop()
         super().closeEvent(event)

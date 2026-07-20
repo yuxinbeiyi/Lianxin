@@ -378,6 +378,117 @@ def list_sagas(limit: int = 100) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def migrate_legacy_facts_to_fragments(*, min_quality: float = 0.55, limit: int = 500) -> dict:
+    """Create auditable narrative evidence for older facts.
+
+    Early memory versions stored normalized facts without immutable fragments,
+    so the narrative worker could not see them.  This additive migration keeps
+    the original facts untouched and tags generated fragments explicitly.  No
+    source message IDs are invented; legacy rows retain only their existing
+    session/channel metadata.
+    """
+    from brain.graph_memory import _get_conn, add_memory_fragment
+
+    conn = _get_conn()
+    threshold = min(1.0, max(0.0, float(min_quality)))
+    rows = conn.execute(
+        """SELECT f.id,f.content,f.category,f.quality_score,f.source_session_id,
+                  f.source_channel,f.occurred_at,f.created_at
+           FROM memory_facts f
+           WHERE f.status='active' AND COALESCE(f.quality_score, 0) >= ?
+             AND NOT EXISTS (
+                 SELECT 1 FROM memory_fragments mf
+                 WHERE mf.fact_id=f.id AND mf.status='active'
+             )
+           ORDER BY f.quality_score DESC,f.id ASC LIMIT ?""",
+        (threshold, max(1, min(2000, int(limit)))),
+    ).fetchall()
+    migrated = 0
+    for row in rows:
+        fragment_id = add_memory_fragment(
+            int(row["id"]), row["content"], row["category"],
+            source="legacy_fact_migration",
+            source_session_id=row["source_session_id"],
+            source_channel=row["source_channel"] or "",
+            confidence=max(0.5, min(1.0, float(row["quality_score"] or 0.5))),
+            occurred_at=row["occurred_at"] or row["created_at"] or "",
+            commit=False,
+        )
+        migrated += int(bool(fragment_id))
+    conn.commit()
+    return {
+        "eligible": len(rows),
+        "migrated": migrated,
+        "min_quality": threshold,
+        "source_message_ids_added": 0,
+    }
+
+
+def bootstrap_legacy_narrative(limit: int = 500) -> dict:
+    """Build a conservative first constellation when the narrative model is empty.
+
+    This is deliberately a bootstrap, not a replacement for semantic
+    consolidation: it only groups existing fragments by their stored category
+    and links names that literally occur in the source text.  Every generated
+    summary is marked as pending model refinement.
+    """
+    candidates = collect_narrative_candidates(limit)
+    if not candidates:
+        return {"candidates": 0, "entities": 0, "episodes": 0, "sagas": 0}
+    names = (
+        ("雨心博士", "person", ("雨心", "博士")),
+        ("莲心", "project", ("莲心",)),
+        ("璃弥娜", "person", ("璃弥娜",)),
+        ("润建股份有限公司", "organization", ("润建",)),
+        ("语音聊天", "project", ("语音", "语音聊天")),
+        ("记忆星图", "project", ("记忆星图", "记忆宇宙")),
+    )
+    entity_facts: dict[str, list[int]] = {name: [] for name, _, _ in names}
+    entity_defs = {name: (kind, tokens) for name, kind, tokens in names}
+    groups: dict[str, list[dict]] = {}
+    for item in candidates:
+        category = str(item.get("category") or "knowledge")
+        groups.setdefault(category, []).append(item)
+        content = str(item.get("content") or "")
+        for name, _kind, tokens in names:
+            if any(token in content for token in tokens):
+                entity_facts[name].append(int(item["fact_id"]))
+    entities = []
+    for name, fact_ids in entity_facts.items():
+        if not fact_ids:
+            continue
+        kind, _tokens = entity_defs[name]
+        entities.append({
+            "name": name,
+            "entity_type": kind,
+            "summary": f"从历史事实中明确出现的实体（待叙事模型进一步整理）：{name}",
+            "current_status": "历史迁移引导实体",
+            "confidence": 0.65,
+        })
+    episodes = []
+    for category, items in groups.items():
+        if len(items) < 2:
+            continue
+        fragments = [int(item["id"]) for item in items]
+        excerpts = "；".join(str(item.get("content") or "")[:120] for item in items[:4])
+        episodes.append({
+            "title": f"历史记忆·{category}",
+            "summary": f"由已有{category}事实按类别建立的初始事件簇，待叙事模型进一步整理。{excerpts}",
+            "category": category[:40],
+            "fragment_ids": fragments,
+            "entities": [
+                {"name": name, "entity_type": entity_defs[name][0]}
+                for name, fact_ids in entity_facts.items()
+                if fact_ids and any(int(item["fact_id"]) in fact_ids for item in items)
+            ],
+            "confidence": 0.55,
+        })
+    result = apply_narrative_result({"entities": entities, "episodes": episodes, "sagas": []}, candidates)
+    return {"candidates": len(candidates), "entities": len(entities),
+            "episodes": result.get("episodes_created", 0), "sagas": 0,
+            "bootstrap": True}
+
+
 def get_narrative_context(query: str, limit: int = 4) -> list[dict]:
     """Lightweight lexical narrative lookup used as one hybrid-search channel."""
     terms = []
