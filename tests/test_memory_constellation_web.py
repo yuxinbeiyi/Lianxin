@@ -11,6 +11,9 @@ class MemoryConstellationWebTests(unittest.TestCase):
         self.assertIn("<!-- LIANXIN_DATA -->", html)
         self.assertIn("requestAnimationFrame", script)
         self.assertIn("parallax", script)
+        self.assertIn("人物星系", script)
+        self.assertIn("星尘观测日志", html)
+        self.assertIn("qrc:///qtwebchannel/qwebchannel.js", html)
         self.assertTrue((root / "styles.css").exists())
         json.dumps({"entities": []}, ensure_ascii=False)
 
