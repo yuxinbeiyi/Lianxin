@@ -63,7 +63,7 @@ class JiwenStatusWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(288)
+        self.setMinimumHeight(332)
         self.setStyleSheet("background:rgba(22,27,46,235); border:1px solid #3D4668; border-radius:14px;")
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 9, 12, 9)
@@ -82,7 +82,12 @@ class JiwenStatusWidget(QWidget):
         self._bars = {}
         for label, key, color in (("连接需求", "connection", "#F3C878"), ("骄傲/防御", "guardedness", "#A992FF"), ("愉悦度", "valence", "#72D7E8"), ("唤醒度", "arousal", "#F49BBE"), ("沉浸度", "immersion", "#86D6A6")):
             self._bars[key] = _AxisBar(label, key, color, self)
+            self._bars[key].setToolTip({"connection": "越高表示越想联系用户", "guardedness": "越高表示越戒备，回复会更谨慎", "valence": "正值偏愉快，负值偏低落", "arousal": "正值更兴奋/焦躁，负值更平静", "immersion": "当前活动或任务的投入程度"}[key])
             root.addWidget(self._bars[key])
+        explain = QLabel("连接=想联系 · 防御=戒备 · 愉悦=好坏 · 唤醒=兴奋度 · 沉浸=投入度")
+        explain.setWordWrap(True)
+        explain.setStyleSheet("color:#74809D; background:transparent; font-size:8pt;")
+        root.addWidget(explain)
         self._motive = QLabel("动机：平静 · 等待新的交流")
         self._motive.setStyleSheet("color:#929DB8; background:transparent;")
         self._motive.setFont(QFont("Microsoft YaHei UI", 8))
@@ -97,6 +102,13 @@ class JiwenStatusWidget(QWidget):
             button.setStyleSheet("QPushButton { color:#B8C1D8; background:#252B45; border:1px solid #3D4668; border-radius:6px; font-size:8pt; } QPushButton:hover { color:#FFFFFF; border-color:#8F9BFF; background:#30385B; }")
             button.clicked.connect(lambda checked=False, name=scenario: self.simulate(name))
             controls.addWidget(button)
+        restore = QPushButton("撤销模拟", self)
+        restore.setToolTip("恢复本轮模拟开始前的情绪状态")
+        restore.setFixedHeight(23)
+        restore.setCursor(Qt.PointingHandCursor)
+        restore.setStyleSheet("QPushButton { color:#E8B6B6; background:#352A3B; border:1px solid #704E67; border-radius:6px; font-size:8pt; } QPushButton:hover { color:#FFFFFF; border-color:#E79AB4; }")
+        restore.clicked.connect(self.restore_simulation)
+        controls.addWidget(restore)
         root.addLayout(controls)
         self._event_log = QPlainTextEdit(self)
         self._event_log.setReadOnly(True)
@@ -118,7 +130,8 @@ class JiwenStatusWidget(QWidget):
                 bar.set_value((info.get("axes") or {}).get(key, 0.0))
             self._mood.setText(str(info.get("middle_layer") or "中性"))
             motive = manager.get_proactive_motive() or {}
-            self._motive.setText(f"动机：{motive.get('motive') or motive.get('action') or '平静 · 等待新的交流'}")
+            reason = motive.get("reason") or "等待新的交流"
+            self._motive.setText(f"动机：{reason}")
             lines = []
             for event in (info.get("recent_events") or [])[:4]:
                 detail = event.get("detail") or event.get("type") or "状态变化"
@@ -136,6 +149,15 @@ class JiwenStatusWidget(QWidget):
                 self.refresh()
         except Exception:
             self._mood.setText("模拟失败")
+
+    def restore_simulation(self):
+        try:
+            from brain.emotional import get_manager
+            result = get_manager().restore_simulation()
+            if result.get("ok"):
+                self.refresh()
+        except Exception:
+            self._mood.setText("恢复失败")
 
     def closeEvent(self, event):
         self._timer.stop()

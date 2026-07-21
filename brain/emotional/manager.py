@@ -62,6 +62,7 @@ class EmotionManager:
             else self._config.get("semantic_analysis", "auto")
         ).lower()
         self._states: dict[tuple[str, str], EmotionalStateV3] = {}
+        self._simulation_baselines: dict[tuple[str, str], dict] = {}
         self._active_key = (DEFAULT_PERSONA_ID, DEFAULT_SUBJECT_ID)
         self._store.migrate_v2_json(
             legacy_state_path or LEGACY_STATE_FILE,
@@ -510,6 +511,8 @@ class EmotionManager:
         if delta is None:
             return {"ok": False, "reason": "unknown_scenario"}
         state = self._get_state(*self._active_key)
+        key = self._active_key
+        self._simulation_baselines.setdefault(key, state.to_dict())
         if scenario == "waiting":
             state.last_update -= 30 * 60
             self._dynamics.advance(state, bias=self._get_saga_bias(state.persona_id))
@@ -519,6 +522,22 @@ class EmotionManager:
             state, delta, source_channel="ui_simulation", idempotency_key=""
         )
         return {"ok": True, "scenario": scenario, "state": state.to_dict()}
+
+    @_synchronized
+    def restore_simulation(self) -> dict:
+        """Restore the state captured before the first UI simulation."""
+        key = self._active_key
+        baseline = self._simulation_baselines.pop(key, None)
+        if not baseline:
+            return {"ok": False, "reason": "no_simulation_baseline"}
+        state = EmotionalStateV3.from_mapping(baseline)
+        self._states[key] = state
+        delta = AffectDelta(
+            event_type="simulation_restore", confidence=1.0, significance=0.2,
+            summary="已撤销本轮模拟，恢复模拟前状态",
+        )
+        self._store.save_state_with_event(state, delta, source_channel="ui_simulation")
+        return {"ok": True, "state": state.to_dict()}
 
     @_synchronized
     def configure_dynamics(self, **values) -> None:
