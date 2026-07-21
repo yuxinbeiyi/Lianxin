@@ -61,6 +61,7 @@ button { color: inherit; }
 .bottom-dock { position: fixed; z-index: 6; left: 92px; right: 364px; bottom: 22px; padding: 13px 17px 11px; border: 1px solid var(--line); border-radius: 14px; background: rgba(7,13,26,.96); }
 .timeline-head, .timeline-scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; }.timeline-head span:first-child { color: var(--text); font-size: 12px; }
 #timeline { width: 100%; accent-color: var(--cyan); margin: 9px 0 2px; }
-.hint { position: fixed; z-index: 4; bottom: 29px; left: 50%; transform: translateX(-50%); color: rgba(197,210,233,.58); font-size: 11px; pointer-events: none; }
+.hint { position: fixed; z-index: 4; bottom: 29px; left: 50%; transform: translateX(-50%); padding: 4px 9px; border: 1px solid rgba(145,170,211,.12); border-radius: 6px; background: rgba(5,8,18,.94); color: rgba(197,210,233,.78); font-size: 11px; pointer-events: none; isolation: isolate; }
+.topbar, .left-rail, .status-strip, .inspector, .bottom-dock, .hint { isolation: isolate; }
 .toast { position: fixed; z-index: 10; left: 50%; top: 88px; transform: translateX(-50%); padding: 8px 13px; border: 1px solid var(--line); border-radius: 8px; background: rgba(11,22,38,.92); color: var(--cyan); font-size: 11px; opacity: 0; transition: opacity .2s; }.toast.show { opacity: 1; }
 @media (max-width: 900px) { .inspector { width: 270px; right: 12px; }.bottom-dock { right: 300px; }.scope { display: none; } }
