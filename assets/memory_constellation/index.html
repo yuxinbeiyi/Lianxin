@@ -8,13 +8,25 @@
 </head>
 <body>
   <canvas id="bg"></canvas><canvas id="map"></canvas>
+  <canvas id="mini-map" width="180" height="110" title="星图小地图"></canvas>
   <header class="topbar">
     <div class="brand"><span class="brand-mark">✧</span><span>MEMORY UNIVERSE · 记忆宇宙</span><small id="count"></small></div>
     <nav id="filters"><button class="pill active" data-filter="all">全部</button></nav>
+    <input id="memory-search" class="search-box" type="search" placeholder="搜索记忆、人物、地点…">
+    <button id="health-toggle" class="icon-btn" title="记忆健康">♥</button>
+    <button id="replay-toggle" class="icon-btn" title="时间回放">▶</button>
     <button id="refresh" class="icon-btn" title="刷新记忆快照">↻</button>
     <button id="stardust" class="icon-btn" title="星尘观测日志">✦</button>
     <button id="model-toggle" class="icon-btn" title="认知模型状态">◉</button>
+    <button id="details-toggle" class="icon-btn" title="星系显示控制">✦</button>
+    <button id="settings-toggle" class="icon-btn" title="星图设置">⚙</button>
+    <button id="fullscreen-toggle" class="icon-btn" title="全屏">⛶</button>
+    <button id="labels-toggle" class="icon-btn" title="隐藏/显示星体文字">Aa</button>
   </header>
+  <aside id="galaxy-controls" class="floating-panel galaxy-controls collapsed"><button id="galaxy-controls-close" class="panel-close">×</button><h3>星系显示</h3><div id="galaxy-dots"></div><label class="setting-check"><input id="event-details-check" type="checkbox" checked> 显示事件详细内容</label></aside>
+  <aside id="settings-panel" class="floating-panel settings-panel collapsed"><button id="settings-close" class="panel-close">×</button><h3>星图设置</h3><label>字体大小 <input id="font-size-range" type="range" min="10" max="20" value="12"></label><label class="setting-check"><input id="bridges-check" type="checkbox" checked> 显示星座桥线</label><label class="setting-check"><input id="motion-check" type="checkbox" checked> 启用星体动画</label><label class="setting-check"><input id="parallax-check" type="checkbox" checked> 启用鼠标视差浮动</label><div class="settings-actions"><button id="save-view">保存视图</button><button id="load-view">恢复视图</button><button id="reset-view">重置视图</button></div></aside>
+  <aside id="health-panel" class="floating-panel health-panel collapsed"><button id="health-close" class="panel-close">×</button><div id="health-body"></div></aside>
+  <aside id="timeline-panel" class="timeline-panel collapsed"><label>从 <input id="time-from" type="date"></label><label>到 <input id="time-to" type="date"></label><button id="time-clear">清除时间筛选</button></aside>
   <div id="breadcrumb">记忆宇宙 · 双星核心</div>
   <button id="back" class="back-btn" style="display:none">← 返回上层</button>
   <aside id="panel" class="panel hidden"><button id="close" class="panel-close">×</button><div id="panel-content"></div></aside>

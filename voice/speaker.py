@@ -376,8 +376,25 @@ class VoiceSpeaker:
             return None
 
     async def _async_synthesize(self, text: str, path: str):
-        communicate = edge_tts.Communicate(text, self._voice)
-        await communicate.save(path)
+        # Edge-TTS uses a short-lived websocket. 503/empty responses are often
+        # transient service throttling, so retry with a fresh connection before
+        # surfacing the failure to the caller.
+        last_error = None
+        for attempt in range(3):
+            try:
+                self._remove_temp_file(path)
+                communicate = edge_tts.Communicate(text, self._voice)
+                await communicate.save(path)
+                if not os.path.exists(path) or os.path.getsize(path) < 256:
+                    raise RuntimeError("Edge-TTS returned an empty audio file")
+                return
+            except Exception as exc:
+                last_error = exc
+                if attempt < 2:
+                    delay = 0.8 * (attempt + 1)
+                    logger.warning("Edge-TTS 暂时失败（第 %s/3 次）：%s；%.1fs 后重试", attempt + 1, exc, delay)
+                    await asyncio.sleep(delay)
+        raise last_error
 
     def _play(self, path: str):
         try:

@@ -12,7 +12,7 @@ from pathlib import Path
 from PyQt5.QtCore import QUrl, Qt, QObject, pyqtSlot
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QDialog, QMainWindow, QVBoxLayout, QTextBrowser, QPushButton, QWidget
-from PyQt5.QtWebEngineWidgets import QWebEngineView
+from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
 from PyQt5.QtWebChannel import QWebChannel
 
 
@@ -24,9 +24,21 @@ class _ConstellationBridge(QObject):
     existing database layer, keeping the visualizer safe and auditable.
     """
 
-    def __init__(self, snapshot_provider=None, parent=None):
+    def __init__(self, snapshot_provider=None, window=None, parent=None):
         super().__init__(parent)
         self._snapshot_provider = snapshot_provider
+        self._window = window
+
+    @pyqtSlot(result=bool)
+    def toggleFullscreen(self):
+        """Toggle the native Qt window; WebEngine fullscreen is permission-bound."""
+        if self._window is None:
+            return False
+        if self._window.isFullScreen():
+            self._window.showNormal()
+            return False
+        self._window.showFullScreen()
+        return True
 
     @pyqtSlot(result=str)
     def refreshSnapshot(self):
@@ -69,6 +81,24 @@ class _ConstellationBridge(QObject):
         layout.addWidget(close)
         dialog.exec_()
 
+    @pyqtSlot(str, result=bool)
+    def queueMemoryReview(self, raw_id: str):
+        """Mark a fact for human review without deleting or rewriting it."""
+        try:
+            fact_id = int(raw_id)
+            if fact_id <= 0:
+                return False
+            from brain.graph_memory import _get_conn
+            conn = _get_conn()
+            cur = conn.execute(
+                "UPDATE memory_facts SET review_status='needs_confirmation', quality_updated_at=datetime('now','localtime') WHERE id=? AND status='active'",
+                (fact_id,),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        except Exception:
+            return False
+
 
 class MemoryConstellationWebWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -81,7 +111,14 @@ class MemoryConstellationWebWindow(QMainWindow):
         self._view = QWebEngineView(self)
         self._view.setAttribute(Qt.WA_OpaquePaintEvent, True)
         self._view.page().setBackgroundColor(QColor("#020410"))
-        self._bridge = _ConstellationBridge(self._snapshot)
+        # Keep accelerated rendering enabled for smooth animation. The earlier
+        # flicker was caused by forced transparent compositing layers, which
+        # have been removed from the page CSS; disabling the GPU made the map
+        # visibly sluggish on larger memory graphs.
+        settings = self._view.settings()
+        settings.setAttribute(QWebEngineSettings.Accelerated2dCanvasEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebGLEnabled, True)
+        self._bridge = _ConstellationBridge(self._snapshot, self)
         channel = QWebChannel(self._view)
         channel.registerObject("lianxinBridge", self._bridge)
         self._view.page().setWebChannel(channel)
@@ -163,12 +200,24 @@ class MemoryConstellationWebWindow(QMainWindow):
             maintenance = get_last_maintenance_run()
         except Exception:
             maintenance = None
+        try:
+            from brain.memory_quality import get_memory_statistics
+            health = get_memory_statistics()
+        except Exception:
+            health = {}
+        try:
+            from brain.memory_diagnostics import get_memory_diagnostic_stats
+            diagnostics = get_memory_diagnostic_stats()
+        except Exception:
+            diagnostics = {}
         payload = {
             "entities": entities, "episodes": episodes, "sagas": sagas, "facts": facts,
             "events": list_narrative_events(80), "source_ids": source_ids,
             "core": {"user": get_user_name() or "主人", "assistant": assistant_name},
             "model": get_last_narrative_run() or {"status": "未运行"},
             "maintenance": maintenance or {"status": "未运行", "stats": {}},
+            "health": health,
+            "diagnostics": diagnostics,
         }
         return payload
 

@@ -28,7 +28,7 @@ class MemoryDiagnosticsProactiveTests(unittest.TestCase):
         from brain.current_state import set_current_state
         from brain.memory_proactive import collect_candidates, apply_evaluations, get_due_cue, mark_cue_delivered
         set_current_state("用户明天下午参加面试","plan",expires_at=self.now+timedelta(days=2),now=self.now)
-        candidate=collect_candidates()[0]
+        candidate=collect_candidates(now=self.now)[0]
         apply_evaluations([{"fingerprint":candidate["fingerprint"],"decision":{"action":"check_in","due_at":self.now.isoformat(),"window_end":(self.now+timedelta(hours=4)).isoformat(),"confidence":.92,"rationale":"适合关心结果","message_instruction":"自然询问面试感受"}}], now=self.now)
         cue=get_due_cue(self.now); self.assertIsNotNone(cue); self.assertEqual("check_in",cue["action"])
         mark_cue_delivered(cue["id"],"面试怎么样？")
@@ -38,7 +38,7 @@ class MemoryDiagnosticsProactiveTests(unittest.TestCase):
         from brain.current_state import set_current_state
         from brain.memory_proactive import collect_candidates, apply_evaluations, get_active_suppression
         set_current_state("用户正在发烧休息","health",expires_at=self.now+timedelta(days=1),now=self.now)
-        candidate=collect_candidates()[0]
+        candidate=collect_candidates(now=self.now)[0]
         apply_evaluations([{"fingerprint":candidate["fingerprint"],"decision":{"action":"suppress","due_at":self.now.isoformat(),"window_end":(self.now+timedelta(hours=8)).isoformat(),"confidence":.9}}], now=self.now)
         self.assertIsNotNone(get_active_suppression(self.now))
 

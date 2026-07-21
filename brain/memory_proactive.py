@@ -31,12 +31,12 @@ def _ensure():
 def _fingerprint(kind, source_id, content):
     return hashlib.sha256(f"{kind}:{source_id}:{content}".encode("utf-8")).hexdigest()
 
-def collect_candidates(limit=8):
+def collect_candidates(limit=8, *, now=None):
     """Expose explicit current states to the model; no semantic inference here."""
     # Ensure lifecycle expiry has run before candidates are copied.
     from brain.current_state import list_current_states
-    list_current_states()
-    conn = _ensure(); now = _iso(_now())
+    list_current_states(now=now)
+    conn = _ensure(); now = _iso(now or _now())
     rows = conn.execute("""SELECT id,state_type,content,confidence,expires_at,source_channel
       FROM memory_current_states WHERE status='active' AND expires_at>? ORDER BY expires_at LIMIT ?""", (now, max(1, int(limit)))).fetchall()
     out=[]

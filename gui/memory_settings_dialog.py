@@ -76,10 +76,6 @@ class MemorySettingsDialog(QDialog):
         title_row = QHBoxLayout()
         title_row.addWidget(title)
         title_row.addStretch()
-        universe_btn = QPushButton("✦ 进入记忆宇宙")
-        universe_btn.setStyleSheet("QPushButton { background:#202B5B; color:#C9D7FF; border:1px solid #5368B5; border-radius:7px; padding:6px 12px; } QPushButton:hover { background:#30427F; }")
-        universe_btn.clicked.connect(self._open_memory_universe)
-        title_row.addWidget(universe_btn)
         layout.addLayout(title_row)
 
         # 分割线
@@ -406,11 +402,6 @@ class MemorySettingsDialog(QDialog):
         self._current_state_panel = CurrentStatePanel()
         tabs.addTab(self._current_state_panel, "◉ 当前状态")
 
-        # ── 选项卡 5：记忆星图 ───────────────────────────────
-        from gui.memory_constellation_panel import MemoryConstellationPanel
-        self._constellation_panel = MemoryConstellationPanel()
-        tabs.addTab(self._constellation_panel, "✦ 记忆星图")
-
         # ── 选项卡 6：记忆诊断 ───────────────────────────────
         from gui.memory_debug_panel import MemoryDebugPanel
         self._debug_panel = MemoryDebugPanel()
@@ -576,17 +567,8 @@ class MemorySettingsDialog(QDialog):
         self._all_facts = list_all_facts()
         self._refresh_memory_list()
         self._current_state_panel.refresh()
-        self._constellation_panel.refresh()
         self._refresh_maintenance_status()
         super().showEvent(event)
-
-    def _open_memory_universe(self):
-        from gui.memory_universe import MemoryUniverseWindow
-        if not getattr(self, "_memory_universe", None):
-            self._memory_universe = MemoryUniverseWindow(self)
-        self._memory_universe.show()
-        self._memory_universe.raise_()
-        self._memory_universe.activateWindow()
 
     def _load_from_config(self):
         from config import get_memory_config, get_graph_config
