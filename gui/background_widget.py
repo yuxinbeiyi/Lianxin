@@ -5,7 +5,7 @@ import random
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QRectF
-from PyQt5.QtGui import QColor, QPainter, QPainterPath, QPixmap
+from PyQt5.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPixmap
 from PyQt5.QtWidgets import QWidget
 
 
@@ -78,11 +78,10 @@ class BackgroundWidget(QWidget):
         clip = QPainterPath()
         clip.addRoundedRect(QRectF(self.rect()), 12, 12)
         painter.setClipPath(clip)
-        # With a valid wallpaper the central surface itself must remain
-        # transparent; otherwise this fallback fill hides the image before
-        # child widgets (including the chat mask) can be composited.
+        # Always keep an opaque dark base. The wallpaper is an overlay on top
+        # of it, so lowering its opacity never reveals the user's desktop.
+        painter.fillRect(self.rect(), QColor("#10162A"))
         if self._pixmap.isNull() or self._opacity <= 0:
-            painter.fillRect(self.rect(), QColor("#1A1A2E"))
             return
         target = self.rect()
         if self._fit_mode == "stretch":
@@ -95,3 +94,44 @@ class BackgroundWidget(QWidget):
         x = target.x() + (target.width() - scaled.width()) // 2
         y = target.y() + (target.height() - scaled.height()) // 2
         painter.drawPixmap(x, y, scaled)
+
+
+class FrostedPanel(QWidget):
+    """A deterministic frosted-glass surface painted behind child widgets."""
+
+    def __init__(self, parent=None, opacity: float = 0.75):
+        super().__init__(parent)
+        self._opacity = max(0.0, min(1.0, float(opacity)))
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAutoFillBackground(False)
+
+    def set_opacity(self, opacity: float):
+        self._opacity = max(0.0, min(1.0, float(opacity)))
+        self.update()
+
+    @property
+    def opacity(self) -> float:
+        return self._opacity
+
+    def paintEvent(self, event):  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        rect = QRectF(self.rect())
+        path = QPainterPath()
+        path.addRoundedRect(rect, 10, 10)
+        painter.setClipPath(path)
+
+        alpha = round(self._opacity * 255)
+        gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
+        gradient.setColorAt(0, QColor(24, 32, 55, alpha))
+        gradient.setColorAt(1, QColor(13, 20, 38, alpha))
+        painter.fillRect(rect, gradient)
+
+        # A very subtle fixed grain/line pattern gives the surface a frosted
+        # texture without introducing animation or repaint flicker.
+        if self._opacity > 0.03:
+            painter.setPen(QColor(180, 205, 255, min(18, round(alpha * 0.08))))
+            for x in range(0, self.width(), 8):
+                painter.drawLine(x, 0, x + self.height(), self.height())
+        painter.setPen(QColor(150, 180, 255, min(55, round(alpha * 0.22))))
+        painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10)

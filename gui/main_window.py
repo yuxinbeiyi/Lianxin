@@ -21,7 +21,7 @@ from utils.emotion_manager import parse_emotion_tag as _strip_emotion_tag
 from voice.listener import VoiceListener
 from voice.speaker  import VoiceSpeaker
 from gui.character_widget import CharacterWidget
-from gui.background_widget import BackgroundWidget
+from gui.background_widget import BackgroundWidget, FrostedPanel
 from gui.chat_widget       import ChatWidget
 from gui.input_panel       import InputPanel
 from gui.history_dialog    import HistoryDialog
@@ -820,17 +820,10 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self._char_widget)
 
         # 聊天区（右侧）：进度条 + 滚动消息区
-        right_widget = QWidget()
+        right_widget = FrostedPanel(opacity=self._global_settings.chat_background_opacity)
         self._chat_background_widget = right_widget
         right_widget.setAttribute(Qt.WA_TranslucentBackground, True)
         right_widget.setAutoFillBackground(False)
-        chat_palette = QPalette(right_widget.palette())
-        chat_palette.setColor(QPalette.Window, QColor(0, 0, 0, 0))
-        chat_palette.setColor(QPalette.Base, QColor(0, 0, 0, 0))
-        right_widget.setPalette(chat_palette)
-        # Keep the chat readable while allowing the selected wallpaper to show
-        # through as a subtle texture.
-        self._set_chat_background_opacity(self._global_settings.chat_background_opacity)
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
@@ -927,8 +920,8 @@ class MainWindow(QMainWindow):
         self._chat_background_opacity = max(0.0, min(1.0, float(opacity)))
         widget = getattr(self, "_chat_background_widget", None)
         if widget is not None:
-            alpha = round(self._chat_background_opacity * 255)
-            widget.setStyleSheet(f"background-color: rgba(30, 40, 51, {alpha});")
+            if hasattr(widget, "set_opacity"):
+                widget.set_opacity(self._chat_background_opacity)
 
     def _on_chat_background_opacity_changed(self, opacity: float):
         self._set_chat_background_opacity(opacity)
