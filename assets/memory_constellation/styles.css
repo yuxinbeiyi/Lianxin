@@ -1,4 +1,5 @@
 :root{--ink:#e8edff;--muted:#8d9ac8;--line:rgba(150,180,255,.18);--glass:rgba(8,14,38,.84)}
+#mini-map,.topbar,.panel,.floating-panel,.bottom-dock,.cognition-card,.journal-card,.timeline-panel,.health-panel,.settings-panel{isolation:isolate;}
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#020410;color:var(--ink);font:13px "Microsoft YaHei UI","Segoe UI",sans-serif;isolation:isolate}
 canvas{position:absolute;inset:0;width:100%;height:100%}#bg{z-index:0;pointer-events:none}#map{z-index:1;cursor:grab}#map.dragging{cursor:grabbing}
 #mini-map{z-index:4;inset:auto;right:28px;bottom:82px;width:180px;height:110px;border:1px solid var(--line);border-radius:10px;background:rgba(5,10,28,.82);cursor:pointer}
