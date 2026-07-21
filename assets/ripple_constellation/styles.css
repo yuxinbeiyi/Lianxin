@@ -26,21 +26,21 @@ button { color: inherit; }
 .top-actions { display: flex; gap: 8px; }
 .icon-btn, .close-btn { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 9px; background: rgba(18,29,50,.66); cursor: pointer; }
 .icon-btn:hover, .icon-btn.active { color: var(--cyan); border-color: rgba(114,215,232,.65); background: rgba(35,70,86,.55); }
-.left-rail { position: fixed; z-index: 6; top: 96px; left: 18px; width: 52px; padding: 10px 7px; border: 1px solid var(--line); border-radius: 15px; background: rgba(7,13,26,.76); backdrop-filter: blur(18px); text-align: center; }
+.left-rail { position: fixed; z-index: 6; top: 96px; left: 18px; width: 52px; padding: 10px 7px; border: 1px solid var(--line); border-radius: 15px; background: rgba(7,13,26,.96); text-align: center; }
 .rail-title { color: var(--muted); font-size: 9px; writing-mode: vertical-rl; margin: 0 auto 12px; }
 .rail-btn { width: 36px; height: 48px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; cursor: pointer; color: var(--muted); }
 .rail-btn span { font-size: 17px; }
 .rail-btn small { font-size: 9px; }
 .rail-btn:hover, .rail-btn.active { color: var(--cyan); background: rgba(74,145,164,.18); }
 .rail-divider { height: 1px; background: var(--line); margin: 10px 2px; }
-.status-strip { position: fixed; z-index: 5; top: 92px; left: 92px; display: flex; gap: 16px; padding: 9px 13px; border: 1px solid var(--line); border-radius: 10px; background: rgba(7,13,26,.66); backdrop-filter: blur(14px); font-size: 11px; }
+.status-strip { position: fixed; z-index: 5; top: 92px; left: 92px; display: flex; gap: 16px; padding: 9px 13px; border: 1px solid var(--line); border-radius: 10px; background: rgba(7,13,26,.94); font-size: 11px; }
 .status-item { display: flex; align-items: center; gap: 7px; color: var(--muted); }
 .status-item strong { color: var(--text); font-weight: 500; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--violet); box-shadow: 0 0 12px currentColor; }
 .status-dot.live { color: var(--cyan); background: var(--cyan); }
 .status-dot.warn { color: var(--gold); background: var(--gold); }
 .status-dot.danger { color: var(--danger); background: var(--danger); }
-.inspector { position: fixed; z-index: 6; right: 22px; top: 96px; width: 320px; max-height: calc(100vh - 218px); overflow: auto; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); backdrop-filter: blur(20px); box-shadow: 0 18px 60px rgba(0,0,0,.32); }
+.inspector { position: fixed; z-index: 6; right: 22px; top: 96px; width: 320px; max-height: calc(100vh - 218px); overflow: auto; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: rgba(9,16,31,.97); box-shadow: 0 18px 60px rgba(0,0,0,.32); }
 .inspector.hidden { display: none; }
 .inspector-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--line); padding-bottom: 13px; margin-bottom: 14px; }
 .inspector-header small { color: var(--cyan); letter-spacing: .12em; font-size: 9px; }
@@ -58,7 +58,7 @@ button { color: inherit; }
 .event-list b { color: var(--text); font-weight: 500; }
 .source-btn { margin-top: 12px; width: 100%; padding: 9px 10px; border: 1px solid rgba(114,215,232,.45); border-radius: 8px; background: rgba(35,70,86,.42); color: var(--cyan); cursor: pointer; font-size: 11px; }
 .source-btn:hover { background: rgba(35,70,86,.72); border-color: var(--cyan); }
-.bottom-dock { position: fixed; z-index: 6; left: 92px; right: 364px; bottom: 22px; padding: 13px 17px 11px; border: 1px solid var(--line); border-radius: 14px; background: rgba(7,13,26,.78); backdrop-filter: blur(18px); }
+.bottom-dock { position: fixed; z-index: 6; left: 92px; right: 364px; bottom: 22px; padding: 13px 17px 11px; border: 1px solid var(--line); border-radius: 14px; background: rgba(7,13,26,.96); }
 .timeline-head, .timeline-scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; }.timeline-head span:first-child { color: var(--text); font-size: 12px; }
 #timeline { width: 100%; accent-color: var(--cyan); margin: 9px 0 2px; }
 .hint { position: fixed; z-index: 4; bottom: 29px; left: 50%; transform: translateX(-50%); color: rgba(197,210,233,.58); font-size: 11px; pointer-events: none; }
