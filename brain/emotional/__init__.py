@@ -1,2 +1,5 @@
-"""涟漪情感系统：5 维需求模型 + 三层状态 + 事件驱动更新。"""
+"""涟漪情感系统 v3：连续动力状态、关系层、语调渲染和人格隔离。"""
 from .manager import get_manager, EmotionManager
+from .v3_models import AffectDelta, EmotionalStateV3
+
+__all__ = ["get_manager", "EmotionManager", "AffectDelta", "EmotionalStateV3"]

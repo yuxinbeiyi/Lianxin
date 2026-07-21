@@ -163,6 +163,7 @@ class MainWindow(QMainWindow):
         self._network_settings_dialog = None
         self._capability_center_dialog = None
         self._constellation_system = None
+        self._ripple_constellation_system = None
         self._persona_hub = None
         self._settings_dialog = None
         self._emotion_debug_dialog = None
@@ -815,7 +816,7 @@ class MainWindow(QMainWindow):
         self._char_widget.get_api_config_button().clicked.connect(self._show_api_config)
         self._char_widget.get_alarm_button().clicked.connect(self._on_alarm_clicked)
         self._char_widget.get_camera_button().clicked.connect(self._on_camera_capture)
-        self._char_widget.get_emotion_button().clicked.connect(self._on_open_emotion_debug)
+        self._char_widget.get_emotion_button().clicked.connect(self._show_ripple_constellation)
         self._char_widget.get_sound_button().clicked.connect(self._on_sound_settings)
         self._char_widget.get_memory_button().clicked.connect(self._on_memory_settings)
         self._char_widget.get_network_button().clicked.connect(self._show_network_settings)
@@ -1864,6 +1865,20 @@ class MainWindow(QMainWindow):
         self._constellation_system.show()
         self._constellation_system.raise_()
         self._constellation_system.activateWindow()
+
+    def _show_ripple_constellation(self):
+        """Open the unified emotion and memory star map."""
+        from utils.sound import play_sound
+        from gui.ripple_constellation_web import RippleConstellationWebWindow
+        play_sound("ButtonAll.mp3")
+        if self._ripple_constellation_system is None:
+            self._ripple_constellation_system = RippleConstellationWebWindow(self)
+            self._ripple_constellation_system.destroyed.connect(
+                lambda: setattr(self, "_ripple_constellation_system", None)
+            )
+        self._ripple_constellation_system.show()
+        self._ripple_constellation_system.raise_()
+        self._ripple_constellation_system.activateWindow()
 
     def _show_persona_hub(self):
         """打开可窗口化、最大化和全屏的人格枢控。"""

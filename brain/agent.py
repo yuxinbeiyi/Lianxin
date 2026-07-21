@@ -447,7 +447,32 @@ class AgentCore:
             title = user_message.strip()[:20]
             self._history_mgr.update_title(self._session_id, title)
             self._session_titled = True
-        self._history_mgr.save_message(self._session_id, "user", user_message)
+        user_message_id = self._history_mgr.save_message(
+            self._session_id, "user", user_message
+        )
+
+        # 涟漪 v3 在生成当前回复前完成评估，使本条用户消息能够影响本条回复。
+        # 消息 ID 同时作为幂等键，渠道重试不会重复叠加情绪变化。
+        if self._track_emotion and self._owner_scope:
+            try:
+                from brain.emotional import get_manager as _get_emotion_mgr
+                recent_text = [
+                    str(item.get("content", ""))
+                    for item in self.history[-4:]
+                    if item.get("content")
+                ]
+                _get_emotion_mgr().prepare_turn(
+                    user_message,
+                    recent_messages=recent_text,
+                    persona_snapshot=persona_snapshot,
+                    subject_id="owner",
+                    source_channel=self._source_channel,
+                    source_session_id=self._session_id,
+                    source_message_id=user_message_id,
+                    allow_memory=not self._request_memory_writes_blocked,
+                )
+            except Exception as exc:
+                logger.warning("涟漪 v3 本轮评估失败，继续使用基础人格: %s", exc)
 
         effective_disable = disable_tools or self._disable_tools or self._use_local
         try:
@@ -499,22 +524,23 @@ class AgentCore:
             self._active_memory_trace_id = ""
             return ""
 
-        # ── 情感系统：分析本轮交互 ────────────────────────────
-        if self._track_emotion:
+        # ── 情感系统：记录本轮协作结果 ─────────────────────────
+        if self._track_emotion and self._owner_scope:
             try:
                 from brain.emotional import get_manager as _get_emotion_mgr
-                # 统计本轮工具调用次数
                 _tool_count = 0
                 for _m in reversed(self.history):
                     if _m.get("role") == "assistant" and "tool_calls" in _m:
                         _tool_count += len(_m["tool_calls"])
                     elif _m.get("role") == "user":
                         break
-                _get_emotion_mgr().analyze_and_update(
-                    [user_message], tool_call_count=_tool_count
+                _get_emotion_mgr().record_turn_outcome(
+                    tool_call_count=_tool_count,
+                    persona_snapshot=persona_snapshot,
+                    subject_id="owner",
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("涟漪 v3 协作结果记录失败: %s", exc)
 
         # 重要：history 存原始文本（含标签），让 LLM 在后续对话中看到自己的情绪标签，强化行为
         self.history.append({"role": "assistant", "content": response_text})
@@ -843,6 +869,11 @@ class AgentCore:
         self._persona_transition_remaining = 0
         self._session_memory_writes_blocked = False
         self._request_memory_writes_blocked = False
+        try:
+            from brain.emotional import get_manager as _get_emotion_mgr
+            _get_emotion_mgr().reset_session()
+        except Exception:
+            pass
 
 
 
@@ -1835,10 +1866,14 @@ class AgentCore:
 
         # ── 注入情感状态（涟漪系统） ──────────────────────────
 
-        if not self._use_local and self._track_emotion and self._owner_scope:
+        if self._track_emotion and self._owner_scope:
             try:
                 from brain.emotional import get_manager as _get_emotion_mgr
-                _emotion_snippet = _get_emotion_mgr().build_prompt_snippet()
+                _emotion_snippet = _get_emotion_mgr().build_prompt_snippet(
+                    mode="reactive",
+                    persona_snapshot=persona_snapshot,
+                    subject_id="owner",
+                )
                 if _emotion_snippet:
                     if persona_snapshot is not None and persona_snapshot.enabled:
                         _emotion_snippet += (

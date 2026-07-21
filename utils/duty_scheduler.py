@@ -339,6 +339,19 @@ class ProactiveDuty(Duty):
         except Exception:
             pass
         self._pending_memory_cue = None
+        self._pending_emotion_motive = None
+        self._pending_emotion_persona = None
+        try:
+            from brain.emotional import get_manager
+            from brain.persona.runtime import capture_persona_snapshot
+            snapshot = capture_persona_snapshot()
+            motive = get_manager().get_proactive_motive(persona_snapshot=snapshot)
+            if motive.get("should_contact") and ps.can_deliver_emotional_motive():
+                self._pending_emotion_motive = motive
+                self._pending_emotion_persona = snapshot
+                return True
+        except Exception:
+            pass
         return ps.should_fire()
 
     def manual_trigger(self, state: SchedulerState, **kwargs):
@@ -357,11 +370,19 @@ class ProactiveDuty(Duty):
             force_behavior = "bilibili" if force_observe == "bilibili" else "observe"
 
         memory_cue = None if force_behavior else getattr(self, "_pending_memory_cue", None)
+        emotion_motive = None if force_behavior else getattr(self, "_pending_emotion_motive", None)
+        emotion_persona = None if force_behavior else getattr(self, "_pending_emotion_persona", None)
         self._pending_memory_cue = None
+        self._pending_emotion_motive = None
+        self._pending_emotion_persona = None
         candidates = kwargs.get("candidates") or self._eligible_behaviors(
             state, ignore_cooldowns=kwargs.get("ignore_cooldowns", False)
         )
-        behavior = force_behavior or ("memory" if memory_cue else ps.choose_behavior(candidates))
+        behavior = force_behavior or (
+            "memory" if memory_cue else
+            "normal" if emotion_motive and "normal" in candidates else
+            ps.choose_behavior(candidates)
+        )
         if not behavior:
             return None
 
@@ -373,7 +394,10 @@ class ProactiveDuty(Duty):
 
         self._current_memory_cue = memory_cue if behavior == "memory" else None
         if behavior == "memory":
-            worker = ProactiveWorker(hm, memory_cue=memory_cue)
+            worker = ProactiveWorker(
+                hm, memory_cue=memory_cue, emotional_motive=emotion_motive,
+                persona_snapshot=emotion_persona,
+            )
         elif behavior == "bilibili":
             worker = ProactiveWorker(hm, bilibili_mode=True)
         elif behavior == "slack":
@@ -400,6 +424,8 @@ class ProactiveDuty(Duty):
                 last_observation=last_obs,
                 camera_index=ps.camera_index,
                 camera_wait=ps.camera_wait,
+                emotional_motive=emotion_motive,
+                persona_snapshot=emotion_persona,
             )
         return worker
 
@@ -456,6 +482,14 @@ class ProactiveDuty(Duty):
         self.status.last_result = "success"
         self.status.success_count += 1
         self._scheduler._proactive_scheduler.record_behavior_success(behavior)
+        try:
+            from brain.emotional import get_manager
+            get_manager().record_proactive_action(
+                behavior,
+                persona_snapshot=getattr(self._worker, "_persona_snapshot", None),
+            )
+        except Exception:
+            pass
         cue = getattr(self, "_current_memory_cue", None)
         if cue:
             try:

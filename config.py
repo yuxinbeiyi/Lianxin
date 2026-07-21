@@ -803,6 +803,39 @@ def save_memory_config(config: dict):
     full = _load_full_config()
     full["memory"] = config
     _save_full_config(full)
+
+
+# ── 涟漪情感系统 v3 ────────────────────────────────────────
+_EMOTION_DEFAULTS = {
+    "enabled": True,
+    # auto: configured local router model only; cloud: reuse the active cloud model;
+    # off: deterministic appraisal only.
+    "semantic_analysis": "auto",
+    "analysis_timeout_seconds": 8,
+    "significant_memory_enabled": True,
+    "significant_memory_threshold": 0.82,
+    "tone_profiles": {},
+    "dynamics": {},
+}
+
+
+def get_emotion_config() -> dict:
+    full = _load_full_config()
+    stored = full.get("emotion_v3", {})
+    result = _EMOTION_DEFAULTS.copy()
+    if isinstance(stored, dict):
+        result.update(stored)
+    if not isinstance(result.get("dynamics"), dict):
+        result["dynamics"] = {}
+    return result
+
+
+def save_emotion_config(config: dict):
+    full = _load_full_config()
+    current = get_emotion_config()
+    current.update(config if isinstance(config, dict) else {})
+    full["emotion_v3"] = current
+    _save_full_config(full)
 # ── Tavily Search MCP 配置 ─────────────────────────────────
 
 _TAVILY_DEFAULTS = {

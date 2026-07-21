@@ -1,5 +1,5 @@
 """
-EmotionalDebugDialog v2.0：涟漪情感系统调试面板（5 选项卡）。
+EmotionalDebugDialog v3：连续情绪、关系慢变量和动力参数调试面板。
 
 Tab 1：实时状态 — 需求、情绪分量、关系阶段、会话上限
 Tab 2：事件模拟 — 手动触发事件 / 批量测试
@@ -20,21 +20,20 @@ from PyQt5.QtGui import QFont
 
 
 class EmotionalDebugDialog(QDialog):
-    """涟漪情感系统调试面板 v2.0。"""
+    """涟漪情感系统调试面板 v3。"""
 
     NEED_LABELS = {
-        "respect": "被尊重", "needed": "被需要", "autonomy": "自主权",
-        "novelty": "新鲜感", "security": "安全感",
+        "connection": "连接需求", "guardedness": "防御感",
+        "valence": "愉悦度", "arousal": "唤醒度", "immersion": "沉浸度",
     }
 
     EMOTION_LABELS = {
-        "frustration": "烦躁", "hurt": "伤心", "anger": "愤怒",
-        "loneliness": "孤独", "excitement": "兴奋",
+        "trust": "信任", "intimacy": "亲密", "rupture": "裂痕", "repair": "修复",
     }
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("🧪 涟漪情感系统 v2.0 — 调试面板")
+        self.setWindowTitle("🧪 涟漪情感系统 v3 — 调试面板")
         self.setMinimumSize(720, 580)
 
         self._layout = QVBoxLayout(self)
@@ -93,7 +92,7 @@ class EmotionalDebugDialog(QDialog):
         ov.addWidget(self._stats_label)
         layout.addWidget(overview)
 
-        needs_g = QGroupBox("五大需求")
+        needs_g = QGroupBox("连续情感轴（愉悦度/唤醒度/防御感的 50 为中性）")
         ng = QGridLayout(needs_g)
         ng.setSpacing(6)
         self._need_bars = {}
@@ -129,7 +128,7 @@ class EmotionalDebugDialog(QDialog):
         btn_row.addWidget(apply_btn)
         layout.addLayout(btn_row)
 
-        emo_g = QGroupBox("情绪分量")
+        emo_g = QGroupBox("关系慢变量")
         eg = QHBoxLayout(emo_g)
         self._emotion_labels = {}
         for key, label in self.EMOTION_LABELS.items():
@@ -139,11 +138,11 @@ class EmotionalDebugDialog(QDialog):
         eg.addStretch()
         layout.addWidget(emo_g)
 
-        cap_g = QGroupBox("本轮会话上限")
+        cap_g = QGroupBox("当前作用域")
         cg = QHBoxLayout(cap_g)
         self._cap_labels = {}
         for key in self.NEED_LABELS:
-            lbl = QLabel(f"{self.NEED_LABELS[key]}: 0/12")
+            lbl = QLabel("")
             self._cap_labels[key] = lbl
             lbl.setStyleSheet("font-size: 11px; color: #888;")
             cg.addWidget(lbl)
@@ -295,51 +294,85 @@ class EmotionalDebugDialog(QDialog):
         layout.addWidget(log_g)
         return w
 
-    # ── Tab 5：参数覆盖 ─────────────────────────────────
+    # ── Tab 5：动力参数 ─────────────────────────────────
 
     def _build_params_tab(self):
         w = QWidget()
         layout = QVBoxLayout(w)
 
-        tip = QLabel("⚠ 运行时参数覆盖（仅调试，重启后恢复默认）")
-        tip.setStyleSheet("color: #E67E22; font-size: 11px;")
+        tip = QLabel("参数会持久化到 emotion_v3 配置；修改后立即用于后续 tick。")
+        tip.setStyleSheet("color: #6C7A89; font-size: 11px;")
         layout.addWidget(tip)
 
-        tau_g = QGroupBox("衰减时间常数 τ（小时）")
-        tv = QGridLayout(tau_g)
-        self._param_tau = {}
-        for i, (key, label) in enumerate(self.NEED_LABELS.items()):
-            tv.addWidget(QLabel(label), i, 0)
+        dynamics_g = QGroupBox("连接动力、主动阈值与评估设置")
+        grid = QGridLayout(dynamics_g)
+        try:
+            from brain.emotional import get_manager as _get_emotion_mgr
+            emotion_config = _get_emotion_mgr().get_config()
+            dynamics_config = emotion_config.get("dynamics", {})
+        except Exception:
+            emotion_config = {}
+            dynamics_config = {}
+        grid.addWidget(QLabel("连接增长（每小时）"), 0, 0)
+        self._param_connection_rate = QDoubleSpinBox()
+        self._param_connection_rate.setRange(0.001, 0.200)
+        self._param_connection_rate.setDecimals(3)
+        self._param_connection_rate.setSingleStep(0.005)
+        self._param_connection_rate.setValue(
+            float(dynamics_config.get("connection_rate", 0.00042)) * 60.0
+        )
+        grid.addWidget(self._param_connection_rate, 0, 1)
+        grid.addWidget(QLabel("加速前缓冲（分钟）"), 1, 0)
+        self._param_accel_delay = QSpinBox()
+        self._param_accel_delay.setRange(0, 720)
+        self._param_accel_delay.setValue(
+            int(dynamics_config.get("connection_accel_delay", 90))
+        )
+        grid.addWidget(self._param_accel_delay, 1, 1)
+        self._param_thresholds = {}
+        for row, (key, label, value) in enumerate((
+            ("observation_threshold", "开始留意", 35),
+            ("contact_threshold", "产生联系动机", 58),
+                               ("urgent_threshold", "强联系动机", 80),
+        ), start=2):
+            grid.addWidget(QLabel(label), row, 0)
             spin = QSpinBox()
-            spin.setRange(1, 1000)
-            spin.setValue(self._get_default_tau(key))
-            tv.addWidget(spin, i, 1)
-            self._param_tau[key] = spin
-        layout.addWidget(tau_g)
-
-        emo_tau_g = QGroupBox("情绪分量衰减 τ")
-        ev = QHBoxLayout(emo_tau_g)
-        ev.addWidget(QLabel("τ (小时):"))
-        self._param_emotion_tau = QSpinBox()
-        self._param_emotion_tau.setRange(1, 100)
-        self._param_emotion_tau.setValue(4)
-        ev.addWidget(self._param_emotion_tau)
-        ev.addStretch()
-        layout.addWidget(emo_tau_g)
-
-        misc_g = QGroupBox("其他参数")
-        mv = QGridLayout(misc_g)
-        mv.addWidget(QLabel("孤独触发阈值 (小时):"), 0, 0)
-        self._param_lonely_trigger = QSpinBox()
-        self._param_lonely_trigger.setRange(1, 168)
-        self._param_lonely_trigger.setValue(12)
-        mv.addWidget(self._param_lonely_trigger, 0, 1)
-        mv.addWidget(QLabel("会话上限 (±):"), 1, 0)
-        self._param_session_cap = QSpinBox()
-        self._param_session_cap.setRange(1, 50)
-        self._param_session_cap.setValue(12)
-        mv.addWidget(self._param_session_cap, 1, 1)
-        layout.addWidget(misc_g)
+            spin.setRange(5, 100)
+            spin.setSuffix(" %")
+            spin.setValue(round(float(dynamics_config.get(key, value)) * 100))
+            grid.addWidget(spin, row, 1)
+            self._param_thresholds[key] = spin
+        grid.addWidget(QLabel("语义评估"), 5, 0)
+        self._semantic_combo = QComboBox()
+        self._semantic_combo.addItem("关闭（仅规则）", "off")
+        self._semantic_combo.addItem("自动（本地模型）", "auto")
+        self._semantic_combo.addItem("本地模型", "local")
+        self._semantic_combo.addItem("云端模型", "cloud")
+        current_mode = emotion_config.get("semantic_analysis", "auto")
+        index = max(0, self._semantic_combo.findData(current_mode))
+        self._semantic_combo.setCurrentIndex(index)
+        grid.addWidget(self._semantic_combo, 5, 1)
+        grid.addWidget(QLabel("评估超时（秒）"), 6, 0)
+        self._param_analysis_timeout = QDoubleSpinBox()
+        self._param_analysis_timeout.setRange(2.0, 30.0)
+        self._param_analysis_timeout.setDecimals(1)
+        self._param_analysis_timeout.setValue(
+            float(emotion_config.get("analysis_timeout_seconds", 8))
+        )
+        grid.addWidget(self._param_analysis_timeout, 6, 1)
+        self._param_memory_enabled = QCheckBox("显著情感事件写入长期记忆")
+        self._param_memory_enabled.setChecked(
+            bool(emotion_config.get("significant_memory_enabled", True))
+        )
+        grid.addWidget(self._param_memory_enabled, 7, 0, 1, 2)
+        grid.addWidget(QLabel("记忆阈值（%）"), 8, 0)
+        self._param_memory_threshold = QSpinBox()
+        self._param_memory_threshold.setRange(50, 100)
+        self._param_memory_threshold.setValue(round(
+            float(emotion_config.get("significant_memory_threshold", 0.82)) * 100
+        ))
+        grid.addWidget(self._param_memory_threshold, 8, 1)
+        layout.addWidget(dynamics_g)
 
         btn_row = QHBoxLayout()
         apply_btn = QPushButton("应用覆盖")
@@ -353,9 +386,17 @@ class EmotionalDebugDialog(QDialog):
         layout.addStretch()
         return w
 
-    def _get_default_tau(self, key: str) -> int:
-        from brain.emotional.state import NEED_CONFIG
-        return NEED_CONFIG.get(key, {}).get("tau", 48)
+    @staticmethod
+    def _axis_to_slider(key: str, value: float) -> int:
+        if key in ("valence", "arousal", "guardedness"):
+            return max(0, min(100, round((value + 1.0) * 50.0)))
+        return max(0, min(100, round(value * 100.0)))
+
+    @staticmethod
+    def _slider_to_axis(key: str, value: int) -> float:
+        if key in ("valence", "arousal", "guardedness"):
+            return max(-1.0, min(1.0, value / 50.0 - 1.0))
+        return max(0.0, min(1.0, value / 100.0))
 
     # ── 刷新显示 ────────────────────────────────────────
 
@@ -375,34 +416,37 @@ class EmotionalDebugDialog(QDialog):
             self._mid_layer_label.setText(f"情感基调: 无法连接 ({e})")
             return
 
-        needs = info["needs"]
+        axes = info.get("axes", {})
+        relationship = info.get("relationship", {})
         layer = info["middle_layer"]
 
         color_map = {
-            "暖春": "#27AE60", "晴朗": "#2ECC71", "日常": "#2C3E50",
-            "微凉": "#E67E22", "寒冬": "#E74C3C", "修复期": "#8E44AD",
+            "明亮活跃": "#27AE60", "舒展满足": "#2ECC71", "轻快": "#58D68D",
+            "平稳": "#2C3E50", "平静": "#5D6D7E", "微沉": "#8E6E53",
+            "低落": "#5B6D8A", "烦躁": "#E67E22", "躁动": "#C0392B",
         }
         color = color_map.get(layer, "#888")
         self._mid_layer_label.setText(
             f'情感基调: <span style="color:{color}; font-size: 14pt;">{layer}</span>'
         )
         self._deep_label.setText(
-            f"深层信任: {info['deep_layer']}/100  |  "
-            f"启动天数: {info.get('days_since_start', 0)}  |  "
-            f"情感记忆: {info.get('memory_count', 0)} 条"
+            f"关系综合分: {relationship.get('score', 0) * 100:.1f}/100  |  "
+            f"人格: {info.get('persona_id', 'default-lianxin')}  |  "
+            f"显著事件: {info.get('memory_count', 0)} 条"
         )
         self._stage_label.setText(
             f"关系阶段: <b>{info.get('relationship_stage', '未知')}</b>"
         )
         self._stats_label.setText(
-            f"连续指令: {info['consecutive_commands']}  |  "
+            f"作用对象: {info.get('subject_id', 'owner')}  |  "
             f"距上次交互: {info['hours_since_interaction']}h  |  "
-            f"启用: {'是' if info.get('enabled', True) else '否'}"
+            f"引擎: v{info.get('version', 3)} / {'启用' if info.get('enabled', True) else '冻结'}"
         )
 
         bar_style = color
         for key in self.NEED_LABELS:
-            val = int(needs.get(key, 50))
+            raw = float(axes.get(key, 0))
+            val = self._axis_to_slider(key, raw)
             self._need_bars[key].setValue(val)
             self._need_bars[key].setStyleSheet(
                 f"QProgressBar::chunk {{ background-color: {bar_style}; }}")
@@ -410,26 +454,29 @@ class EmotionalDebugDialog(QDialog):
             if not self._slider_modified:
                 self._sliders[key].setValue(val)
 
-        emotions = info.get("emotions", {})
         for key, lbl in self._emotion_labels.items():
-            v = int(emotions.get(key, 0))
-            c = "#E74C3C" if v > 20 else "#888"
+            v = int(float(relationship.get(key, 0)) * 100)
+            c = "#E74C3C" if key == "rupture" and v > 30 else "#566573"
             lbl.setText(f"{self.EMOTION_LABELS[key]}: "
                        f"<span style='color:{c};'>{v}</span>")
 
-        caps = info.get("session_caps", {})
         for key, lbl in self._cap_labels.items():
-            v = abs(caps.get(key, 0))
-            lbl.setText(f"{self.NEED_LABELS[key]}: {v:.0f}/12")
+            if key == "connection":
+                lbl.setText(f"状态簇: {layer}")
+            elif key == "guardedness":
+                lbl.setText(f"关系阶段: {info.get('relationship_stage', '未知')}")
+            elif key == "valence":
+                lbl.setText(f"事件: {info.get('event_count', 0)}")
+            else:
+                lbl.setText("")
 
         events = info.get("recent_events", [])
         log_lines = []
         for e in reversed(events[-50:]):
             ts = time.strftime("%H:%M:%S", time.localtime(e["time"]))
             delta = e["delta"]
-            sign = "+" if delta >= 0 else ""
             log_lines.append(
-                f"[{ts}] {e['type']:20s} {sign}{delta:+.0f}  "
+                f"[{ts}] {e['type']:20s} V{delta:+.0f}  "
                 f"{e.get('detail', '')[:40]}"
             )
         self._log_view.setText("\n".join(log_lines) if log_lines else "（无事件记录）")
@@ -466,7 +513,7 @@ class EmotionalDebugDialog(QDialog):
             mgr = _get_emotion_mgr()
             event = _make_event(event_type, detail="[调试面板模拟]")
             mgr._apply_event_v2(event)
-            mgr.state.save()
+            mgr.save_current()
             self._log_view.append(
                 f"[模拟] {time.strftime('%H:%M:%S')} 触发 "
                 f"{event_type} ({event.primary_delta:+.0f})"
@@ -517,11 +564,7 @@ class EmotionalDebugDialog(QDialog):
         try:
             from brain.emotional import get_manager as _get_emotion_mgr
             mgr = _get_emotion_mgr()
-            mgr.state._last_interaction = time.time() - hours * 3600
-            mgr.state._apply_decay(hours)
-            mgr.state.last_update = time.time()
-            mgr.state._last_interaction = time.time()
-            mgr.state.save()
+            mgr.simulate_time(hours)
             self._log_view.append(
                 f"[时间] 跳过 {hours} 小时，已应用衰减"
             )
@@ -533,39 +576,51 @@ class EmotionalDebugDialog(QDialog):
 
     def _apply_params(self):
         try:
-            import brain.emotional.state as state_mod
-
-            for key in self._param_tau:
-                state_mod.NEED_CONFIG[key]["tau"] = self._param_tau[key].value()
-            state_mod.EMOTION_TAU = self._param_emotion_tau.value()
-            state_mod.LONELY_TRIGGER_HOURS = self._param_lonely_trigger.value()
-            state_mod.MAX_SESSION_CHANGE = float(self._param_session_cap.value())
-
-            self._log_view.append("[参数] 运行时参数已覆盖")
+            from brain.emotional import get_manager as _get_emotion_mgr
+            values = {
+                "connection_rate": self._param_connection_rate.value() / 60.0,
+                "connection_accel_delay": self._param_accel_delay.value(),
+            }
+            values.update({key: spin.value() / 100.0
+                           for key, spin in self._param_thresholds.items()})
+            _get_emotion_mgr().configure_dynamics(**values)
+            _get_emotion_mgr().configure_settings(
+                semantic_analysis=self._semantic_combo.currentData(),
+                analysis_timeout_seconds=self._param_analysis_timeout.value(),
+                significant_memory_enabled=self._param_memory_enabled.isChecked(),
+                significant_memory_threshold=self._param_memory_threshold.value() / 100.0,
+            )
+            self._log_view.append("[参数] v3 动力参数已保存并生效")
         except Exception as e:
             self._log_view.append(f"[错误] {e}")
 
     def _restore_params(self):
         try:
-            import brain.emotional.state as state_mod
-            state_mod.NEED_CONFIG.update({
-                "respect": {"tau": 96, "drift": 0, "label": "被尊重"},
-                "needed": {"tau": 72, "drift": 0.2, "label": "被需要"},
-                "autonomy": {"tau": 60, "drift": 0, "label": "自主权"},
-                "novelty": {"tau": 48, "drift": 0, "label": "新鲜感"},
-                "security": {"tau": 168, "drift": 0.3, "label": "安全感"},
-            })
-            state_mod.EMOTION_TAU = 4
-            state_mod.LONELY_TRIGGER_HOURS = 12
-            state_mod.MAX_SESSION_CHANGE = 12.0
-
-            for key, spin in self._param_tau.items():
-                spin.setValue(self._get_default_tau(key))
-            self._param_emotion_tau.setValue(4)
-            self._param_lonely_trigger.setValue(12)
-            self._param_session_cap.setValue(12)
-
-            self._log_view.append("[参数] 已恢复默认参数")
+            from brain.emotional import get_manager as _get_emotion_mgr
+            self._param_connection_rate.setValue(0.025)
+            self._param_accel_delay.setValue(90)
+            for key, value in (("observation_threshold", 35),
+                               ("contact_threshold", 58),
+                               ("urgent_threshold", 80)):
+                self._param_thresholds[key].setValue(value)
+            self._semantic_combo.setCurrentIndex(self._semantic_combo.findData("auto"))
+            self._param_analysis_timeout.setValue(8.0)
+            self._param_memory_enabled.setChecked(True)
+            self._param_memory_threshold.setValue(82)
+            _get_emotion_mgr().configure_dynamics(
+                connection_rate=0.00042,
+                connection_accel_delay=90,
+                observation_threshold=0.35,
+                contact_threshold=0.58,
+                urgent_threshold=0.80,
+            )
+            _get_emotion_mgr().configure_settings(
+                semantic_analysis="auto",
+                analysis_timeout_seconds=8,
+                significant_memory_enabled=True,
+                significant_memory_threshold=0.82,
+            )
+            self._log_view.append("[参数] 已恢复 v3 默认动力参数")
         except Exception as e:
             self._log_view.append(f"[错误] {e}")
 
@@ -575,8 +630,9 @@ class EmotionalDebugDialog(QDialog):
         try:
             from brain.emotional import get_manager as _get_emotion_mgr
             mgr = _get_emotion_mgr()
-            kwargs = {k: s.value() for k, s in self._sliders.items()}
-            mgr.set_needs(**kwargs)
+            kwargs = {key: self._slider_to_axis(key, slider.value())
+                      for key, slider in self._sliders.items()}
+            mgr.set_axes(**kwargs)
             self._slider_modified = False
             self._refresh_display()
         except Exception as e:
@@ -595,7 +651,7 @@ class EmotionalDebugDialog(QDialog):
         try:
             from brain.emotional import get_manager as _get_emotion_mgr
             mgr = _get_emotion_mgr()
-            mgr.state.save()
+            mgr.save_current()
             self._log_view.append("[保存] 状态已持久化")
         except Exception as e:
             self._log_view.append(f"[错误] 保存失败: {e}")
@@ -604,8 +660,7 @@ class EmotionalDebugDialog(QDialog):
         try:
             from brain.emotional import get_manager as _get_emotion_mgr
             mgr = _get_emotion_mgr()
-            mgr.state.event_history.clear()
-            mgr.state.save()
+            mgr.clear_event_log()
             self._log_view.clear()
             self._log_view.append("[日志] 已清除")
         except Exception as e:

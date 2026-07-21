@@ -97,6 +97,8 @@ class ProactiveWorker(QThread):
                  camera_wait: int = 15,
                  bilibili_mode: bool = False,
                  memory_cue: dict = None,
+                 emotional_motive: dict = None,
+                 persona_snapshot=None,
                  parent=None):
         super().__init__(parent)
         self._history_mgr = history_manager
@@ -107,11 +109,14 @@ class ProactiveWorker(QThread):
         self._camera_wait = camera_wait
         self._bilibili_mode = bilibili_mode
         self._memory_cue = memory_cue or None
+        self._emotional_motive = emotional_motive or None
+        self._persona_snapshot = persona_snapshot
 
     def run(self):
         print("[观察-调试] 工作线程启动")
         # 同一轮主动行为固定使用一个人格快照，避免生成中途切换风格。
-        self._persona_snapshot = capture_persona_snapshot()
+        if self._persona_snapshot is None:
+            self._persona_snapshot = capture_persona_snapshot()
         if self._bilibili_mode:
             self._run_bilibili()
             return
@@ -238,6 +243,25 @@ class ProactiveWorker(QThread):
 
     def _build_context(self, observation_text: Optional[str] = None) -> str:
         parts: list[str] = []
+
+        # 涟漪 v3 提供动机和主动模式语调；调度策略仍由 DutyScheduler 控制。
+        try:
+            from brain.emotional import get_manager as _get_emotion_mgr
+            emotion_prompt = _get_emotion_mgr().build_prompt_snippet(
+                mode="proactive",
+                persona_snapshot=getattr(self, "_persona_snapshot", None),
+                subject_id="owner",
+            )
+            if emotion_prompt:
+                parts.append(emotion_prompt)
+        except Exception:
+            pass
+        if self._emotional_motive:
+            parts.append(
+                "【本次主动联系动机】\n"
+                + str(self._emotional_motive.get("reason", "有自然的联系意愿"))
+                + "。这只是内在动机，不是必须打扰对方的命令。"
+            )
 
         # 观察结果（如果有）
         if observation_text:

@@ -60,7 +60,9 @@ class MemoryNarrativeWorker(QThread):
 5. Saga 只有在至少两个 Episode 属于同一件长期经历时才创建，episode_indices 使用返回 episodes 数组的下标。
 6. 不要删除原始碎片；这是可重建的派生层。
 
-只返回 JSON：{{"entities":[{{"name":"","entity_type":"person|project|place|event|concept|other","summary":"","current_status":"","confidence":0.0}}],"episodes":[{{"title":"","summary":"","category":"event|project|relationship|other","fragment_ids":[1,2],"entities":[{{"name":"","entity_type":""}}],"occurred_from":"","occurred_to":"","confidence":0.0}}],"sagas":[{{"title":"","summary":"","episode_indices":[0,1],"confidence":0.0}}]}}
+只返回 JSON：{{"entities":[{{"name":"","entity_type":"person|project|place|event|concept|other","summary":"","current_status":"","confidence":0.0}}],"episodes":[{{"title":"","summary":"","category":"event|project|relationship|other","fragment_ids":[1,2],"entities":[{{"name":"","entity_type":""}}],"occurred_from":"","occurred_to":"","confidence":0.0}}],"sagas":[{{"title":"","summary":"","episode_indices":[0,1],"confidence":0.0,"emotion":{{"valence":-1.0,"arousal":-1.0,"guardedness":-1.0,"connection":-1.0,"weight":0.0}}}}]}}
+
+emotion 的数值只描述这条长期经历对陪伴关系基线的轻微影响，不是当前对话情绪；不确定时全部填 0，weight 填 0。
 
 已有叙事（可通过 episode_id 更新，而不是重复创建）：{json.dumps(list_episodes(20), ensure_ascii=False)}
 

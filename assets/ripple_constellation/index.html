@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>莲心 · 涟漪星图</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <canvas id="space"></canvas>
+  <canvas id="map"></canvas>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">✧</span>
+      <div><strong>RIPPLE CONSTELLATION</strong><small>涟漪星图 · 情绪与记忆</small></div>
+    </div>
+    <div class="scope" id="scope">当前人格 · 当前主人</div>
+    <div class="top-actions">
+      <button class="icon-btn active" data-mode="affect" title="实时状态">◉</button>
+      <button class="icon-btn" data-mode="memory" title="记忆星图">✦</button>
+      <button class="icon-btn" data-mode="causal" title="因果回放">⌁</button>
+      <button class="icon-btn" id="refresh" title="刷新快照">↻</button>
+      <button class="icon-btn" id="fullscreen" title="全屏">⛶</button>
+    </div>
+  </header>
+
+  <aside class="left-rail">
+    <div class="rail-title">观测层</div>
+    <button class="rail-btn active" data-mode="affect"><span>◉</span><small>实时</small></button>
+    <button class="rail-btn" data-mode="memory"><span>✦</span><small>记忆</small></button>
+    <button class="rail-btn" data-mode="causal"><span>⌁</span><small>回放</small></button>
+    <div class="rail-divider"></div>
+    <button class="rail-btn" id="motion" title="切换动画"><span>∿</span><small>动效</small></button>
+    <button class="rail-btn" id="labels" title="切换标签"><span>Aa</span><small>标签</small></button>
+  </aside>
+
+  <section class="status-strip">
+    <div class="status-item"><span class="status-dot live"></span><span>状态同步</span><strong id="sync-status">实时</strong></div>
+    <div class="status-item"><span class="status-dot" id="mood-dot"></span><span>当前基调</span><strong id="mood">平稳</strong></div>
+    <div class="status-item"><span class="status-dot" id="motive-dot"></span><span>内在动机</span><strong id="motive">平静</strong></div>
+  </section>
+
+  <aside class="inspector" id="inspector">
+    <div class="inspector-header"><div><small id="inspector-kicker">LIVE STATE</small><h2 id="inspector-title">涟漪状态</h2></div><button id="inspector-close" class="close-btn">×</button></div>
+    <div id="inspector-body"></div>
+  </aside>
+
+  <section class="bottom-dock">
+    <div class="timeline-head"><span>状态轨迹</span><span id="timeline-label">现在</span></div>
+    <input id="timeline" type="range" min="0" max="100" value="100">
+    <div class="timeline-scale"><span>更早</span><span>最近事件</span><span>现在</span></div>
+  </section>
+
+  <div class="hint" id="hint">点击情绪节点查看状态；切换到记忆层探索实体、Episode 与 Saga</div>
+  <div class="toast" id="toast"></div>
+  <!-- LIANXIN_DATA -->
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -72,6 +72,12 @@ def _ensure_tables():
         episode_ids TEXT NOT NULL DEFAULT '[]',
         entity_ids TEXT NOT NULL DEFAULT '[]',
         confidence REAL NOT NULL DEFAULT 0.5,
+        emotional_valence REAL NOT NULL DEFAULT 0,
+        emotional_arousal REAL NOT NULL DEFAULT 0,
+        emotional_guardedness REAL NOT NULL DEFAULT 0,
+        emotional_connection REAL NOT NULL DEFAULT 0,
+        emotional_weight REAL NOT NULL DEFAULT 0,
+        persona_id TEXT DEFAULT '',
         status TEXT NOT NULL DEFAULT 'active',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -106,6 +112,12 @@ def _ensure_tables():
         "ALTER TABLE memory_entity_profiles ADD COLUMN graph_entity_id INTEGER",
         "ALTER TABLE memory_entity_profiles ADD COLUMN graph_entity_type TEXT DEFAULT ''",
         "ALTER TABLE memory_narrative_runs ADD COLUMN episodes_updated INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE memory_sagas ADD COLUMN emotional_valence REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE memory_sagas ADD COLUMN emotional_arousal REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE memory_sagas ADD COLUMN emotional_guardedness REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE memory_sagas ADD COLUMN emotional_connection REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE memory_sagas ADD COLUMN emotional_weight REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE memory_sagas ADD COLUMN persona_id TEXT DEFAULT ''",
     ):
         try:
             conn.execute(sql)
@@ -332,21 +344,41 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
                 continue
             fingerprint = hashlib.sha256(f"{title}:{','.join(map(str, episode_ids))}".encode("utf-8")).hexdigest()
             saga_confidence = min(1.0, max(0.0, float(saga.get("confidence", 0.6) or 0.6)))
+            emotional = saga.get("emotion", {}) if isinstance(saga.get("emotion", {}), dict) else {}
+            def emotion_value(name):
+                try:
+                    return max(-1.0, min(1.0, float(emotional.get(name, 0.0) or 0.0)))
+                except (TypeError, ValueError):
+                    return 0.0
+            emotional_values = {
+                "emotional_valence": emotion_value("valence"),
+                "emotional_arousal": emotion_value("arousal"),
+                "emotional_guardedness": emotion_value("guardedness"),
+                "emotional_connection": emotion_value("connection"),
+                "emotional_weight": max(0.0, min(1.0, float(emotional.get("weight", 0.0) or 0.0))),
+            }
             existing_saga = conn.execute("SELECT id FROM memory_sagas WHERE fingerprint=?", (fingerprint,)).fetchone()
             if existing_saga:
                 conn.execute(
                     """UPDATE memory_sagas SET title=?,summary=?,episode_ids=?,confidence=MAX(confidence,?),
-                       updated_at=? WHERE id=?""",
-                    (title, summary, json.dumps(episode_ids), saga_confidence, timestamp, int(existing_saga["id"])),
+                       emotional_valence=?,emotional_arousal=?,emotional_guardedness=?,emotional_connection=?,
+                       emotional_weight=?,updated_at=? WHERE id=?""",
+                    (title, summary, json.dumps(episode_ids), saga_confidence,
+                     emotional_values["emotional_valence"], emotional_values["emotional_arousal"],
+                     emotional_values["emotional_guardedness"], emotional_values["emotional_connection"],
+                     emotional_values["emotional_weight"], timestamp, int(existing_saga["id"])),
                 )
                 _record_event(conn, "saga_updated", "saga", int(existing_saga["id"]), {"episode_ids": episode_ids})
             else:
                 cur = conn.execute(
                     """INSERT INTO memory_sagas
-                       (title,summary,episode_ids,confidence,created_at,updated_at,fingerprint)
-                       VALUES (?,?,?,?,?,?,?)""",
+                       (title,summary,episode_ids,confidence,emotional_valence,emotional_arousal,
+                        emotional_guardedness,emotional_connection,emotional_weight,created_at,updated_at,fingerprint)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (title, summary, json.dumps(episode_ids), saga_confidence,
-                     timestamp, timestamp, fingerprint),
+                     emotional_values["emotional_valence"], emotional_values["emotional_arousal"],
+                     emotional_values["emotional_guardedness"], emotional_values["emotional_connection"],
+                     emotional_values["emotional_weight"], timestamp, timestamp, fingerprint),
                 )
                 _record_event(conn, "saga_created", "saga", int(cur.lastrowid), {"episode_ids": episode_ids})
         conn.commit()

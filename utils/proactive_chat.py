@@ -705,6 +705,22 @@ class ProactiveChatScheduler:
         if self._last_fire_time and (now-self._last_fire_time).total_seconds()/60 < self.min_interval_minutes:
             return False
         return bool(self.weights[now.hour] if now.hour < len(self.weights) else 0)
+
+    def can_deliver_emotional_motive(self) -> bool:
+        """Apply delivery policy to a v3 emotional contact motive without randomness."""
+        if not self.normal_enabled or (not self.desktop_enabled and not self.qq_enabled):
+            return False
+        now = datetime.now()
+        if self._defer_until and now < self._defer_until:
+            return False
+        if self._last_fire_time:
+            elapsed = (now - self._last_fire_time).total_seconds() / 60
+            if elapsed < self.min_interval_minutes:
+                return False
+        if not self.is_behavior_ready("normal", now):
+            return False
+        return bool(self.weights[now.hour] if now.hour < len(self.weights) else 0)
+
     def should_slack_fire(self) -> bool:
         """
         使用与主动聊天相同的 24h 权重 + 概率公式判断是否触发摸鱼。

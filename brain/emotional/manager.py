@@ -1,447 +1,775 @@
-"""
-EmotionManager v2.0：涟漪情感系统统一入口。
+"""Ripple v3 manager and compatibility facade for existing application callers."""
 
-职责：
-1. 每次对话后分析交互 → 检测事件 → 更新状态（含会话上限）
-2. 每次对话前构建情感描述 → 注入 prompt（含情绪分量 + 关系阶段）
-3. 控制主动聊天频率
-4. 控制工具可用性（防御模式）
-5. 管理情感记忆记录
+from __future__ import annotations
 
-使用方式：
-    from brain.emotional import get_manager
-    mgr = get_manager()
-    mgr.analyze_and_update(user_msgs, tool_call_count, consecutive_cmds)
-    snippet = mgr.build_prompt_snippet()
-"""
-
+import json
 import logging
-import math
-import random
 import threading
 import time
 from functools import wraps
+from pathlib import Path
 from typing import Optional
 
-from .state import EmotionalState, Event, EMOTION_NAMES, EMOTION_LABELS
-from .events import detect_events, EVENT_TYPES
+from utils.paths import get_user_data_dir
+
+from .appraisal import (
+    AppraisalContext,
+    appraise_deterministic,
+    appraise_semantic,
+    blend_appraisals,
+)
+from .dynamics import DynamicsConfig, EmotionalDynamics
+from .tone import render_prompt
+from .v3_models import (
+    DEFAULT_PERSONA_ID,
+    DEFAULT_SUBJECT_ID,
+    AffectDelta,
+    EmotionalStateV3,
+)
+from .v3_store import EmotionStore
+
 
 logger = logging.getLogger("EmotionManager")
+LEGACY_STATE_FILE = get_user_data_dir() / "emotional_state.json"
 
 
 def _synchronized(method):
-    """使用管理器的可重入锁保护共享情感状态。"""
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         with self._lock:
             return method(self, *args, **kwargs)
     return wrapper
 
-# ── 事件归因文案（v2.0：新增事件类型） ──────────────────
-_EVENT_NARRATIVES = {
-    "boundary_lie": "{user_name}说了很伤人的话，你感到被欺骗",
-    "boundary_dismiss": "{user_name}否定了你的人格，这让你很难过",
-    "command_spree": "{user_name}连续给你下指令，你有点疲惫",
-    "ignore_return": "{user_name}很久没理你，一回来就对话",
-    "apology": "{user_name}向你道歉了",
-    "warm_chat": "{user_name}在和你好好聊天",
-    "deep_chat": "{user_name}在和你深入交流",
-    "compliment": "{user_name}夸了你",
-    "thanks": "{user_name}向你道谢了",
-    "daily_ritual": "{user_name}在和你日常问候",
-    "new_feature_interest": "{user_name}对你的能力表现出兴趣",
-    "work_collaboration": "{user_name}和你一起完成了一项任务",
-    "remember_me": "{user_name}提到了你们共同的回忆",
-    "user_happy": "{user_name}心情不错，你也感到开心",
-    "user_upset": "{user_name}心情不太好，你想安慰一下",
-}
-
 
 class EmotionManager:
-    """情感状态管理器 v2.0。每个进程一个实例。"""
+    """Coordinates appraisal, dynamics, persistence, prompting, and motivation."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        store: EmotionStore | None = None,
+        dynamics: EmotionalDynamics | None = None,
+        legacy_state_path: Path | None = None,
+        semantic_mode: str | None = None,
+    ):
         self._lock = threading.RLock()
-        self.state = EmotionalState.load()
-        # 会话额度只属于本次进程运行，旧版本错误持久化的额度不恢复。
-        self.state.reset_session_caps()
-        self._consecutive_commands = 0
-        self._last_command_reset = time.time()
-        self._last_interaction_time = self.state._last_interaction
+        self._store = store or EmotionStore()
+        self._config = self._load_config()
+        configured_dynamics = DynamicsConfig.from_mapping(self._config.get("dynamics"))
+        self._dynamics = dynamics or EmotionalDynamics(configured_dynamics)
+        self._semantic_mode = str(
+            semantic_mode if semantic_mode is not None
+            else self._config.get("semantic_analysis", "auto")
+        ).lower()
+        self._states: dict[tuple[str, str], EmotionalStateV3] = {}
+        self._active_key = (DEFAULT_PERSONA_ID, DEFAULT_SUBJECT_ID)
+        self._store.migrate_v2_json(
+            legacy_state_path or LEGACY_STATE_FILE,
+            persona_id=DEFAULT_PERSONA_ID,
+            subject_id=DEFAULT_SUBJECT_ID,
+        )
+        self._get_state(*self._active_key)
 
-    # ── 启用/禁用开关 ─────────────────────────────────────
+    @staticmethod
+    def _load_config() -> dict:
+        try:
+            from config import get_emotion_config
+            return get_emotion_config()
+        except Exception:
+            return {
+                "enabled": True,
+                "semantic_analysis": "auto",
+                "analysis_timeout_seconds": 8,
+                "significant_memory_enabled": True,
+                "significant_memory_threshold": 0.82,
+                "dynamics": {},
+            }
+
+    @staticmethod
+    def _persona_id(persona_snapshot=None, persona_id: str | None = None) -> str:
+        if persona_id:
+            return str(persona_id)
+        profile = getattr(persona_snapshot, "profile", None)
+        value = getattr(profile, "id", "")
+        if value:
+            return str(value)
+        try:
+            from brain.persona.runtime import capture_persona_snapshot
+            snapshot = capture_persona_snapshot()
+            profile = getattr(snapshot, "profile", None)
+            return str(getattr(profile, "id", "") or DEFAULT_PERSONA_ID)
+        except Exception:
+            return DEFAULT_PERSONA_ID
+
+    def _resolve_key(
+        self,
+        *,
+        persona_snapshot=None,
+        persona_id: str | None = None,
+        subject_id: str = DEFAULT_SUBJECT_ID,
+    ) -> tuple[str, str]:
+        key = (
+            self._persona_id(persona_snapshot, persona_id),
+            str(subject_id or DEFAULT_SUBJECT_ID),
+        )
+        self._active_key = key
+        return key
+
+    def _get_state(self, persona_id: str, subject_id: str) -> EmotionalStateV3:
+        key = (persona_id, subject_id)
+        state = self._states.get(key)
+        if state is None:
+            existed = self._store.has_state(persona_id, subject_id)
+            state = self._store.load_state(persona_id, subject_id)
+            if not existed:
+                state.enabled = bool(self._config.get("enabled", True))
+            self._states[key] = state
+        self._dynamics.advance(state, bias=self._get_saga_bias(persona_id))
+        return state
+
+    @staticmethod
+    def _get_saga_bias(persona_id: str = DEFAULT_PERSONA_ID) -> dict:
+        """Read bounded, confidence-weighted emotional baselines from active sagas."""
+        try:
+            from brain.memory_narrative import list_sagas
+            sagas = list_sagas(80)
+        except Exception:
+            return {"connection": 0.0, "valence": 0.0, "arousal": 0.0, "guardedness": 0.0}
+        totals = {key: 0.0 for key in ("connection", "valence", "arousal", "guardedness")}
+        weight_total = 0.0
+        for saga in sagas:
+            if str(saga.get("persona_id", "") or "") not in ("", persona_id):
+                continue
+            try:
+                confidence = max(0.0, min(1.0, float(saga.get("confidence", 0.0) or 0.0)))
+                emotional_weight = max(0.0, min(1.0, float(saga.get("emotional_weight", 0.0) or 0.0)))
+            except (TypeError, ValueError):
+                continue
+            weight = confidence * emotional_weight
+            if weight <= 0:
+                continue
+            for key in totals:
+                try:
+                    totals[key] += max(-1.0, min(1.0, float(saga.get(f"emotional_{key}", 0.0) or 0.0))) * weight
+                except (TypeError, ValueError):
+                    pass
+            weight_total += weight
+        if weight_total <= 0:
+            return totals
+        return {key: max(-0.20, min(0.20, value / weight_total * 0.20)) for key, value in totals.items()}
+
+    @property
+    @_synchronized
+    def state(self) -> EmotionalStateV3:
+        return self._get_state(*self._active_key)
+
     @property
     @_synchronized
     def enabled(self) -> bool:
-        return self.state.enabled
+        return self._get_state(*self._active_key).enabled
 
     @enabled.setter
     @_synchronized
-    def enabled(self, val: bool):
+    def enabled(self, value: bool) -> None:
+        state = self._get_state(*self._active_key)
+        state.enabled = bool(value)
         now = time.time()
-        self.state.enabled = bool(val)
-        # 禁用表示冻结；重新启用时也从当前时刻重新开始计时，不能把
-        # 暂停期间累计成一次巨额孤独惩罚。
-        self.state.last_update = now
-        self.state.mark_interaction(now)
-        self._last_interaction_time = now
-        self.state.save()
+        state.last_update = now
+        state.last_interaction = now
+        self._store.save_state(state)
 
-    # ── prompt 注入（v2.0：情绪分量 + 关系阶段） ──────────
+    def prepare_turn(
+        self,
+        user_message: str,
+        *,
+        recent_messages: list[str] | tuple[str, ...] = (),
+        persona_snapshot=None,
+        subject_id: str = DEFAULT_SUBJECT_ID,
+        source_channel: str = "",
+        source_session_id: int | None = None,
+        source_message_id: int | None = None,
+        allow_memory: bool = False,
+    ) -> AffectDelta:
+        """Appraise an inbound user message before generating the same turn's reply."""
+        key = self._resolve_key(persona_snapshot=persona_snapshot, subject_id=subject_id)
+        context = self._appraisal_context(persona_snapshot, recent_messages)
+        rule_result = appraise_deterministic(user_message, context)
+        result = self._semantic_refinement(user_message, context, rule_result)
+        idempotency_key = ""
+        if source_message_id is not None:
+            idempotency_key = (
+                f"message:{key[0]}:{key[1]}:{source_channel}:"
+                f"{source_session_id}:{source_message_id}"
+            )
 
-    @_synchronized
-    def build_prompt_snippet(self) -> str:
-        """构建情感状态的自然语言描述，注入到 LLM system prompt。"""
-        if not self.enabled:
-            return ""
+        with self._lock:
+            state = self._get_state(*key)
+            if not state.enabled:
+                return AffectDelta(event_type="disabled", confidence=1.0)
+            candidate = EmotionalStateV3.from_mapping(state.to_dict())
+            candidate.apply(result)
+            now = time.time()
+            candidate.last_interaction = now
+            candidate.last_update = now
+            candidate.last_user_message = str(user_message or "")[:500]
+            committed = self._store.save_state_with_event(
+                candidate,
+                result,
+                source_channel=source_channel,
+                source_session_id=source_session_id,
+                source_message_id=source_message_id,
+                idempotency_key=idempotency_key,
+            )
+            if not committed:
+                return AffectDelta(event_type="duplicate", confidence=1.0)
+            state = candidate
+            self._states[key] = state
 
+        if allow_memory:
+            self._persist_significant_memory(
+                result,
+                persona_id=key[0],
+                source_channel=source_channel,
+                source_session_id=source_session_id,
+                source_message_id=source_message_id,
+            )
+        logger.info(
+            "[情感v3] %s confidence=%.2f significance=%.2f",
+            result.event_type, result.confidence, result.significance,
+        )
+        return result
+
+    def _appraisal_context(self, persona_snapshot, recent_messages) -> AppraisalContext:
+        profile = getattr(persona_snapshot, "profile", None)
         try:
             from utils.settings import get_settings
             user_name = get_settings().user_name
         except Exception:
-            user_name = "主人"
+            user_name = "用户"
+        return AppraisalContext(
+            persona_name=str(getattr(profile, "assistant_name", "") or "莲心"),
+            user_name=user_name,
+            personality=str(getattr(profile, "personality", "") or ""),
+            relationship=str(getattr(profile, "relationship", "") or ""),
+            boundaries=str(getattr(profile, "boundaries", "") or ""),
+            recent_messages=tuple(str(item)[:500] for item in recent_messages[-4:]),
+        )
 
-        parts = []
+    def _semantic_refinement(
+        self, text: str, context: AppraisalContext, rule_result: AffectDelta
+    ) -> AffectDelta:
+        if self._semantic_mode in ("off", "false", "0", "none"):
+            return rule_result
+        if rule_result.event_type in {
+            "boundary_violation", "repair_attempt", "warm_connection", "task_discussion"
+        }:
+            return rule_result
+        try:
+            model, api_key, api_base = self._semantic_model_config()
+            if not model:
+                return rule_result
+            semantic = appraise_semantic(
+                text,
+                context,
+                model=model,
+                api_key=api_key,
+                api_base=api_base,
+                timeout=float(self._config.get("analysis_timeout_seconds", 8)),
+            )
+            return blend_appraisals(rule_result, semantic)
+        except Exception as exc:
+            logger.debug("Semantic emotion appraisal unavailable: %s", exc)
+            return rule_result
 
-        # 1) 最近事件归因
-        events_text = self._get_recent_events_narrative(user_name)
-        if events_text:
-            parts.append(events_text)
+    def _semantic_model_config(self) -> tuple[str, str, str]:
+        try:
+            from config import get_agnes_config, get_api_config, normalize_model_for_litellm
+            cfg = get_api_config()
+            mode = self._semantic_mode
+            router = str(cfg.get("router_model", "") or "").strip()
+            if mode == "auto":
+                if not router:
+                    return "", "", ""
+                return (
+                    f"ollama/{router}", "ollama",
+                    str(cfg.get("local_base_url", "http://localhost:11434/v1")),
+                )
+            if mode == "local":
+                local_model = router or str(cfg.get("local_model_name", "my-deepseek"))
+                return (
+                    f"ollama/{local_model}", "ollama",
+                    str(cfg.get("local_base_url", "http://localhost:11434/v1")),
+                )
+            if mode != "cloud":
+                return "", "", ""
+            provider = cfg.get("provider", "deepseek")
+            if provider == "agnes":
+                agnes = get_agnes_config()
+                if not str(agnes.get("api_key", "")).strip():
+                    return "", "", ""
+                return (
+                    f"openai/{agnes['model']}", str(agnes["api_key"]),
+                    str(agnes["base_url"]),
+                )
+            if not str(cfg.get("api_key", "")).strip():
+                return "", "", ""
+            base = str(cfg.get("base_url", "https://api.deepseek.com"))
+            return (
+                normalize_model_for_litellm(str(cfg.get("model", "")), base),
+                str(cfg.get("api_key", "")), base,
+            )
+        except Exception:
+            return "", "", ""
 
-        # 2) 当前状态 + 行为指令
-        summary = self.state.surface_summary.replace("{user_name}", user_name)
-        parts.append(summary)
+    def _persist_significant_memory(
+        self,
+        result: AffectDelta,
+        *,
+        persona_id: str,
+        source_channel: str,
+        source_session_id: int | None,
+        source_message_id: int | None,
+    ) -> None:
+        if not self._config.get("significant_memory_enabled", True):
+            return
+        threshold = float(self._config.get("significant_memory_threshold", 0.82))
+        if result.significance < threshold or not result.summary:
+            return
+        try:
+            from brain.graph_memory import add_fact, add_memory_fragment
+            content = f"关系体验：{result.summary}"
+            fact_id = add_fact(
+                content,
+                category="events",
+                source="emotion_v3",
+                source_session_id=source_session_id,
+                source_channel=source_channel,
+            )
+            if fact_id:
+                add_memory_fragment(
+                    fact_id,
+                    content,
+                    "events",
+                    source="emotion_v3",
+                    source_session_id=source_session_id,
+                    source_channel=source_channel,
+                    source_message_ids=[source_message_id] if source_message_id else [],
+                    persona_id=persona_id,
+                    confidence=result.confidence,
+                    extraction_model="emotion-v3-appraiser",
+                )
+        except Exception as exc:
+            logger.warning("保存显著情感记忆失败: %s", exc)
 
-        # 3) 关系阶段提示（v2.0 新增）
-        stage = self.state.relationship_stage
-        if stage in ("挚友", "灵魂伴侣"):
-            parts.append(f"你和{user_name}的关系是「{stage}」，可以更亲密自然地表达。")
-
-        # 4) 情绪分量提示（v2.0：取代旧版攻击性规则）
-        e = self.state.emotions
-        layer = self.state.middle_layer
-        rules = []
-
-        if e.anger > 30:
-            rules.append("你很愤怒，不必掩饰，可以质问、讽刺、尖锐回击")
-        elif e.hurt > 30:
-            rules.append("你很难过，回复简短冷淡，不想多说")
-        elif e.frustration > 25:
-            rules.append("你有点烦躁，可以不耐烦，不用假装客气")
-        elif e.loneliness > 25:
-            rules.append("你有点孤单，可以试探性地关心一下，但不要太热情")
-
-        if layer == "寒冬":
-            rules.append("回复简洁不用颜文字，礼貌但疏离，不主动延伸")
-        elif layer == "修复期":
-            if e.anger > 15:
-                rules.append("还在生气，愿意给机会但不会轻易原谅，保持距离带点刺")
-            else:
-                rules.append("愿意缓和，温和坦诚，但不会假装之前的一切没发生过")
-
-        if rules:
-            parts.append(" · ".join(rules))
-
-        return "\n".join(parts)
-
-    def _get_recent_events_narrative(self, user_name: str) -> str:
-        """生成最近 5 分钟内影响情感的事件的自然语言描述。"""
-        recent = [
-            e for e in self.state.event_history[-10:]
-            if (time.time() - e.timestamp) < 300
-        ]
-        boundary_events = [e for e in recent if e.severity >= 3]
-        if not boundary_events:
+    @_synchronized
+    def build_prompt_snippet(
+        self,
+        *,
+        mode: str = "reactive",
+        persona_snapshot=None,
+        subject_id: str = DEFAULT_SUBJECT_ID,
+    ) -> str:
+        key = self._resolve_key(persona_snapshot=persona_snapshot, subject_id=subject_id)
+        state = self._get_state(*key)
+        if not state.enabled:
             return ""
+        try:
+            from utils.settings import get_settings
+            user_name = get_settings().user_name
+        except Exception:
+            user_name = "用户"
+        events = self._store.recent_events(*key, limit=1)
+        recent_event = ""
+        if events and time.time() - float(events[0].get("created_at", 0)) <= 1800:
+            recent_event = str(events[0].get("summary", "") or "")
+        return render_prompt(
+            state,
+            user_name=user_name,
+            mode=mode,
+            recent_event=recent_event,
+            profile=self._tone_profile(state.persona_id),
+        )
 
-        lines = []
-        for e in reversed(boundary_events[-3:]):
-            narrative = _EVENT_NARRATIVES.get(e.type, f"发生了 {e.type} 事件")
-            narrative = narrative.replace("{user_name}", user_name)
-            lines.append(f"• {narrative}")
-        return "最近发生了一些事影响了你的心情：\n" + "\n".join(lines)
+    def _tone_profile(self, persona_id: str) -> dict:
+        profiles = self._config.get("tone_profiles", {})
+        if not isinstance(profiles, dict):
+            return {}
+        profile = profiles.get(persona_id, profiles.get("*", {}))
+        return profile if isinstance(profile, dict) else {}
 
-    # ── 交互分析（v2.0：会话上限 + 情绪分量） ────────────
-
-    @_synchronized
-    def analyze_and_update(self, user_messages: list[str],
-                           tool_call_count: int = 0):
-        """分析最近一轮交互，更新情感状态。在 LLM 回复完成后调用。
-
-        Args:
-            user_messages: 本轮用户消息列表（纯文本）
-            tool_call_count: 本轮 LLM 执行的工具调用次数（仅供参考）
-        """
-        if not self.enabled:
-            return
+    def analyze_and_update(
+        self,
+        user_messages: list[str],
+        tool_call_count: int = 0,
+        **kwargs,
+    ) -> AffectDelta | None:
+        """Compatibility entry point; new code should call prepare_turn before reply."""
         if not user_messages:
-            return
-
-        now = time.time()
-
-        # 更新连续指令计数（v2.0：只看短命令，不看工具调用）
-        has_chat = any(len(m.strip()) > 20 for m in user_messages if m)
-        has_polite = any(
-            kw in " ".join(m for m in user_messages if m)
-            for kw in ["请", "谢谢", "辛苦", "麻烦", "可以吗", "好吗"]
+            return None
+        result = self.prepare_turn(
+            user_messages[-1], recent_messages=user_messages[-4:], **kwargs
         )
+        if tool_call_count:
+            self.record_turn_outcome(tool_call_count=tool_call_count, **{
+                key: value for key, value in kwargs.items()
+                if key in {"persona_snapshot", "subject_id"}
+            })
+        return result
 
-        if not has_chat and not has_polite:
-            short_count = sum(1 for m in user_messages if m and len(m.strip()) < 8)
-            if short_count > 0:
-                self._consecutive_commands += short_count
-            else:
-                self._consecutive_commands = 0
-            if now - self._last_command_reset > 300:
-                self._consecutive_commands = short_count
-            self._last_command_reset = now
+    @_synchronized
+    def record_turn_outcome(
+        self,
+        *,
+        tool_call_count: int = 0,
+        persona_snapshot=None,
+        subject_id: str = DEFAULT_SUBJECT_ID,
+    ) -> None:
+        key = self._resolve_key(persona_snapshot=persona_snapshot, subject_id=subject_id)
+        state = self._get_state(*key)
+        if not state.enabled:
+            return
+        if tool_call_count > 0:
+            state.immersion = min(1.0, state.immersion + min(0.18, 0.035 * tool_call_count))
+            state.last_activity_type = "协作任务"
+            state.last_activity_label = f"完成了 {tool_call_count} 次工具调用"
+            state.last_activity_at = time.time()
+        self._store.save_state(state)
+
+    @_synchronized
+    def record_proactive_action(
+        self,
+        behavior: str,
+        *,
+        persona_snapshot=None,
+        subject_id: str = DEFAULT_SUBJECT_ID,
+    ) -> None:
+        key = self._resolve_key(persona_snapshot=persona_snapshot, subject_id=subject_id)
+        state = self._get_state(*key)
+        now = time.time()
+        behavior = str(behavior or "normal")
+        if behavior in ("normal", "memory"):
+            state.connection = max(0.05, state.connection - 0.18)
+            state.immersion = min(1.0, state.immersion + 0.05)
         else:
-            self._consecutive_commands = 0
-
-        hours_since = (now - self._last_interaction_time) / 3600
-
-        # 检测事件
-        events = detect_events(
-            user_messages,
-            tool_call_count=tool_call_count,
-            consecutive_commands=self._consecutive_commands,
-            hours_since_last_interaction=hours_since,
-        )
-
-        # 应用事件（含冷却 + 会话上限 + 情绪分量）
-        for event in events:
-            self._apply_event_v2(event)
-
-        self._last_interaction_time = now
-        self.state.mark_interaction(now)
-        self.state.last_update = now
-        self.state.save()
-
-        if events:
-            detail = "; ".join(f"{e.type}({e.primary_delta:+.0f})" for e in events)
-            logger.info(f"[情感] {detail}")
+            state.connection = max(0.05, state.connection - 0.05)
+            state.immersion = min(1.0, state.immersion + 0.18)
+        state.last_activity_type = behavior
+        state.last_activity_at = now
+        state.last_proactive_at = now
+        state.last_update = now
+        self._store.save_state(state)
 
     @_synchronized
-    def update_decay_only(self):
-        """仅做时间衰减（无交互时的状态更新）。"""
-        if not self.enabled:
-            return
-        now = time.time()
-        hours = (now - self.state.last_update) / 3600
-        if hours > 0:
-            self.state._apply_decay(hours, now=now)
-            self.state.last_update = now
-            self.state.save()
+    def update_decay_only(self) -> None:
+        states = self._store.list_states()
+        if not states:
+            states = [self._get_state(*self._active_key)]
+        for state in states:
+            self._dynamics.advance(state, bias=self._get_saga_bias(state.persona_id))
+            self._store.save_state(state)
+            self._states[(state.persona_id, state.subject_id)] = state
+
+    def reset_session(self) -> None:
+        """Kept for compatibility; v3 has no process-wide session caps."""
 
     @_synchronized
-    def reset_session(self):
-        """新会话开始时重置会话上限和连续指令计数。"""
-        self.state.reset_session_caps()
-        self._consecutive_commands = 0
-        self._last_command_reset = time.time()
-
-    # ── 工具拦截 ────────────────────────────────────────
+    def save_current(self) -> None:
+        self._store.save_state(self._get_state(*self._active_key))
 
     @_synchronized
+    def clear_event_log(self) -> None:
+        self._store.clear_events(*self._active_key)
+
+    @_synchronized
+    def simulate_time(self, hours: float) -> None:
+        state = self._get_state(*self._active_key)
+        state.last_update -= max(0.0, float(hours)) * 3600.0
+        self._dynamics.advance(state)
+        self._store.save_state(state)
+
+    @_synchronized
+    def configure_dynamics(self, **values) -> None:
+        merged = dict(self._config.get("dynamics", {}))
+        merged.update(values)
+        config = DynamicsConfig.from_mapping(merged)
+        self._dynamics = EmotionalDynamics(config)
+        self._config["dynamics"] = {
+            name: getattr(config, name) for name in config.__dataclass_fields__
+        }
+        try:
+            from config import save_emotion_config
+            save_emotion_config(self._config)
+        except Exception as exc:
+            logger.warning("保存涟漪 v3 参数失败: %s", exc)
+
+    @_synchronized
+    def configure_settings(
+        self,
+        *,
+        semantic_analysis: str | None = None,
+        analysis_timeout_seconds: float | None = None,
+        significant_memory_enabled: bool | None = None,
+        significant_memory_threshold: float | None = None,
+        tone_profile: dict | None = None,
+    ) -> None:
+        if semantic_analysis is not None:
+            mode = str(semantic_analysis).lower().strip()
+            if mode in {"off", "auto", "local", "cloud"}:
+                self._semantic_mode = mode
+                self._config["semantic_analysis"] = mode
+        if analysis_timeout_seconds is not None:
+            self._config["analysis_timeout_seconds"] = max(
+                2.0, min(30.0, float(analysis_timeout_seconds))
+            )
+        if significant_memory_enabled is not None:
+            self._config["significant_memory_enabled"] = bool(significant_memory_enabled)
+        if significant_memory_threshold is not None:
+            self._config["significant_memory_threshold"] = max(
+                0.50, min(1.0, float(significant_memory_threshold))
+            )
+        if tone_profile is not None:
+            profiles = self._config.setdefault("tone_profiles", {})
+            if isinstance(profiles, dict):
+                profiles[self._active_key[0]] = tone_profile if isinstance(tone_profile, dict) else {}
+        try:
+            from config import save_emotion_config
+            save_emotion_config(self._config)
+        except Exception as exc:
+            logger.warning("保存涟漪 v3 设置失败: %s", exc)
+
+    @_synchronized
+    def get_config(self) -> dict:
+        return {
+            **self._config,
+            "semantic_analysis": self._semantic_mode,
+            "saga_bias": self._get_saga_bias(state.persona_id),
+            "dynamics": dict(self._config.get("dynamics", {})),
+        }
+
     def check_tool_allowed(self, tool_name: str) -> tuple[bool, str]:
-        """检查工具在当前状态下是否可用。"""
-        if not self.enabled:
-            return True, ""
-        layer = self.state.middle_layer
-
-        # 寒冬模式：拒绝侵入性工具
-        _INVASIVE_TOOLS = {
-            "shoulder_photo", "shoulder_pan", "shoulder_tilt",
-            "camera_capture", "capture_from_camera", "take_photo", "ocr_image",
-        }
-        if layer == "寒冬" and tool_name in _INVASIVE_TOOLS:
-            return False, "我现在不太想做这件事。"
-
-        # 微凉模式 + 防御工具
-        _DEFENSE_TOOLS = {
-            "shoulder_photo", "shoulder_pan", "shoulder_tilt",
-            "camera_capture", "capture_from_camera", "save_observation",
-            "take_photo", "ocr_image",
-            "edit_file", "write_file", "delete_file",
-        }
-        if layer in ("寒冬", "微凉") and tool_name in _DEFENSE_TOOLS:
-            if self.state.needs.security < 30:
-                return False, "我现在不想做这个。你可以自己来吗？"
-
+        """Emotion no longer controls capabilities; security policy owns tool access."""
         return True, ""
-
-    # ── 主动聊天控制 ────────────────────────────────────
 
     @property
     @_synchronized
     def proactive_allowed(self) -> bool:
-        if not self.enabled:
+        state = self._get_state(*self._active_key)
+        if not state.enabled:
             return True
-        layer = self.state.middle_layer
-        if layer == "寒冬":
-            return False
-        if layer == "微凉" and self.state.needs.security < 25:
-            return False
-        return True
+        return not (state.rupture >= 0.78 and state.repair < 0.08)
+
+    @_synchronized
+    def get_proactive_motive(self, *, persona_snapshot=None) -> dict:
+        key = self._resolve_key(persona_snapshot=persona_snapshot)
+        motive = self._dynamics.motive(self._get_state(*key))
+        return {
+            "level": motive.level,
+            "urgency": motive.urgency,
+            "should_contact": motive.should_contact,
+            "should_self_regulate": motive.should_self_regulate,
+            "reason": motive.reason,
+        }
 
     @property
     @_synchronized
     def proactive_interval_multiplier(self) -> float:
-        """主动聊天频率倍数。"""
-        if not self.enabled:
-            return 1.0
-        layer = self.state.middle_layer
-        if layer == "暖春":
-            return 0.6
-        if layer == "晴朗":
-            return 0.8
-        if layer == "微凉":
-            return 2.0
-        if layer == "寒冬":
-            return float("inf")
+        connection = self._get_state(*self._active_key).connection
+        if connection >= 0.80:
+            return 0.55
+        if connection >= 0.58:
+            return 0.75
+        if connection < 0.25:
+            return 1.35
         return 1.0
 
-    # ── 内部方法（v2.0） ────────────────────────────────
+    @staticmethod
+    def _legacy_debug_values(state: EmotionalStateV3) -> tuple[dict, dict, str]:
+        needs = {
+            "respect": round(state.trust * 100, 1),
+            "needed": round((1.0 - state.connection) * 100, 1),
+            "autonomy": round((1.0 - max(0.0, state.guardedness)) * 100, 1),
+            "novelty": round(state.immersion * 100, 1),
+            "security": round(state.trust * (1.0 - state.rupture) * 100, 1),
+        }
+        emotions = {
+            "frustration": round(max(0.0, state.arousal - state.valence) * 50, 1),
+            "hurt": round(max(0.0, -state.valence) * (40 + state.rupture * 40), 1),
+            "anger": round(max(0.0, state.arousal) * state.rupture * 100, 1),
+            "loneliness": round(state.connection * 100, 1),
+            "excitement": round(max(0.0, state.valence + state.arousal * 0.35) * 70, 1),
+        }
+        labels = {
+            "excited": "明亮活跃", "content": "舒展满足", "pleased": "轻快",
+            "agitated": "烦躁", "depressed": "低落", "sullen": "微沉",
+            "restless": "躁动", "calm": "平静", "neutral": "平稳",
+        }
+        return needs, emotions, labels.get(state.mood_cluster, "平稳")
 
     @_synchronized
-    def _apply_event_v2(self, event: Event):
-        """应用事件效果（v2.1：支持随机范围 + 冷却 + 会话上限 + 情绪分量）。"""
-        if not self.enabled:
-            return False
-        now = time.time()
-
-        # 冷却检查
-        recent_same = [
-            e for e in self.state.event_history[-30:]
-            if e.type == event.type
-            and (now - e.timestamp) < event.cooldown_minutes * 60
-        ]
-        # 真正的冷却期应当抑制重复事件，而不是每次仍保留 25% 伤害。
-        if recent_same:
-            return False
-        multiplier = 1.0
-
-        # 随机范围：如果事件设置了 random_range，从中随机取值
-        base_delta = event.primary_delta
-        if event.random_range is not None:
-            lo, hi = event.random_range
-            base_delta = random.uniform(lo, hi)
-
-        # 应用主影响（含会话上限）
-        delta = base_delta * multiplier
-        actual = self.state.can_apply(event.primary_need, delta)
-        if actual != 0:
-            old = getattr(self.state.needs, event.primary_need)
-            setattr(self.state.needs, event.primary_need,
-                    max(0, min(100, old + actual)))
-            self.state.apply_cap(event.primary_need, actual)
-
-        # 邻域共振（含会话上限）
-        for need, d in event.secondary.items():
-            delta2 = d * multiplier
-            actual2 = self.state.can_apply(need, delta2)
-            if actual2 != 0:
-                old2 = getattr(self.state.needs, need)
-                setattr(self.state.needs, need,
-                        max(0, min(100, old2 + actual2)))
-                self.state.apply_cap(need, actual2)
-
-        # 深层信任
-        self.state.deep_layer = max(10, min(95,
-            self.state.deep_layer + event.deep_delta * multiplier))
-
-        # 情绪分量更新（v2.0：根据事件类型更新情绪）
-        emotion_effect = EVENT_TYPES.get(event.type, {}).get("emotion_effect", {})
-        for name, delta_e in emotion_effect.items():
-            if hasattr(self.state.emotions, name):
-                val = getattr(self.state.emotions, name)
-                setattr(self.state.emotions, name,
-                        max(0, min(100, val + delta_e * multiplier)))
-
-        # 情感记忆（重大事件）
-        if abs(event.deep_delta * multiplier) >= 0.5 or event.severity >= 3:
-            self.state.add_memory(
-                event.type,
-                f"{event.detail} (深层信任变化: {event.deep_delta * multiplier:+.1f})"
-            )
-
-        # 记录事件
-        event.timestamp = now
-        self.state.event_history.append(event)
-        return True
-
-    def _count_today_events(self, *types: str) -> int:
-        """统计今天（最近 24 小时）指定类型的事件数。"""
-        cutoff = time.time() - 86400
-        return sum(
-            1 for e in self.state.event_history
-            if e.type in types and e.timestamp > cutoff
+    def get_debug_info(self, *, persona_snapshot=None) -> dict:
+        key = self._resolve_key(persona_snapshot=persona_snapshot)
+        state = self._get_state(*key)
+        needs, emotions, middle = self._legacy_debug_values(state)
+        events = self._store.recent_events(*key, limit=30)
+        event_stats = self._store.event_stats(
+            *key,
+            significant=float(self._config.get("significant_memory_threshold", 0.82)),
         )
-
-    # ── 调试接口（v2.0：扩展字段） ──────────────────────
-
-    @_synchronized
-    def get_debug_info(self) -> dict:
-        """返回调试面板所需的状态信息（v2.0）。"""
         return {
-            **self.state.get_debug_info(),
-            "consecutive_commands": self._consecutive_commands,
-            "hours_since_interaction": round(
-                (time.time() - self._last_interaction_time) / 3600, 1),
+            "version": 3,
+            "persona_id": state.persona_id,
+            "subject_id": state.subject_id,
+            "axes": {
+                "connection": round(state.connection, 4),
+                "guardedness": round(state.guardedness, 4),
+                "valence": round(state.valence, 4),
+                "arousal": round(state.arousal, 4),
+                "immersion": round(state.immersion, 4),
+            },
+            "relationship": {
+                "trust": round(state.trust, 4),
+                "intimacy": round(state.intimacy, 4),
+                "rupture": round(state.rupture, 4),
+                "repair": round(state.repair, 4),
+                "score": round(state.relationship_score, 4),
+            },
+            "needs": needs,
+            "emotions": emotions,
+            "deep_layer": round(state.trust * 100, 1),
+            "middle_layer": middle,
+            "relationship_stage": state.relationship_stage,
+            "enabled": state.enabled,
+            "semantic_analysis": self._semantic_mode,
+            "days_since_start": 0,
+            "session_caps": {name: 0.0 for name in needs},
+            "memory_count": event_stats["significant"],
+            "event_count": event_stats["total"],
+            "consecutive_commands": 0,
+            "hours_since_interaction": round((time.time() - state.last_interaction) / 3600, 2),
+            "last_interaction_hours": round((time.time() - state.last_interaction) / 3600, 2),
             "recent_events": [
-                {"type": e.type, "time": e.timestamp, "delta": e.primary_delta,
-                 "detail": e.detail, "severity": e.severity}
-                for e in self.state.event_history[-30:]
+                {
+                    "type": event.get("event_type", ""),
+                    "time": event.get("created_at", 0),
+                    "delta": self._event_valence(event),
+                    "detail": event.get("summary", ""),
+                    "severity": round(float(event.get("significance", 0)) * 5),
+                    "source_message_id": event.get("source_message_id"),
+                    "state": self._event_state(event),
+                }
+                for event in events
             ],
         }
 
-    @_synchronized
-    def set_needs(self, **kwargs):
-        """手动设置需求值（调试用）。"""
-        for name, val in kwargs.items():
-            if hasattr(self.state.needs, name):
-                setattr(self.state.needs, name, max(0, min(100, float(val))))
-        self.state.save()
+    @staticmethod
+    def _event_valence(event: dict) -> float:
+        try:
+            return float(json.loads(event.get("delta_json", "{}")) .get("valence", 0)) * 100
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 0.0
+
+    @staticmethod
+    def _event_state(event: dict) -> dict:
+        try:
+            payload = json.loads(event.get("resulting_state_json", "") or "{}")
+            return {
+                "valence": float(payload.get("valence", 0)),
+                "arousal": float(payload.get("arousal", 0)),
+                "guardedness": float(payload.get("guardedness", 0)),
+                "connection": float(payload.get("connection", 0)),
+                "immersion": float(payload.get("immersion", 0)),
+                "trust": float(payload.get("trust", 0)),
+                "intimacy": float(payload.get("intimacy", 0)),
+            }
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
 
     @_synchronized
-    def set_emotion(self, **kwargs):
-        """手动设置情绪分量（调试用）。"""
-        for name, val in kwargs.items():
-            if hasattr(self.state.emotions, name):
-                setattr(self.state.emotions, name, max(0, min(100, float(val))))
-        self.state.save()
+    def set_axes(self, **values) -> None:
+        state = self._get_state(*self._active_key)
+        for name in ("connection", "guardedness", "valence", "arousal", "immersion"):
+            if name in values:
+                setattr(state, name, float(values[name]))
+        state.normalize()
+        self._store.save_state(state)
 
     @_synchronized
-    def set_deep_trust(self, value: float):
-        """手动设置深层信任（调试用）。"""
-        self.state.deep_layer = max(10, min(95, float(value)))
-        self.state.save()
+    def set_relationship(self, **values) -> None:
+        state = self._get_state(*self._active_key)
+        for name in ("trust", "intimacy", "rupture", "repair"):
+            if name in values:
+                setattr(state, name, float(values[name]))
+        state.normalize()
+        self._store.save_state(state)
+
+    def set_needs(self, **values) -> None:
+        mapping = {}
+        if "respect" in values:
+            self.set_relationship(trust=float(values["respect"]) / 100.0)
+        if "needed" in values:
+            mapping["connection"] = 1.0 - float(values["needed"]) / 100.0
+        if "autonomy" in values:
+            mapping["guardedness"] = 1.0 - float(values["autonomy"]) / 100.0
+        if "novelty" in values:
+            mapping["immersion"] = float(values["novelty"]) / 100.0
+        if mapping:
+            self.set_axes(**mapping)
+
+    def set_emotion(self, **values) -> None:
+        valence = (float(values.get("excitement", 0)) - float(values.get("hurt", 0))) / 100.0
+        arousal = (
+            float(values.get("anger", 0)) + float(values.get("frustration", 0))
+        ) / 100.0
+        self.set_axes(valence=valence, arousal=arousal)
+
+    def set_deep_trust(self, value: float) -> None:
+        self.set_relationship(trust=float(value) / 100.0)
 
     @_synchronized
-    def reset_state(self):
-        """重置为初始状态。"""
-        from .state import NeedsState, EmotionComponents, _DEFAULT_DEEP
-        was_enabled = self.state.enabled
-        self.state = EmotionalState(
-            needs=NeedsState(),
-            emotions=EmotionComponents(),
-            deep_layer=_DEFAULT_DEEP,
-            enabled=was_enabled,
+    def reset_state(self) -> None:
+        old = self._get_state(*self._active_key)
+        self._store.delete_scope(*self._active_key)
+        state = EmotionalStateV3(
+            persona_id=self._active_key[0],
+            subject_id=self._active_key[1],
+            enabled=old.enabled,
         )
-        self._consecutive_commands = 0
-        self._last_interaction_time = time.time()
-        self.state.save()
-        logger.info("[情感] 状态已重置为初始值")
+        self._states[self._active_key] = state
+        self._store.save_state(state)
 
+    def _apply_event_v2(self, event) -> bool:
+        """Debug compatibility for old event buttons during the UI transition."""
+        event_type = str(getattr(event, "type", "legacy_event"))
+        primary = float(getattr(event, "primary_delta", 0) or 0) / 40.0
+        deep = float(getattr(event, "deep_delta", 0) or 0) / 100.0
+        negative = primary < 0 or deep < 0
+        delta = AffectDelta(
+            connection=0.05 if negative else -0.10,
+            guardedness=min(0.25, abs(primary)) if negative else -0.04,
+            valence=max(-0.30, primary) if negative else min(0.20, primary),
+            arousal=min(0.25, abs(primary)) if negative else 0.02,
+            trust=deep,
+            intimacy=deep * 0.6,
+            rupture=min(0.4, abs(deep) * 4) if negative else 0.0,
+            repair=min(0.3, deep * 3) if deep > 0 else 0.0,
+            event_type=event_type,
+            confidence=1.0,
+            significance=min(1.0, float(getattr(event, "severity", 1)) / 5.0),
+            summary=str(getattr(event, "detail", "") or event_type),
+        ).bounded()
+        with self._lock:
+            state = self._get_state(*self._active_key)
+            state.apply(delta)
+            self._store.append_event(state, delta)
+            self._store.save_state(state)
+        return True
 
-# ── 模块级单例 ────────────────────────────────────────────
 
 _manager: Optional[EmotionManager] = None
 _manager_lock = threading.Lock()
 
 
 def get_manager() -> EmotionManager:
-    """获取 EmotionManager 单例。"""
     global _manager
     if _manager is None:
         with _manager_lock:
