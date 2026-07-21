@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QScrollArea, QSlider,
     QLineEdit, QMessageBox, QFileDialog, QRadioButton,
-    QButtonGroup, QDialog, QDialogButtonBox, QGraphicsOpacityEffect,
+    QButtonGroup, QDialog, QDialogButtonBox, QGraphicsOpacityEffect, QStackedWidget,
 )
 from PyQt5.QtCore import Qt, QTimer, QPoint, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QFont, QIcon, QPixmap
@@ -279,7 +279,31 @@ class CharacterWidget(QWidget):
         row4.addWidget(self._btn_open_music_folder)
         music_main_layout.addLayout(row4)
 
-        main_layout.addWidget(self._music_bar)
+        from gui.jiwen_status_widget import JiwenStatusWidget
+        self._view_stack = QStackedWidget(self)
+        self._view_stack.setStyleSheet("QStackedWidget { background: transparent; border: none; }")
+        self._jiwen_status_widget = JiwenStatusWidget(self)
+        self._view_stack.addWidget(self._music_bar)
+        self._view_stack.addWidget(self._jiwen_status_widget)
+        self._view_stack.setCurrentWidget(self._music_bar)
+        main_layout.addWidget(self._view_stack)
+
+        self._view_switch = QWidget(self)
+        switch_layout = QHBoxLayout(self._view_switch)
+        switch_layout.setContentsMargins(8, 0, 8, 0)
+        switch_layout.setSpacing(4)
+        self._music_view_button = QPushButton("音乐盒", self._view_switch)
+        self._jiwen_view_button = QPushButton("五轴意识", self._view_switch)
+        for button in (self._music_view_button, self._jiwen_view_button):
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFixedHeight(24)
+            button.setStyleSheet("QPushButton { color:#AEB7D4; background:#252B45; border:1px solid #3D4668; border-radius:6px; font-size:8pt; } QPushButton:checked { color:#FFFFFF; background:#4A5ADE; border-color:#8F9BFF; }")
+            switch_layout.addWidget(button)
+        self._music_view_button.setChecked(True)
+        self._music_view_button.clicked.connect(lambda: self._switch_sidebar_view(0))
+        self._jiwen_view_button.clicked.connect(lambda: self._switch_sidebar_view(1))
+        main_layout.addWidget(self._view_switch)
 
         # ========== 功能区弹出触发按钮 ==========
         self._btn_function_toggle = QPushButton("▲ 功能中心")
@@ -521,6 +545,13 @@ class CharacterWidget(QWidget):
             display_title = title
             self._music_title_label.setToolTip("")
         self._music_title_label.setText(display_title)
+
+    def _switch_sidebar_view(self, index: int):
+        self._view_stack.setCurrentIndex(int(index))
+        self._music_view_button.setChecked(index == 0)
+        self._jiwen_view_button.setChecked(index == 1)
+        if index == 1:
+            self._jiwen_status_widget.refresh()
 
     def _toggle_function_panel(self):
         """弹出/收起功能区覆盖面板"""
