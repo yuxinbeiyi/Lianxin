@@ -20,6 +20,7 @@ class GalgameDialog(QWidget):
 
     # 用户发送消息时发射（文本内容）
     message_submitted = pyqtSignal(str)
+    voice_requested = pyqtSignal()
     mute_toggled = pyqtSignal(bool)        # ← 新增：静音状态变化信号
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -27,6 +28,7 @@ class GalgameDialog(QWidget):
         self._full_text = ""
         self._current_index = 0
         self._is_typing = False
+        self._status_text = "就绪"
 
         self._init_window()
         self._init_ui()
@@ -109,6 +111,24 @@ class GalgameDialog(QWidget):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(6)
 
+        self._status_label = QLabel("● 就绪")
+        self._status_label.setStyleSheet("color: #4F8F7B; font-size: 10px; background: transparent;")
+        btn_layout.addWidget(self._status_label)
+
+        self._voice_btn = QPushButton("🎤")
+        self._voice_btn.setFixedSize(30, 28)
+        self._voice_btn.setFont(QFont("Segoe UI Emoji", 12))
+        self._voice_btn.setCursor(Qt.PointingHandCursor)
+        self._voice_btn.setToolTip("点击录音，自动转换为文字")
+        self._voice_btn.setStyleSheet(self._action_button_style())
+        self._voice_btn.clicked.connect(self.voice_requested.emit)
+        btn_layout.addWidget(self._voice_btn)
+
+        self._auto_send_cb = QCheckBox("自动发送")
+        self._auto_send_cb.setChecked(True)
+        self._auto_send_cb.setStyleSheet("QCheckBox { color: #506E65; font-size: 10px; background: transparent; }")
+        btn_layout.addWidget(self._auto_send_cb)
+
         # 设置按钮
         self._settings_btn = QPushButton("⚙")
         self._settings_btn.setFont(QFont("Segoe UI Emoji", 12))
@@ -154,13 +174,13 @@ class GalgameDialog(QWidget):
         self._send_btn.setCursor(Qt.PointingHandCursor)
         self._send_btn.setStyleSheet("""
             QPushButton {
-                background: #6C7BFF;
-                color: white;
-                border: none;
+                background: #347767;
+                color: #FFFFFF;
+                border: 1px solid #83CDB8;
                 border-radius: 6px;
             }
-            QPushButton:hover  { background: #5A6AEE; }
-            QPushButton:pressed{ background: #4A5ADE; }
+            QPushButton:hover  { background: #3E8A73; }
+            QPushButton:pressed{ background: #2A5148; }
         """)
         self._send_btn.clicked.connect(self._on_send)
         btn_layout.addWidget(self._send_btn)
@@ -168,6 +188,37 @@ class GalgameDialog(QWidget):
 
         self._update_mute_button()
         self.setLayout(layout)
+
+    @staticmethod
+    def _action_button_style():
+        return """
+            QPushButton { background: rgba(34, 75, 64, 190); color: #DCEFE8;
+                border: 1px solid #5C9D8B; border-radius: 6px; }
+            QPushButton:hover { background: #347261; color: #FFFFFF; border-color: #83CDB8; }
+            QPushButton:pressed { background: #2A5148; }
+        """
+
+    def set_status(self, text: str, active: bool = False):
+        self._status_text = text
+        if hasattr(self, "_status_label"):
+            color = "#B47742" if active else "#4F8F7B"
+            self._status_label.setStyleSheet(f"color: {color}; font-size: 10px; background: transparent;")
+            self._status_label.setText(f"● {text}")
+
+    def set_voice_recording(self, recording: bool):
+        self._voice_btn.setText("■" if recording else "🎤")
+        self._voice_btn.setToolTip("点击停止录音" if recording else "点击录音，自动转换为文字")
+        self._voice_btn.setStyleSheet("""
+            QPushButton { background: #B85C5C; color: #FFFFFF; border: 1px solid #E49A9A; border-radius: 6px; }
+            QPushButton:hover { background: #D06A6A; }
+        """ if recording else self._action_button_style())
+
+    def set_input_text(self, text: str):
+        self._input_edit.setPlainText(text)
+        self._input_edit.setFocus()
+
+    def auto_send_enabled(self) -> bool:
+        return self._auto_send_cb.isChecked()
 
 
     def _init_typing_timer(self):

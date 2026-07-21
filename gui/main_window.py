@@ -784,6 +784,17 @@ class MainWindow(QMainWindow):
         self._btn_close.clicked.connect(self.close)
         top_bar_layout.addWidget(self._btn_close)
 
+        # 统一顶部功能按钮的深色玻璃风格，避免各模块使用互相冲突的配色。
+        top_action_style = """
+            QPushButton { background-color: rgba(22, 43, 38, 225); color: #DCEFE8;
+                border: 1px solid #416B63; border-radius: 7px; padding: 2px 8px; }
+            QPushButton:hover { background-color: #2A5148; border-color: #75B8A8; color: #FFFFFF; }
+            QPushButton:pressed { background-color: #35685C; border-color: #9AD8C8; }
+        """
+        for button in (self._btn_history, self._btn_new_chat, self._btn_note,
+                       self._galgame_btn, self._btn_standby):
+            button.setStyleSheet(top_action_style)
+
         main_layout.addWidget(top_bar)
 
         # 上半：左栏（角色）+ 右栏（聊天）
@@ -1183,6 +1194,8 @@ class MainWindow(QMainWindow):
 
     def _on_tool_called(self, tool_name: str, args_json: str, round_num: int):
         self._chat_widget.add_tool_call_card(tool_name, args_json, round_num)
+        if self._galgame_visible and self._galgame_dialog:
+            self._galgame_dialog.set_status(f"正在执行：{tool_name}", active=True)
         self._task_progress.set_subtitle(f"🔧 {tool_name} 执行中…")
         self._pending_arms_cross = random.random() < 0.03
         if self._galgame_visible and self._galgame_dialog:
@@ -1210,6 +1223,8 @@ class MainWindow(QMainWindow):
         self._input_panel.hide_interrupt_bar()
         self._char_widget.stop_thinking()
         self._set_idle_state()
+        if self._galgame_visible and self._galgame_dialog:
+            self._galgame_dialog.set_status("执行失败")
         self._chat_widget.add_system_tip(f"错误：{err}")
 
 
@@ -1221,6 +1236,8 @@ class MainWindow(QMainWindow):
         self._input_panel.hide_interrupt_bar()
         self._chat_widget.finalize_tool_groups()
         self._duty_scheduler.set_agent_busy(False)
+        if self._galgame_visible and self._galgame_dialog:
+            self._galgame_dialog.set_status("正在整理回复", active=True)
         # 回复展示属于业务链路，不能因动画回调缺失而永久丢失。
         # deliver_once 同时防止动画正常完成后与超时兜底重复展示。
         delivery_state = {"done": False}
@@ -1273,6 +1290,8 @@ class MainWindow(QMainWindow):
         def on_segment_finished():
             self._segment_sender = None
             self._set_idle_state()
+            if self._galgame_visible and self._galgame_dialog:
+                self._galgame_dialog.set_status("就绪")
             if self.isMinimized():
                 self.flash_taskbar(flash_count=0)
             self._restart_listening()
@@ -1291,6 +1310,7 @@ class MainWindow(QMainWindow):
         emotion = getattr(self._agent, '_last_emotion', None) if self._agent else None
 
         if self._galgame_visible and self._galgame_dialog:
+            self._galgame_dialog.set_status("正在回复", active=True)
             galgame_emotion = self._expression_mgr.match(first_segment)
             self._galgame_dialog.show_reply(display_text)
             if self._tachie_win:
@@ -1339,6 +1359,7 @@ class MainWindow(QMainWindow):
             self._galgame_dialog = GalgameDialog()
             # 连接对话框发送信号
             self._galgame_dialog.message_submitted.connect(self._on_galgame_message)
+            self._galgame_dialog.voice_requested.connect(self._on_galgame_voice_requested)
             self._galgame_dialog.mute_toggled.connect(self._on_mute)
             # 连接立绘拖拽 → 对话框跟随移动
             self._tachie_win.position_changed.connect(self._on_tachie_moved)
@@ -1398,7 +1419,43 @@ class MainWindow(QMainWindow):
 
     def _on_galgame_message(self, text: str):
         """Galgame 对话框发送消息。"""
+        if self._galgame_dialog:
+            self._galgame_dialog.set_status("莲心正在思考", active=True)
         self._send_user_text_to_agent(text)
+
+    def _on_galgame_voice_requested(self):
+        """在 Galgame 输入框复用主界面的本地 VoiceWorker。"""
+        if getattr(self, "_galgame_voice_worker", None) and self._galgame_voice_worker.isRunning():
+            self._galgame_voice_worker.stop()
+            return
+        self._galgame_voice_worker = VoiceWorker(self._listener, self)
+        self._galgame_voice_worker.recording_stopped.connect(
+            lambda: self._galgame_dialog and self._galgame_dialog.set_voice_recording(False))
+        self._galgame_voice_worker.text_ready.connect(self._on_galgame_voice_text)
+        self._galgame_voice_worker.error_occurred.connect(self._on_galgame_voice_error)
+        self._galgame_dialog.set_voice_recording(True)
+        self._galgame_dialog.set_status("正在聆听", active=True)
+        self._galgame_voice_worker.start()
+
+    def _on_galgame_voice_text(self, text: str):
+        if not self._galgame_dialog:
+            return
+        text = text.strip()
+        self._galgame_dialog.set_voice_recording(False)
+        if not text:
+            self._galgame_dialog.set_status("未识别到语音")
+            return
+        self._galgame_dialog.set_input_text(text)
+        if self._galgame_dialog.auto_send_enabled():
+            self._galgame_dialog.set_status("已识别，正在发送", active=True)
+            self._on_galgame_message(text)
+        else:
+            self._galgame_dialog.set_status("已识别，等待发送")
+
+    def _on_galgame_voice_error(self, err: str):
+        if self._galgame_dialog:
+            self._galgame_dialog.set_voice_recording(False)
+            self._galgame_dialog.set_status(f"语音失败：{err}")
 
 
     def _on_galgame_expression(self, emotion: str):
@@ -2651,6 +2708,18 @@ class MainWindow(QMainWindow):
                 QPushButton:hover  { background-color: #3D3D55; }
                 QPushButton:pressed{ background-color: #4D4D65; }
             """)
+        self._btn_standby.setStyleSheet("""
+            QPushButton { background-color: #254D43; color: #E7FFF6; border: 1px solid #83CDB8;
+                border-radius: 7px; padding: 2px 8px; }
+            QPushButton:hover { background-color: #347261; color: #FFFFFF; }
+            QPushButton:pressed { background-color: #3E8A73; }
+        """ if is_active else """
+            QPushButton { background-color: rgba(22, 43, 38, 225); color: #DCEFE8;
+                border: 1px solid #416B63; border-radius: 7px; padding: 2px 8px; }
+            QPushButton:hover { background-color: #2A5148; border-color: #75B8A8; color: #FFFFFF; }
+            QPushButton:pressed { background-color: #35685C; border-color: #9AD8C8; }
+        """)
+
     def _on_duplex_voice_start(self):
         """全双工：检测到用户开始说话 → 输入框显示聆听中（线程安全）"""
         self._duplex_voice_start_signal.emit()

@@ -191,10 +191,13 @@ class ToolSelectionDialog(QDialog):
         # 样式表（包含QMenu样式，解决右键菜单文字消失）
         self.setStyleSheet("""
             QDialog {
+                background-color: #12201E;
                 border-radius: 8px;
             }
             QListWidget, QTreeWidget {
-                border: 1px solid #3D3D5A;
+                background-color: #142421;
+                color: #DCEFE8;
+                border: 1px solid #416B63;
                 border-radius: 6px;
                 padding: 4px;
                 outline: none;
@@ -203,46 +206,47 @@ class ToolSelectionDialog(QDialog):
             }
             QListWidget::item, QTreeWidget::item {
                 padding: 8px 12px;
-                border-bottom: 1px solid #EEEEEE;
+                border-bottom: 1px solid rgba(117, 184, 168, 45);
             }
             QListWidget::item:selected, QTreeWidget::item:selected {
-                background-color: #6C7BFF;
+                background-color: #347767;
                 color: white;
             }
             QTreeWidget::item:hover, QListWidget::item:hover {
-                background-color: #F0F2F5;
+                background-color: #2A5148;
+                color: #FFFFFF;
             }
             QTreeWidget::item:selected:hover, QListWidget::item:selected:hover {
-                background-color: #6C7BFF;
+                background-color: #3E8A73;
                 color: white;
             }
             QMenu {
-                background-color: #FFFFFF;
-                border: 1px solid #CCCCCC;
+                background-color: #142421;
+                border: 1px solid #416B63;
                 border-radius: 4px;
                 padding: 4px;
             }
             QMenu::item {
                 background-color: transparent;
-                color: #E0E0E0;
+                color: #DCEFE8;
                 padding: 6px 24px 6px 12px;
                 margin: 2px;
                 border-radius: 4px;
             }
             QMenu::item:selected {
-                background-color: #6C7BFF;
+                background-color: #347767;
                 color: #FFFFFF;
             }
             QPushButton {
-                background-color: #6C7BFF;
-                color: white;
-                border: none;
+                background-color: #254D43;
+                color: #E7FFF6;
+                border: 1px solid #5C9D8B;
                 border-radius: 6px;
                 padding: 8px 16px;
                 font-size: 10pt;
             }
             QPushButton:hover {
-                background-color: #5A6AEE;
+                background-color: #347261;
             }
             QPushButton#cancel_btn {
                 background-color: #3D3D5A;
@@ -252,15 +256,18 @@ class ToolSelectionDialog(QDialog):
                 background-color: #4D4D6A;
             }
             QLineEdit {
-                border: 1px solid #3D3D5A;
+                background-color: #0F1B1A;
+                color: #E7FFF6;
+                border: 1px solid #416B63;
                 border-radius: 6px;
                 padding: 8px 10px;
                 font-size: 10pt;
             }
             QLineEdit:focus {
-                border: 1px solid #6C7BFF;
+                border: 1px solid #83CDB8;
             }
             QCheckBox {
+                color: #C8DED7;
                 font-size: 10pt;
                 spacing: 6px;
             }
@@ -710,15 +717,18 @@ class InputPanel(QWidget):
         self._tool_btn.setToolTip("选择工具（强制使用）")
         self._tool_btn.setStyleSheet("""
             QPushButton {
-                background-color: #F0F2F5;
+                background-color: #18312C;
+                color: #DCEFE8;
                 border-radius: 8px;
-                border: 1px solid #CCCCCC;
+                border: 1px solid #416B63;
             }
             QPushButton:hover {
-                background-color: #E0E4F0;
+                background-color: #2A5148;
+                border-color: #75B8A8;
+                color: #FFFFFF;
             }
             QPushButton:pressed {
-                background-color: #D0D4E8;
+                background-color: #35685C;
             }
         """)
         self._tool_btn.clicked.connect(self._show_tool_dialog)
@@ -761,14 +771,14 @@ class InputPanel(QWidget):
         self._btn_send.setCursor(Qt.PointingHandCursor)
         self._btn_send.setStyleSheet("""
             QPushButton {
-                background-color: #6C7BFF;
-                color: white;
+                background-color: #347767;
+                color: #FFFFFF;
                 border-radius: 8px;
-                border: none;
+                border: 1px solid #83CDB8;
             }
-            QPushButton:hover  { background-color: #5A6AEE; }
-            QPushButton:pressed{ background-color: #4A5ADE; }
-            QPushButton:disabled{ background-color: #BBBBCC; }
+            QPushButton:hover  { background-color: #3E8A73; }
+            QPushButton:pressed{ background-color: #2A5148; }
+            QPushButton:disabled{ background-color: #34534B; color: #8DA69E; }
         """)
         self._btn_send.clicked.connect(self._on_send)
         right_layout.addWidget(self._btn_send)
@@ -781,11 +791,13 @@ class InputPanel(QWidget):
         self._btn_voice.setEnabled(False)
         self._btn_voice.setStyleSheet("""
             QPushButton {
-                background-color: #EEEEEE;
-                color: #999999;
+                background-color: #18312C;
+                color: #DCEFE8;
                 border-radius: 8px;
-                border: none;
+                border: 1px solid #416B63;
             }
+            QPushButton:hover { background-color: #2A5148; border-color: #75B8A8; color: #FFFFFF; }
+            QPushButton:pressed { background-color: #35685C; }
         """)
         right_layout.addWidget(self._btn_voice)
 
@@ -796,24 +808,25 @@ class InputPanel(QWidget):
         self._btn_clear.setToolTip("清空小纸条")
         self._btn_clear.setStyleSheet("""
             QPushButton {
-                background-color: #F0F0F0;
+                background-color: #18312C;
+                color: #DCEFE8;
 
                 border-radius: 8px;
-                border: 1px solid #DDDDDD;
+                border: 1px solid #416B63;
             }
             QPushButton:hover {
-                background-color: #FFE0E0;
-                color: #CC3333;
-                border: 1px solid #FFAAAA;
+                background-color: #2A5148;
+                color: #FFFFFF;
+                border: 1px solid #75B8A8;
             }
             QPushButton:pressed {
-                background-color: #FFCCCC;
-                color: #CC0000;
+                background-color: #35685C;
+                color: #FFFFFF;
             }
             QPushButton:disabled {
-                background-color: #F5F5F5;
-                color: #BBBBBB;
-                border: 1px solid #EEEEEE;
+                background-color: #1C2D29;
+                color: #78918A;
+                border: 1px solid #30463F;
             }
         """)
         right_layout.addWidget(self._btn_clear)
@@ -897,31 +910,34 @@ class InputPanel(QWidget):
         if self._selected_tool:
             self._tool_btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #6C7BFF;
-                    color: white;
+                    background-color: #347767;
+                    color: #FFFFFF;
                     border-radius: 8px;
-                    border: none;
+                    border: 1px solid #83CDB8;
                 }
                 QPushButton:hover {
-                    background-color: #5A6AEE;
+                    background-color: #3E8A73;
                 }
                 QPushButton:pressed {
-                    background-color: #4A5ADE;
+                    background-color: #2A5148;
                 }
             """)
             self._tool_btn.setToolTip(f"已绑定工具：{self._selected_tool}")
         else:
             self._tool_btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #F0F2F5;
+                    background-color: #18312C;
+                    color: #DCEFE8;
                     border-radius: 8px;
-                    border: 1px solid #CCCCCC;
+                    border: 1px solid #416B63;
                 }
                 QPushButton:hover {
-                    background-color: #E0E4F0;
+                    background-color: #2A5148;
+                    border-color: #75B8A8;
+                    color: #FFFFFF;
                 }
                 QPushButton:pressed {
-                    background-color: #D0D4E8;
+                    background-color: #35685C;
                 }
             """)
             self._tool_btn.setToolTip("选择工具（强制让莲心使用某工具）")
@@ -987,22 +1003,22 @@ class InputPanel(QWidget):
         self._btn_voice.setToolTip("待机模式运行中，麦克风被占用")
         self._btn_voice.setStyleSheet("""
             QPushButton {
-                background-color: #EEEEEE;
-                color: #BBBBBB;
+                background-color: #1C2D29;
+                color: #78918A;
                 border-radius: 8px;
-                border: none;
+                border: 1px solid #30463F;
             }
         """)
 
     def set_voice_recording(self):
         self._btn_voice.setStyleSheet("""
             QPushButton {
-                background-color: #FF3B30;
-                color: white;
+                background-color: #B85C5C;
+                color: #FFFFFF;
                 border-radius: 8px;
-                border: none;
+                border: 1px solid #E49A9A;
             }
-            QPushButton:hover { background-color: #E0302A; }
+            QPushButton:hover { background-color: #D06A6A; }
         """)
         self._btn_voice.setToolTip("录音中…（检测到停顿后自动停止）")
 
@@ -1012,13 +1028,13 @@ class InputPanel(QWidget):
     def _set_voice_idle(self):
         self._btn_voice.setStyleSheet("""
             QPushButton {
-                background-color: #F0F2FF;
-                color: #6C7BFF;
+                background-color: #18312C;
+                color: #DCEFE8;
                 border-radius: 8px;
-                border: 1px solid #C8CCEE;
+                border: 1px solid #416B63;
             }
-            QPushButton:hover  { background-color: #E0E4FF; }
-            QPushButton:pressed{ background-color: #D0D4FF; }
+            QPushButton:hover  { background-color: #2A5148; border-color: #75B8A8; color: #FFFFFF; }
+            QPushButton:pressed{ background-color: #35685C; }
         """)
 
     def set_text(self, text: str):
