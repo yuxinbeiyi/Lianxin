@@ -12,9 +12,10 @@ from PyQt5.QtWidgets import (
     QScrollArea,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPixmap
 from datetime import datetime
 import os
+from pathlib import Path
 from utils.settings import get_settings
 from utils.autostart import enable_autostart, disable_autostart, is_autostart_enabled
 from utils.accompany_stats import AccompanyStats
@@ -29,11 +30,14 @@ from gui.quick_launch_dialog import QuickLaunchEditDialog
 class SettingsDialog(QDialog):
     date_saved = pyqtSignal()          # 初识日期保存信号
     font_size_changed = pyqtSignal(int)  # 字体大小变化信号
+    background_changed = pyqtSignal(bool, str, float, str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._settings = get_settings()
         self._accompany_stats = AccompanyStats()
+        self._background_original = self._background_state()
+        self._chat_background_original = self._settings.chat_background_opacity
 
         self.setWindowTitle("全局设置")
         self.setMinimumSize(540, 780)
@@ -323,6 +327,7 @@ class SettingsDialog(QDialog):
 
         scroll_layout.addWidget(avatar_frame)
 
+        scroll_layout.addWidget(self._build_background_frame())
         scroll_layout.addStretch()
 
         scroll_area.setWidget(scroll_content)
@@ -462,6 +467,229 @@ class SettingsDialog(QDialog):
         """)
         return frame
 
+    def _background_state(self):
+        return (
+            self._settings.background_enabled,
+            self._settings.background_source,
+            self._settings.background_opacity,
+            self._settings.background_source_type,
+            self._settings.background_fit_mode,
+        )
+
+    def _chat_background_opacity(self):
+        return self._settings.chat_background_opacity
+
+    def _build_background_frame(self):
+        frame = self._create_frame()
+        layout = QVBoxLayout(frame)
+        layout.setSpacing(8)
+
+        title = QLabel("🖼️ 切换背景壁纸")
+        title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        layout.addWidget(title)
+
+        self._background_enabled_cb = QCheckBox("启用主界面背景壁纸")
+        self._background_enabled_cb.setCursor(Qt.PointingHandCursor)
+        layout.addWidget(self._background_enabled_cb)
+
+        type_row = QHBoxLayout()
+        type_row.addWidget(QLabel("来源类型："))
+        self._background_source_type_combo = QComboBox()
+        self._background_source_type_combo.addItem("单张图片", "single")
+        self._background_source_type_combo.addItem("文件夹（随机一张）", "folder_random")
+        self._background_source_type_combo.addItem("文件夹（按文件名第一张）", "folder_first")
+        type_row.addWidget(self._background_source_type_combo, 1)
+        layout.addLayout(type_row)
+
+        path_row = QHBoxLayout()
+        self._background_source_edit = QLineEdit()
+        self._background_source_edit.setPlaceholderText("图片文件或图片文件夹路径")
+        path_row.addWidget(self._background_source_edit, 1)
+        self._background_file_btn = QPushButton("选择图片")
+        self._background_file_btn.setFixedWidth(76)
+        self._background_folder_btn = QPushButton("选择文件夹")
+        self._background_folder_btn.setFixedWidth(88)
+        self._background_clear_btn = QPushButton("清除")
+        self._background_clear_btn.setFixedWidth(54)
+        self._background_default_btn = QPushButton("恢复默认")
+        self._background_default_btn.setFixedWidth(72)
+        path_row.addWidget(self._background_file_btn)
+        path_row.addWidget(self._background_folder_btn)
+        path_row.addWidget(self._background_clear_btn)
+        path_row.addWidget(self._background_default_btn)
+        layout.addLayout(path_row)
+
+        opacity_row = QHBoxLayout()
+        opacity_row.addWidget(QLabel("背景透明度："))
+        self._background_opacity_slider = QSlider(Qt.Horizontal)
+        self._background_opacity_slider.setRange(0, 100)
+        self._background_opacity_slider.setTickInterval(10)
+        self._background_opacity_value = QLabel("22%")
+        self._background_opacity_value.setFixedWidth(42)
+        self._background_opacity_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        opacity_row.addWidget(self._background_opacity_slider, 1)
+        opacity_row.addWidget(self._background_opacity_value)
+        layout.addLayout(opacity_row)
+
+        chat_opacity_row = QHBoxLayout()
+        chat_opacity_row.addWidget(QLabel("聊天区域遮罩："))
+        self._chat_background_opacity_slider = QSlider(Qt.Horizontal)
+        self._chat_background_opacity_slider.setRange(0, 100)
+        self._chat_background_opacity_value = QLabel("75%")
+        self._chat_background_opacity_value.setFixedWidth(42)
+        self._chat_background_opacity_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        chat_opacity_row.addWidget(self._chat_background_opacity_slider, 1)
+        chat_opacity_row.addWidget(self._chat_background_opacity_value)
+        layout.addLayout(chat_opacity_row)
+
+        fit_row = QHBoxLayout()
+        fit_row.addWidget(QLabel("图片适配："))
+        self._background_fit_combo = QComboBox()
+        self._background_fit_combo.addItem("铺满窗口（裁剪边缘）", "cover")
+        self._background_fit_combo.addItem("完整显示（可能留边）", "contain")
+        self._background_fit_combo.addItem("拉伸铺满", "stretch")
+        fit_row.addWidget(self._background_fit_combo, 1)
+        layout.addLayout(fit_row)
+
+        self._background_preview = QLabel("暂无背景图")
+        self._background_preview.setAlignment(Qt.AlignCenter)
+        self._background_preview.setMinimumHeight(72)
+        self._background_preview.setStyleSheet(
+            "background:#14182D; border:1px solid #3D3D5A; border-radius:6px; color:#888;"
+        )
+        layout.addWidget(self._background_preview)
+
+        tip = QLabel("提示：设置会实时预览；点击取消可恢复之前的背景。文件夹只读取常见图片格式。")
+        tip.setWordWrap(True)
+        tip.setStyleSheet("color:#888; font-size:11px;")
+        layout.addWidget(tip)
+
+        self._background_enabled_cb.toggled.connect(self._emit_background_preview)
+        self._background_source_type_combo.currentIndexChanged.connect(self._emit_background_preview)
+        self._background_source_edit.textChanged.connect(self._emit_background_preview)
+        self._background_fit_combo.currentIndexChanged.connect(self._emit_background_preview)
+        self._background_opacity_slider.valueChanged.connect(self._on_background_opacity_changed)
+        self._chat_background_opacity_slider.valueChanged.connect(self._on_chat_background_opacity_changed)
+        self._background_file_btn.clicked.connect(self._browse_background_file)
+        self._background_folder_btn.clicked.connect(self._browse_background_folder)
+        self._background_clear_btn.clicked.connect(self._clear_background)
+        self._background_default_btn.clicked.connect(self._restore_default_background)
+        return frame
+
+    def _background_controls_state(self):
+        return (
+            self._background_enabled_cb.isChecked(),
+            self._background_source_edit.text().strip(),
+            self._background_opacity_slider.value() / 100.0,
+            self._background_source_type_combo.currentData() or "single",
+            self._background_fit_combo.currentData() or "cover",
+        )
+
+    def _emit_background_preview(self):
+        if not hasattr(self, "_background_enabled_cb"):
+            return
+        enabled, source, opacity, source_type, fit_mode = self._background_controls_state()
+        self._background_opacity_value.setText(f"{round(opacity * 100)}%")
+        self._update_background_preview(source, source_type)
+        # Invalid paths are left visible for correction, but never blank a
+        # working background during ordinary typing.
+        if enabled and source:
+            from gui.background_widget import BackgroundWidget
+            valid = Path(source).is_file() if source_type == "single" else bool(BackgroundWidget.image_files(source))
+            if not valid:
+                return
+        self.background_changed.emit(enabled, source, opacity, source_type, fit_mode)
+
+    def _on_background_opacity_changed(self, value):
+        self._background_opacity_value.setText(f"{value}%")
+        self._emit_background_preview()
+
+    def _on_chat_background_opacity_changed(self, value):
+        self._chat_background_opacity_value.setText(f"{value}%")
+        if self.parent() is not None and hasattr(self.parent(), "_on_chat_background_opacity_changed"):
+            self.parent()._on_chat_background_opacity_changed(value / 100.0)
+
+    def _update_background_preview(self, source, source_type):
+        from gui.background_widget import BackgroundWidget
+        preview_path = source if source_type == "single" else ""
+        if source_type != "single":
+            files = BackgroundWidget.image_files(source)
+            preview_path = str(files[0]) if files else ""
+        pixmap = QPixmap(preview_path) if preview_path and os.path.isfile(preview_path) else QPixmap()
+        if pixmap.isNull():
+            self._background_preview.setPixmap(QPixmap())
+            self._background_preview.setText("暂无可预览图片")
+        else:
+            self._background_preview.setText("")
+            self._background_preview.setPixmap(pixmap.scaled(300, 94, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _browse_background_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择背景图片", self._background_source_edit.text().strip() or "",
+            "图片文件 (*.png *.jpg *.jpeg *.webp *.bmp *.gif)"
+        )
+        if path:
+            self._background_source_type_combo.setCurrentIndex(0)
+            self._background_source_edit.setText(path)
+
+    def _browse_background_folder(self):
+        path = QFileDialog.getExistingDirectory(
+            self, "选择背景图片文件夹", self._background_source_edit.text().strip() or ""
+        )
+        if path:
+            self._background_source_type_combo.setCurrentIndex(1)
+            self._background_source_edit.setText(path)
+
+    def _clear_background(self):
+        self._background_enabled_cb.setChecked(False)
+        self._background_source_edit.clear()
+
+    def _restore_default_background(self):
+        from utils.settings import _DEFAULT_BACKGROUND_IMAGE
+        self._background_source_type_combo.setCurrentIndex(0)
+        self._background_source_edit.setText(_DEFAULT_BACKGROUND_IMAGE)
+        self._background_enabled_cb.setChecked(True)
+
+    def _load_background_controls(self):
+        controls = (
+            self._settings.background_enabled,
+            self._settings.background_source,
+            self._settings.background_opacity,
+            self._settings.background_source_type,
+            self._settings.background_fit_mode,
+        )
+        widgets = (
+            self._background_enabled_cb, self._background_source_edit,
+            self._background_opacity_slider, self._background_source_type_combo,
+            self._background_fit_combo, self._chat_background_opacity_slider,
+        )
+        for widget in widgets:
+            widget.blockSignals(True)
+        self._background_enabled_cb.setChecked(controls[0])
+        self._background_source_edit.setText(controls[1])
+        self._background_opacity_slider.setValue(round(controls[2] * 100))
+        self._background_source_type_combo.setCurrentIndex(
+            max(0, self._background_source_type_combo.findData(controls[3]))
+        )
+        self._background_fit_combo.setCurrentIndex(
+            max(0, self._background_fit_combo.findData(controls[4]))
+        )
+        for widget in widgets:
+            widget.blockSignals(False)
+        self._background_opacity_value.setText(f"{round(controls[2] * 100)}%")
+        self._chat_background_opacity_slider.setValue(round(self._settings.chat_background_opacity * 100))
+        self._chat_background_opacity_value.setText(f"{round(self._settings.chat_background_opacity * 100)}%")
+        self._update_background_preview(controls[1], controls[3])
+
+    def reject(self):
+        """Restore the live preview when the user cancels or closes settings."""
+        enabled, source, opacity, source_type, fit_mode = self._background_original
+        self.background_changed.emit(enabled, source, opacity, source_type, fit_mode)
+        if self.parent() is not None and hasattr(self.parent(), "_on_chat_background_opacity_changed"):
+            self.parent()._on_chat_background_opacity_changed(self._chat_background_original)
+        self._load_background_controls()
+        super().reject()
+
     # === 以下为原有方法（保持不变） ===
     def _browse_note_path(self):
         from pathlib import Path
@@ -549,6 +777,7 @@ class SettingsDialog(QDialog):
             self._avatar_radio_animated.setChecked(True)
 
         self._user_name_edit.setText(self._settings.user_name)
+        self._load_background_controls()
 
     def _on_save(self):
         self._settings.show_exit_confirmation = self._exit_confirm_cb.isChecked()
@@ -584,6 +813,22 @@ class SettingsDialog(QDialog):
 
         # ── 保存用户称呼 ──
         self._settings.user_name = self._user_name_edit.text()
+        # ── 保存主界面背景 ──
+        bg_enabled, bg_source, bg_opacity, bg_source_type, bg_fit_mode = self._background_controls_state()
+        if bg_enabled and bg_source:
+            from gui.background_widget import BackgroundWidget
+            valid = Path(bg_source).is_file() if bg_source_type == "single" else bool(BackgroundWidget.image_files(bg_source))
+            if not valid:
+                QMessageBox.warning(self, "背景设置", "背景图片或文件夹不存在，已取消保存。")
+                return
+        self._settings.background_enabled = bg_enabled
+        self._settings.background_source = bg_source
+        self._settings.background_opacity = bg_opacity
+        self._settings.background_source_type = bg_source_type
+        self._settings.background_fit_mode = bg_fit_mode
+        self._settings.chat_background_opacity = self._chat_background_opacity_slider.value() / 100.0
+        self._chat_background_original = self._settings.chat_background_opacity
+        self._background_original = self._background_state()
         # ── 保存头像设置 ──
         char_widget = self.parent()._char_widget
         if self._avatar_radio_static.isChecked():

@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (
     QScrollArea, QWidget, QVBoxLayout, QLabel, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPalette, QColor
 from gui.message_bubble import MessageBubble, ImageMessageBubble
 
 _TIMESTAMP_GAP_SECONDS = 5 * 60   # 超过此间隔则在气泡前插入时间标签
@@ -116,14 +116,30 @@ class ChatWidget(QScrollArea):
         self._build_ui()
 
     def _build_ui(self):
+        # QAbstractScrollArea's viewport can otherwise keep an opaque palette
+        # even when the stylesheet says transparent, hiding the main wallpaper.
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAutoFillBackground(False)
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 # 原代码（第 28-49 行）：
         self.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.viewport().setAttribute(Qt.WA_TranslucentBackground, True)
+        self.viewport().setAutoFillBackground(False)
+        self.viewport().setStyleSheet("background: transparent;")
+
+        transparent_palette = QPalette()
+        transparent_palette.setColor(QPalette.Window, QColor(0, 0, 0, 0))
+        transparent_palette.setColor(QPalette.Base, QColor(0, 0, 0, 0))
+        self.setPalette(transparent_palette)
+        self.viewport().setPalette(transparent_palette)
 
         self._container = QWidget()
-        self._container.setStyleSheet("background: transparent;")
+        self._container.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._container.setAutoFillBackground(False)
+        self._container.setPalette(transparent_palette)
+        self._container.setStyleSheet("")
 
         self._layout = QVBoxLayout(self._container)
         self._layout.setAlignment(Qt.AlignTop)
@@ -131,6 +147,10 @@ class ChatWidget(QScrollArea):
         self._layout.setContentsMargins(0, 12, 0, 12)
 
         self.setWidget(self._container)
+        # QScrollArea may reset the child palette while installing the widget;
+        # apply the transparent surface once more after setWidget().
+        self._container.setAutoFillBackground(False)
+        self._container.setPalette(transparent_palette)
 
         self._thinking_label = QLabel("  莲心思考中...")
         self._thinking_label.setFont(QFont("Microsoft YaHei UI", 10))

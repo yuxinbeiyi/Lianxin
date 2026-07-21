@@ -14,13 +14,14 @@ from PyQt5.QtCore import (
     Qt, QTimer, QAbstractNativeEventFilter, QPoint, QObject,
     QThread, pyqtSignal, QTime,
 )
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtGui import QFont, QIcon, QPalette, QColor
 from pathlib import Path
 from brain.agent import AgentCore
 from utils.emotion_manager import parse_emotion_tag as _strip_emotion_tag
 from voice.listener import VoiceListener
 from voice.speaker  import VoiceSpeaker
 from gui.character_widget import CharacterWidget
+from gui.background_widget import BackgroundWidget
 from gui.chat_widget       import ChatWidget
 from gui.input_panel       import InputPanel
 from gui.history_dialog    import HistoryDialog
@@ -555,9 +556,6 @@ class MainWindow(QMainWindow):
     # ── 界面构建 ─────────────────────────────────────────────
 
     def _build_ui(self):
-        # ── 设置主窗口背景图（半透明效果）────────────────────────
-        self._set_background_image()
-
         self.setWindowTitle("莲心AI")
         icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "应用图标.jpg")
         if os.path.exists(icon_path):
@@ -567,16 +565,17 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(820, 600)
         self.resize(960, 680)
 
-        central = QWidget()
+        central = BackgroundWidget()
         central.setObjectName("centralWidget")
         central.setStyleSheet("""
             #centralWidget {
-                background-color: #1A1A2E;
+                background-color: transparent;
                 border: 2px solid #5B9A8B;
                 border-radius: 12px;
             }
         """)
         self.setCentralWidget(central)
+        self._set_background_image()
 
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -789,6 +788,9 @@ class MainWindow(QMainWindow):
 
         # 上半：左栏（角色）+ 右栏（聊天）
         top_widget = QWidget()
+        top_widget.setAttribute(Qt.WA_TranslucentBackground, True)
+        top_widget.setAutoFillBackground(False)
+        top_widget.setStyleSheet("background: transparent;")
         top_layout = QHBoxLayout(top_widget)
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(0)
@@ -819,7 +821,16 @@ class MainWindow(QMainWindow):
 
         # 聊天区（右侧）：进度条 + 滚动消息区
         right_widget = QWidget()
-        right_widget.setStyleSheet("background-color: #1E2833;")
+        self._chat_background_widget = right_widget
+        right_widget.setAttribute(Qt.WA_TranslucentBackground, True)
+        right_widget.setAutoFillBackground(False)
+        chat_palette = QPalette(right_widget.palette())
+        chat_palette.setColor(QPalette.Window, QColor(0, 0, 0, 0))
+        chat_palette.setColor(QPalette.Base, QColor(0, 0, 0, 0))
+        right_widget.setPalette(chat_palette)
+        # Keep the chat readable while allowing the selected wallpaper to show
+        # through as a subtle texture.
+        self._set_chat_background_opacity(self._global_settings.chat_background_opacity)
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
@@ -891,23 +902,37 @@ class MainWindow(QMainWindow):
 
 
     def _set_background_image(self):
-        """设置主窗口半透明背景图"""
-        bg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "主界面背景图.jpg")
-        if os.path.exists(bg_path):
-            central = self.centralWidget()
-            if central:
-                central.setStyleSheet(f"""
-                    #centralWidget {{
-                        background-image: url("{bg_path.replace('\\', '/')}");
-                        background-position: center;
-                        background-repeat: no-repeat;
-                        background-attachment: fixed;
-                        background-color: rgba(0, 0, 0, 0);
-                        border: 2px solid #5B9A8B;
-                        border-radius: 12px;
-                    }}
-                """)
-            self.setAttribute(Qt.WA_StyledBackground, True)
+        """Apply the persisted desktop background without changing child opacity."""
+        settings = self._global_settings
+        self._apply_background_config(
+            settings.background_source if settings.background_enabled else "",
+            settings.background_opacity,
+            settings.background_source_type,
+            settings.background_fit_mode,
+        )
+
+    def _apply_background_config(self, source: str, opacity: float,
+                                 source_type: str = "single",
+                                 fit_mode: str = "cover"):
+        central = self.centralWidget()
+        if isinstance(central, BackgroundWidget):
+            central.set_background(source, opacity, source_type, fit_mode)
+
+    def _on_background_changed(self, enabled: bool, source: str, opacity: float,
+                               source_type: str, fit_mode: str):
+        self._apply_background_config(source if enabled else "", opacity, source_type, fit_mode)
+
+    def _set_chat_background_opacity(self, opacity: float):
+        """Update only the chat pane's readability mask; wallpaper stays cached."""
+        self._chat_background_opacity = max(0.0, min(1.0, float(opacity)))
+        widget = getattr(self, "_chat_background_widget", None)
+        if widget is not None:
+            alpha = round(self._chat_background_opacity * 255)
+            widget.setStyleSheet(f"background-color: rgba(30, 40, 51, {alpha});")
+
+    def _on_chat_background_opacity_changed(self, opacity: float):
+        self._set_chat_background_opacity(opacity)
+        self._global_settings.chat_background_opacity = opacity
 
     def _show_greeting(self):
         """启动时显示欢迎内容：有历史则回放最近30条，否则显示初次欢迎语。"""
@@ -1835,6 +1860,7 @@ class MainWindow(QMainWindow):
         if self._settings_dialog is None:
             self._settings_dialog = SettingsDialog(self)
             self._settings_dialog.date_saved.connect(self._on_first_meet_date_saved)
+            self._settings_dialog.background_changed.connect(self._on_background_changed)
         self._settings_dialog.show()
         self._settings_dialog.raise_()
         self._settings_dialog.activateWindow()

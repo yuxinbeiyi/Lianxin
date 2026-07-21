@@ -8,6 +8,9 @@ from pathlib import Path
 from utils.paths import get_user_data_dir   # 新增导入
 
 _SETTINGS_PATH = get_user_data_dir() / "global_settings.json"
+_DEFAULT_BACKGROUND_IMAGE = str(
+    Path(__file__).resolve().parent.parent / "assets" / "主界面背景图.jpg"
+)
 
 _DEFAULT_SETTINGS = {
     "silent_mode": False,                # 全局静默模式：True=不朗读，False=朗读
@@ -29,6 +32,12 @@ _DEFAULT_SETTINGS = {
     "emotion_probability": 0.6,   # 发表情包概率    默认 60%
     "user_name": "雨心",           # 用户称呼（莲心对用户的称呼）
     "startup_check_enabled": True, # 启动时进行开机体检
+    "background_enabled": True,
+    "background_source": _DEFAULT_BACKGROUND_IMAGE,
+    "background_source_type": "single",
+    "background_opacity": 0.22,
+    "background_fit_mode": "cover",
+    "chat_background_opacity": 0.75,
 }
 
 
@@ -248,6 +257,71 @@ class SettingsManager:
     @startup_check_enabled.setter
     def startup_check_enabled(self, val: bool):
         self._settings["startup_check_enabled"] = val
+        self.save()
+
+    # ========== 主界面背景 ==========
+    @property
+    def background_enabled(self) -> bool:
+        return bool(self._settings.get("background_enabled", True))
+
+    @background_enabled.setter
+    def background_enabled(self, val: bool):
+        self._settings["background_enabled"] = bool(val)
+        self.save()
+
+    @property
+    def background_source(self) -> str:
+        return str(self._settings.get("background_source", _DEFAULT_BACKGROUND_IMAGE) or "")
+
+    @background_source.setter
+    def background_source(self, val: str):
+        self._settings["background_source"] = str(val or "").strip()
+        self.save()
+
+    @property
+    def background_source_type(self) -> str:
+        value = self._settings.get("background_source_type", "single")
+        return value if value in {"single", "folder_random", "folder_first"} else "single"
+
+    @background_source_type.setter
+    def background_source_type(self, val: str):
+        value = val if val in {"single", "folder_random", "folder_first"} else "single"
+        self._settings["background_source_type"] = value
+        self.save()
+
+    @property
+    def background_opacity(self) -> float:
+        try:
+            return max(0.0, min(1.0, float(self._settings.get("background_opacity", 0.22))))
+        except (TypeError, ValueError):
+            return 0.22
+
+    @background_opacity.setter
+    def background_opacity(self, val: float):
+        self._settings["background_opacity"] = max(0.0, min(1.0, float(val)))
+        self.save()
+
+    @property
+    def background_fit_mode(self) -> str:
+        value = self._settings.get("background_fit_mode", "cover")
+        return value if value in {"cover", "contain", "stretch"} else "cover"
+
+    @background_fit_mode.setter
+    def background_fit_mode(self, val: str):
+        value = val if val in {"cover", "contain", "stretch"} else "cover"
+        self._settings["background_fit_mode"] = value
+        self.save()
+
+    @property
+    def chat_background_opacity(self) -> float:
+        try:
+            return max(0.0, min(1.0, float(self._settings.get("chat_background_opacity", 0.75))))
+        except (TypeError, ValueError):
+            return 0.75
+
+    @chat_background_opacity.setter
+    def chat_background_opacity(self, val: float):
+        self._settings["chat_background_opacity"] = max(0.0, min(1.0, float(val)))
         self.save()
 
 

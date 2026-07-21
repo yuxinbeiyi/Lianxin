@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QLabel
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint
-from PyQt5.QtGui import QFont, QKeyEvent, QDragEnterEvent, QDropEvent, QColor, QPixmap
+from PyQt5.QtGui import QFont, QKeyEvent, QDragEnterEvent, QDropEvent, QColor, QPixmap, QPalette
 import tempfile
 import os
 import json
@@ -629,6 +629,12 @@ class InputPanel(QWidget):
         self._input.installEventFilter(self)
 
     def _build_ui(self):
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAutoFillBackground(False)
+        palette = QPalette(self.palette())
+        palette.setColor(QPalette.Window, QColor(0, 0, 0, 0))
+        palette.setColor(QPalette.Base, QColor(0, 0, 0, 0))
+        self.setPalette(palette)
         self.setStyleSheet("""
             QWidget {
                 background: transparent;
