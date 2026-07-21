@@ -261,6 +261,15 @@ class V3ManagerTests(unittest.TestCase):
         self.assertLess(manager.get_debug_info()["axes"]["connection"], 0.90)
         self.assertGreater(manager.get_debug_info()["axes"]["connection"], 0.0)
 
+    def test_ui_simulation_is_bounded_and_auditable(self):
+        manager = self.make_manager()
+        result = manager.simulate_scenario("cold_reply")
+        info = manager.get_debug_info()
+        self.assertTrue(result["ok"])
+        self.assertGreater(info["event_count"], 0)
+        self.assertEqual("simulation_cold_reply", info["recent_events"][0]["type"])
+        self.assertLessEqual(info["axes"]["guardedness"], 1.0)
+
     def test_significant_memory_uses_existing_events_category_and_provenance(self):
         manager = self.make_manager()
         add_fact = Mock(return_value=17)

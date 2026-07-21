@@ -488,6 +488,39 @@ class EmotionManager:
         self._store.save_state(state)
 
     @_synchronized
+    def simulate_scenario(self, scenario: str) -> dict:
+        """Apply a bounded, UI-only scenario and persist an auditable event."""
+        scenarios = {
+            "warm_reply": AffectDelta(
+                event_type="simulation_warm_reply", valence=0.12, arousal=-0.06,
+                connection=-0.15, trust=0.03, intimacy=0.02,
+                confidence=1.0, significance=0.35, summary="模拟：用户给出了温暖、充分的回应",
+            ),
+            "cold_reply": AffectDelta(
+                event_type="simulation_cold_reply", valence=-0.08, arousal=0.08,
+                guardedness=0.10, connection=0.12, rupture=0.03,
+                confidence=1.0, significance=0.35, summary="模拟：用户回复冷淡或敷衍",
+            ),
+            "waiting": AffectDelta(
+                event_type="simulation_waiting", arousal=0.06, connection=0.10,
+                confidence=1.0, significance=0.25, summary="模拟：经过一段等待时间，没有新的回应",
+            ),
+        }
+        delta = scenarios.get(str(scenario))
+        if delta is None:
+            return {"ok": False, "reason": "unknown_scenario"}
+        state = self._get_state(*self._active_key)
+        if scenario == "waiting":
+            state.last_update -= 30 * 60
+            self._dynamics.advance(state, bias=self._get_saga_bias(state.persona_id))
+        state.apply(delta)
+        state.last_update = time.time()
+        self._store.save_state_with_event(
+            state, delta, source_channel="ui_simulation", idempotency_key=""
+        )
+        return {"ok": True, "scenario": scenario, "state": state.to_dict()}
+
+    @_synchronized
     def configure_dynamics(self, **values) -> None:
         merged = dict(self._config.get("dynamics", {}))
         merged.update(values)
