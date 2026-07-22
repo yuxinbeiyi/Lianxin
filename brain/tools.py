@@ -5554,6 +5554,9 @@ def bilibili_search(keyword: str, max_results: int = 10) -> list[dict]:
                     "bvid": v.get("bvid", ""),
                     "play_count": v.get("play", 0),
                     "cover_url": v.get("pic", ""),
+                    # 搜索接口可能附带简介；没有简介时保持空值，
+                    # 上层不得据此臆测视频的实际内容。
+                    "description": (v.get("description") or "").strip(),
                     "link": f"https://www.bilibili.com/video/{v.get('bvid', '')}",
                 })
         return results

@@ -147,6 +147,7 @@ class BilibiliHistoryManager:
                     "author": v.get("author", ""),
                     "bvid": v.get("bvid", ""),
                     "play_count": v.get("play_count", 0),
+                    "description": v.get("description", ""),
                     "link": v.get("link", ""),
                     "user_reaction": "",
                 }

@@ -45,6 +45,13 @@ class ProactivePresentationController:
 
     @staticmethod
     def _clean_text(text: str) -> str:
+        text = str(text or "")
+        # Internal source labels belong to diagnostics, never to user-facing speech.
+        text = re.sub(
+            r"^\s*(?:[\[\uff3b](?:\u6478\u9c7c|\u4e3b\u52a8|\u89c2\u5bdf|B\u7ad9\u51b2\u6d6a)[\]\uff3d]\s*)+",
+            "",
+            text,
+        )
         text = re.sub(r"[【［\[]表情[：:]\s*[^】\]］\]]*[】\]］\]]?", "", text).strip()
         return re.sub(r"\n\s*\n", "\n", text).strip()
 

@@ -319,6 +319,8 @@ class ProactiveDuty(Duty):
 
     def __init__(self):
         super().__init__("proactive", "主动聊天", tick_interval_seconds=300)
+        # 强制调试行为（尤其是 B 站）失败时不应回退到其他主动行为。
+        self._fallback_allowed = True
 
     def _check_enabled(self, state: SchedulerState) -> bool:
         ps = state.proactive_scheduler
@@ -372,6 +374,10 @@ class ProactiveDuty(Duty):
 
         force_observe = kwargs.get("force_observe", "")
         force_behavior = kwargs.get("force_behavior", "")
+        forced_request = bool(force_observe or force_behavior)
+        self._fallback_allowed = bool(kwargs.get("fallback_on_failure", True)) and not forced_request
+        if forced_request:
+            print(f"[主动调度] 强制行为={force_observe or force_behavior}，禁用普通行为回退")
         ps = state.proactive_scheduler
         hm = state.history_manager
         if force_observe:
@@ -407,7 +413,11 @@ class ProactiveDuty(Duty):
                 persona_snapshot=emotion_persona,
             )
         elif behavior == "bilibili":
-            worker = ProactiveWorker(hm, bilibili_mode=True)
+            worker = ProactiveWorker(
+                hm,
+                bilibili_mode=True,
+                bilibili_ignore_cooldown=bool(kwargs.get("ignore_cooldowns", False)),
+            )
         elif behavior == "slack":
             from workers.slack_worker import SlackWorker
             action = kwargs.get("force_action", "") or ps.should_slack()
@@ -526,6 +536,9 @@ class ProactiveDuty(Duty):
         self._scheduler.proactive_error.emit(err)
 
     def _try_fallback(self) -> bool:
+        if not getattr(self, "_fallback_allowed", True):
+            print("[主动调度] 当前为强制行为，跳过普通行为回退")
+            return False
         ps = self._scheduler._proactive_scheduler
         remaining = getattr(self, "_remaining_behaviors", [])
         state = getattr(self, "_current_state", None)

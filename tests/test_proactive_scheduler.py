@@ -9,6 +9,7 @@ from unittest.mock import patch
 from utils.duty_scheduler import DutyScheduler, ProactiveDuty, SlackDuty
 from utils.proactive_chat import ProactiveChatScheduler
 from workers.slack_worker import SlackWorker
+from workers.proactive_worker import ProactiveWorker
 
 
 def make_scheduler():
@@ -187,6 +188,94 @@ class ProactiveBehaviorSchedulerTests(unittest.TestCase):
 
         self.assertIsInstance(worker, SlackWorker)
         self.assertEqual([("remind_water",)], signal.values)
+
+    def test_forced_bilibili_worker_disables_regular_fallback(self):
+        duty = ProactiveDuty()
+        duty._fallback_allowed = False
+        self.assertFalse(duty._try_fallback())
+
+    def test_bilibili_details_are_appended_when_model_omits_them(self):
+        videos = [
+            {"title": "测试视频", "link": "https://www.bilibili.com/video/BVTEST"},
+        ]
+        message = ProactiveWorker._ensure_bilibili_details("我找到一个视频", videos)
+        self.assertIn("测试视频", message)
+        self.assertIn("https://www.bilibili.com/video/BVTEST", message)
+
+    def test_bilibili_generation_uses_local_title_link_fallback(self):
+        worker = ProactiveWorker.__new__(ProactiveWorker)
+        videos = [
+            {"title": "本地兜底视频", "link": "https://www.bilibili.com/video/BVLOCAL"},
+        ]
+        with patch.object(worker, "_get_client", side_effect=RuntimeError("model unavailable")):
+            message = worker._generate_bilibili_message("测试", videos, "rec_test")
+        self.assertIn("本地兜底视频", message)
+        self.assertIn("https://www.bilibili.com/video/BVLOCAL", message)
+
+    def test_bilibili_fallback_has_a_human_recommendation_reason(self):
+        worker = ProactiveWorker.__new__(ProactiveWorker)
+        videos = [{
+            "title": "标题线索",
+            "link": "https://www.bilibili.com/video/BVREASON",
+        }]
+        message = worker._format_bilibili_fallback("测试", videos)
+        self.assertIn("标题线索", message)
+        self.assertIn("可能对你的口味", message)
+        self.assertIn("https://www.bilibili.com/video/BVREASON", message)
+
+    def test_bilibili_run_emits_titles_and_links_without_model(self):
+        class BilibiliStub:
+            def __init__(self):
+                self.recorded = []
+
+            def can_search(self):
+                return False
+
+            def get_weighted_tags(self, limit=3):
+                return ["测试"]
+
+            def filter_seen(self, results):
+                return results
+
+            def mark_tag_searched(self, keyword):
+                pass
+
+            def mark_searched(self):
+                pass
+
+            def add_record(self, keyword, results):
+                self.recorded.append(results)
+                return "rec_test"
+
+            def save(self):
+                pass
+
+        manager = BilibiliStub()
+        worker = ProactiveWorker(None, bilibili_mode=True, bilibili_ignore_cooldown=True)
+        worker._get_client = lambda: (_ for _ in ()).throw(RuntimeError("model unavailable"))
+        received = []
+        worker.response_ready.connect(received.append)
+        videos = [{
+            "title": "真实视频标题",
+            "author": "测试UP主",
+            "play_count": 12,
+            "bvid": "BVREAL",
+            "link": "https://www.bilibili.com/video/BVREAL",
+        }, {
+            "title": "不应被选中的第二个视频",
+            "author": "测试UP主",
+            "play_count": 8,
+            "bvid": "BVSECOND",
+            "link": "https://www.bilibili.com/video/BVSECOND",
+        }]
+        with patch("utils.bilibili_history.get_bilibili_history", return_value=manager), \
+             patch("brain.tools.bilibili_search", return_value=videos):
+            worker._run_bilibili()
+        self.assertEqual(1, len(received))
+        self.assertEqual(1, len(manager.recorded[0]))
+        self.assertIn("真实视频标题", received[0])
+        self.assertIn("https://www.bilibili.com/video/BVREAL", received[0])
+        self.assertNotIn("不应被选中的第二个视频", received[0])
 
 
 if __name__ == "__main__":

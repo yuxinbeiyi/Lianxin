@@ -61,6 +61,15 @@ _RESPONSE_FORMAT_POLICY = """【重要 — 回复格式要求】
 _SIDE_MARKER_PATH = Path(__file__).parent.parent / "memory" / "last_active_side.json"
 _side_lock = threading.Lock()
 
+# 主动行为的来源标签只用于界面/诊断，不应成为模型可模仿的对话内容。
+_INTERNAL_HISTORY_PREFIX_RE = re.compile(
+    r"^\s*(?:[\[\uff3b](?:\u6478\u9c7c|\u4e3b\u52a8|\u89c2\u5bdf|B\u7ad9\u51b2\u6d6a)[\]\uff3d]\s*)+"
+)
+
+
+def _clean_history_content(content) -> str:
+    return _INTERNAL_HISTORY_PREFIX_RE.sub("", str(content or ""), count=1).strip()
+
 
 def _normalize_memory_provenance(memory: dict, source_rows: list[dict]) -> tuple[list[int], float, str]:
     """Validate model-provided evidence against persisted user messages."""
@@ -312,7 +321,7 @@ class AgentCore:
             self._session_id = session_id
             raw_msgs = self._history_mgr.get_messages(session_id)
             self.history = [
-                {"role": m["role"], "content": m["content"]}
+                {"role": m["role"], "content": _clean_history_content(m["content"])}
                 for m in raw_msgs
             ]
             self._session_titled = True
@@ -339,7 +348,7 @@ class AgentCore:
                     self._session_id = last_id
                     raw_msgs = self._history_mgr.get_messages(last_id)
                     self.history = [
-                        {"role": m["role"], "content": m["content"]}
+                        {"role": m["role"], "content": _clean_history_content(m["content"])}
                         for m in raw_msgs
                     ]
                     self._session_titled = True
@@ -2325,7 +2334,9 @@ class AgentCore:
                     timeout=120,
                 )
                 content, reasoning, stream_tool_calls, finish = self._collect_stream(
-                    stream, on_chunk=_guarded_progress
+                    # 主回复的流式 token 只用于最终气泡合并，不应复用插话进度信号；
+                    # 否则每个累计片段都会被界面当成一条新的“插话回复”。
+                    stream, on_chunk=None
                 )
                 _api_elapsed = time.time() - _api_start
                 _content_len = len(content) if content else 0

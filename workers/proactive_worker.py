@@ -96,6 +96,7 @@ class ProactiveWorker(QThread):
                  camera_index: int = 0,
                  camera_wait: int = 15,
                  bilibili_mode: bool = False,
+                 bilibili_ignore_cooldown: bool = False,
                  memory_cue: dict = None,
                  emotional_motive: dict = None,
                  persona_snapshot=None,
@@ -108,6 +109,8 @@ class ProactiveWorker(QThread):
         self._camera_index = camera_index
         self._camera_wait = camera_wait
         self._bilibili_mode = bilibili_mode
+        # 手动调试允许连续验证；自动任务仍遵守 B 站搜索冷却。
+        self._bilibili_ignore_cooldown = bilibili_ignore_cooldown
         self._memory_cue = memory_cue or None
         self._emotional_motive = emotional_motive or None
         self._persona_snapshot = persona_snapshot
@@ -417,9 +420,9 @@ class ProactiveWorker(QThread):
             bmgr = get_bilibili_history()
             print(f"[B站冲浪] 历史管理器已加载，can_search={bmgr.can_search()}")
 
-            if not bmgr.can_search():
+            if not bmgr.can_search() and not self._bilibili_ignore_cooldown:
                 print("[B站冲浪] 搜索冷却中，跳过")
-                self.response_ready.emit("")
+                self.response_ready.emit("这次 B 站冲浪距离上次搜索还不到冷却时间，我稍后再逛一圈。")
                 return
 
             keywords = bmgr.get_weighted_tags(limit=3)
@@ -430,14 +433,16 @@ class ProactiveWorker(QThread):
                 keywords = self._extract_keywords_from_memory()
                 print(f"[B站冲浪] 记忆提取结果: {keywords}")
                 if not keywords:
-                    print("[B站冲浪] 无关键词，退出")
-                    self.response_ready.emit("")
-                    return
+                    # 没有标签或长期记忆时仍完成一次可见的 B 站冲浪，
+                    # 使用公开的热门检索词，而不是返回空文本触发其他行为。
+                    keywords = ["热门"]
+                    print("[B站冲浪] 无兴趣关键词，使用默认检索词: 热门")
                 for kw in keywords:
                     bmgr.add_tag(kw, base_score=50)
 
             from brain.tools import bilibili_search
             best_videos = []
+            fallback_videos = []
             used_keyword = ""
             self.data_source_called.emit("bilibili_keywords",
                 f"将用 {len(keywords)} 个关键词搜索B站: {', '.join(keywords)}", False, 0)
@@ -446,18 +451,26 @@ class ProactiveWorker(QThread):
                 results = bilibili_search(kw, max_results=10)
                 print(f"[B站冲浪] 搜索结果: {len(results)} 条")
                 self.data_source_called.emit("bilibili_search", f"搜索「{kw}」获得 {len(results)} 条结果", False, 0)
-                results = bmgr.filter_seen(results)
-                print(f"[B站冲浪] 去重后: {len(results)} 条")
-                if results:
-                    best_videos = results[:3]
+                if results and not fallback_videos:
+                    fallback_videos = results[:1]
+                fresh_results = bmgr.filter_seen(results)
+                print(f"[B站冲浪] 去重后: {len(fresh_results)} 条")
+                if fresh_results:
+                    best_videos = fresh_results[:1]
                     used_keyword = kw
                     self.data_source_called.emit("bilibili_select", f"精选 {len(best_videos)} 个视频 (关键词: {kw})", False, 0)
                     bmgr.mark_tag_searched(kw)
                     break
 
+            # 即使本轮结果都看过，也要把实际逛到的视频标题和链接发给用户。
+            if not best_videos and fallback_videos:
+                best_videos = fallback_videos
+                used_keyword = used_keyword or (keywords[0] if keywords else "B站")
+                print(f"[B站冲浪] 未找到未看视频，使用本轮搜索结果: {len(best_videos)} 条")
+
             if not best_videos:
                 print("[B站冲浪] 无有效视频结果")
-                self.response_ready.emit("")
+                self.response_ready.emit("这次 B 站没有返回可推荐的视频，我下次再逛时会继续尝试。")
                 return
 
             print(f"[B站冲浪] 选中 {len(best_videos)} 个视频，关键词={used_keyword}")
@@ -466,6 +479,7 @@ class ProactiveWorker(QThread):
             bmgr.save()
 
             message = self._generate_bilibili_message(used_keyword, best_videos, record_id)
+            message = self._ensure_bilibili_details(message, best_videos)
             print(f"[B站冲浪] 消息已生成，发送 response_ready")
             self.response_ready.emit(message)
         except Exception as e:
@@ -510,7 +524,7 @@ class ProactiveWorker(QThread):
             print(f"[B站冲浪] 提取关键词失败: {e}")
             return []
 
-    def _generate_bilibili_message(self, keyword: str, videos: list[dict], record_id: str) -> str:
+    def _generate_bilibili_message_legacy(self, keyword: str, videos: list[dict], record_id: str) -> str:
         video_list = "\n".join(
             f"{i+1}. {v['title']} — up主：{v['author']}，{v['play_count']}播放\n   {v['link']}"
             for i, v in enumerate(videos)
@@ -539,3 +553,82 @@ class ProactiveWorker(QThread):
             ],
         )
         return (response.choices[0].message.content or "").strip()
+
+    # B站推荐必须保留程序拿到的标题和链接。这个定义覆盖上面的旧实现，
+    # 让模型只负责润色，模型异常或返回空内容时仍能正常发送结果。
+    def _generate_bilibili_message(self, keyword: str, videos: list[dict], record_id: str) -> str:
+        video = videos[0] if videos else {}
+        title = (video.get("title") or "未命名视频").strip()
+        link = (video.get("link") or "").strip()
+        description = (video.get("description") or video.get("summary") or "").strip()
+        evidence = description[:800] if description else "（当前只有标题和链接，不能据此断言视频具体内容）"
+        video_list = (
+            f"标题：{title}\n"
+            f"UP主：{video.get('author', '')}，{video.get('play_count', 0)}播放\n"
+            f"简介/摘要：{evidence}\n"
+            f"链接：{link}"
+        )
+        fallback = self._format_bilibili_fallback(keyword, [video])
+        try:
+            client, model = self._get_client()
+            user_name = _get_user_name()
+            snapshot = getattr(self, "_persona_snapshot", None)
+            assistant_name = active_assistant_name(snapshot)
+            system = _format_prompt(
+                "你是莲心，一个聪明、温柔但偶尔有点毒舌的AI助手。"
+                "你刚刚偷偷去B站逛了一圈，搜了搜{user_name}可能感兴趣的东西，现在要推荐给他。",
+                snapshot,
+            )
+            prompt = (
+                f"你搜索了关键词‘{keyword}’，只找到这一个视频：\n{video_list}\n\n"
+                f"现在请你作为{assistant_name}，像平时聊天一样给{user_name}发一条有个人判断的推荐。"
+                "只能推荐这一个视频，控制在 2~4 句话。"
+                "如果有简介/摘要，基于其中明确的信息评价它可能有意思的地方，不能声称自己完整看过视频。"
+                "如果只有标题和链接，就根据标题、关键词和用户兴趣说明为什么值得点开，不能编造剧情、观点或细节。"
+                "语气要自然、有一点莲心自己的态度，不要写成机械播报。必须原样保留视频标题和链接。"
+                "直接输出消息内容，不要任何前缀。"
+            )
+            response = client.chat.completions.create(
+                model=model,
+                max_tokens=256,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            text = self._response_text(response.choices[0].message)
+            return text or fallback
+        except Exception as exc:
+            print(f"[B站冲浪] 生成推荐文案失败，使用标题链接兜底: {exc}")
+            return fallback
+
+    @staticmethod
+    def _format_bilibili_fallback(keyword: str, videos: list[dict]) -> str:
+        video = videos[0] if videos else {}
+        title = (video.get("title") or "未命名视频").strip()
+        link = (video.get("link") or "").strip()
+        description = (video.get("description") or video.get("summary") or "").strip()
+        if description:
+            reason = f"简介里提到“{description[:180]}”，看起来有点东西，我觉得你可以点开看看。"
+        else:
+            reason = "我现在只能确认标题和链接，但这个标题看起来可能对你的口味，想看时可以点开试试。"
+        return (
+            f"我刚刚逛到一个可能适合你的 B 站视频：{title}\n"
+            f"{reason}\n"
+            f"链接：{link}"
+        )
+
+    @classmethod
+    def _ensure_bilibili_details(cls, message: str, videos: list[dict]) -> str:
+        """模型可以润色语气，但不能删掉程序获取到的标题和 URL。"""
+        text = (message or "").strip()
+        missing = []
+        for index, video in enumerate(videos, 1):
+            title = (video.get("title") or "").strip()
+            link = (video.get("link") or "").strip()
+            if (title and title not in text) or (link and link not in text):
+                missing.append(f"{index}. {title}\n   链接：{link}")
+        if missing:
+            suffix = "视频清单：\n" + "\n".join(missing)
+            text = f"{text}\n\n{suffix}" if text else suffix
+        return text or cls._format_bilibili_fallback("B站", videos)

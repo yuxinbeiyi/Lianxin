@@ -121,6 +121,11 @@ class ProactivePresentationControllerTests(unittest.TestCase):
         self.controller.handle_slack_response("换首歌")
         self.assertEqual(1, self.next_tracks)
 
+    def test_internal_mooyu_prefix_is_not_user_visible(self):
+        raw = "[\u6478\u9c7c] \u96e8\u5fc3\u535a\u58eb\uff0c\u8fd9\u662f\u4e00\u6761\u63d2\u8bdd\u3002"
+        cleaned = self.controller._clean_text(raw)
+        self.assertEqual("\u96e8\u5fc3\u535a\u58eb\uff0c\u8fd9\u662f\u4e00\u6761\u63d2\u8bdd\u3002", cleaned)
+
     def test_behavior_fallback_discards_stale_data_sources(self):
         self.controller._last_behavior = "bilibili"
         self.controller._pending_mooyu_sources.append("stale")
