@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>涟漪情感系统</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="readability.css">
 </head>
 <body>
   <header class="topbar">
@@ -19,7 +20,7 @@
   </main>
   <footer class="controlbar"><div class="mode-switch"><button data-mode="live" class="mode active">实时</button><button data-mode="history" class="mode">历史</button><button data-mode="simulate" class="mode">模拟</button></div><div id="simulation-controls" class="simulation-controls hidden"><button data-scenario="warm_reply">温暖回应</button><button data-scenario="cold_reply">冷淡回应</button><button data-scenario="waiting">模拟等待</button><button id="restore">撤销模拟</button></div><span id="footer-status">真实状态 · 模拟不会触发主动聊天或工具调用</span></footer>
   <section id="history-panel" class="history-panel hidden"><div class="card-head"><div><span class="eyebrow">HISTORY</span><h2>情绪历史</h2></div><button class="close-panel" data-close="history-panel">×</button></div><input id="history-range" type="range" min="0" max="100" value="100"><div id="history-summary" class="muted">拖动时间轴查看历史状态</div></section>
-  <section id="settings-panel" class="settings-panel hidden"><div class="card-head"><div><span class="eyebrow">SETTINGS</span><h2>情感设置</h2></div><button class="close-panel" data-close="settings-panel">×</button></div><label>语义分析模式<select id="semantic-mode"><option value="off">关闭</option><option value="auto">自动</option><option value="local">本地</option><option value="cloud">云端</option></select></label><label>显著事件阈值<input id="significance" type="range" min="0.5" max="1" step="0.01" value="0.82"><output id="significance-value">0.82</output></label><button id="save-settings" class="primary-btn">保存设置</button><p id="settings-note" class="muted">设置只影响情感评估和事件记录，不会改变工具安全策略。</p></section>
+  <section id="settings-panel" class="settings-panel hidden"><div class="card-head"><div><span class="eyebrow">SETTINGS</span><h2>情感设置</h2></div><button class="close-panel" data-close="settings-panel">×</button></div><label>语义分析模式<select id="semantic-mode"><option value="off">关闭</option><option value="auto">自动</option><option value="local">本地</option><option value="cloud">云端</option></select></label><p class="setting-help"><b>关闭</b>：只用规则判断，最快且不调用模型。<br><b>自动</b>：优先规则，必要时使用已配置的轻量模型。<br><b>本地</b>：只使用本地语义模型。<br><b>云端</b>：允许调用云端模型，理解更细但延迟和成本更高。</p><label>显著事件阈值<input id="significance" type="range" min="0.5" max="1" step="0.01" value="0.82"><output id="significance-value">0.82</output></label><button id="save-settings" class="primary-btn">保存设置</button><p id="settings-note" class="muted">设置只影响情感评估和事件记录，不会改变工具安全策略。</p></section>
   <div id="toast" class="toast"></div>
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script><script src="app.js"></script>
 </body>
