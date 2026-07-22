@@ -223,7 +223,7 @@ class SlackWorker(QThread):
         )
 
     def _generate(self) -> str:
-        client, model = self._get_client()
+        model, api_key, api_base = self._get_llm_config()
         snapshot = capture_persona_snapshot()
         system = self._get_system_prompt(snapshot)
         user_name = _get_user_name()
@@ -239,27 +239,57 @@ class SlackWorker(QThread):
             {"role": "user", "content": user_prompt},
         ]
         try:
-            response = client.chat.completions.create(
-                model=model, messages=messages, temperature=0.9, max_tokens=300,
-            )
-            text = self._response_text(response.choices[0].message)
+            text = self._call_llm(model, api_key, api_base, messages)
             print(f"[摸鱼调试] action={self._action}, 首次文本长度={len(text)}", flush=True)
             if text:
                 return text
-            retry = client.chat.completions.create(
-                model=model,
-                messages=messages + [{
+            text = self._call_llm(
+                model, api_key, api_base,
+                messages + [{
                     "role": "user",
                     "content": "请直接输出要发送的一到两句话，不要调用工具，不要返回空内容。",
                 }],
-                temperature=0.9,
-                max_tokens=300,
             )
-            text = self._response_text(retry.choices[0].message)
             print(f"[摸鱼调试] action={self._action}, 重试文本长度={len(text)}", flush=True)
             return text or self._fallback_message()
         except Exception as e:
             raise RuntimeError(f"API调用失败: {e}")
+
+    def _get_llm_config(self):
+        """与 AgentCore 使用相同的 LiteLLM 模型命名和供应商路由。"""
+        cfg = get_api_config()
+        if cfg.get("provider", "deepseek") == "agnes":
+            agnes = get_agnes_config()
+            return f"openai/{agnes['model']}", agnes["api_key"], agnes["base_url"]
+        from config import normalize_model_for_litellm
+        base = str(cfg.get("base_url", "https://api.deepseek.com"))
+        return normalize_model_for_litellm(str(cfg.get("model", "")), base), cfg.get("api_key", ""), base
+
+    @classmethod
+    def _call_llm(cls, model: str, api_key: str, api_base: str, messages: list[dict]) -> str:
+        import litellm
+        stream = litellm.completion(
+            model=model,
+            messages=messages,
+            temperature=0.9,
+            max_tokens=300,
+            api_key=api_key,
+            api_base=api_base,
+            stream=True,
+            timeout=120,
+        )
+        parts = []
+        for chunk in stream:
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            delta = getattr(choices[0], "delta", None)
+            if delta is None and isinstance(choices[0], dict):
+                delta = choices[0].get("delta") or choices[0].get("message")
+            text = cls._response_text(delta)
+            if text:
+                parts.append(text)
+        return "".join(parts).strip()
 
     @staticmethod
     def _response_text(message) -> str:
