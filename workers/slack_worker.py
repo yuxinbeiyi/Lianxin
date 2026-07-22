@@ -223,7 +223,7 @@ class SlackWorker(QThread):
         )
 
     def _generate(self) -> str:
-        model, api_key, api_base = self._get_llm_config()
+        model, api_key, api_base, max_tokens = self._get_llm_config()
         snapshot = capture_persona_snapshot()
         system = self._get_system_prompt(snapshot)
         user_name = _get_user_name()
@@ -242,11 +242,11 @@ class SlackWorker(QThread):
         ]
         try:
             print(f"[摸鱼调试] action={self._action}, 上下文长度={len(self._context)}", flush=True)
-            text = self._safe_call_llm(model, api_key, api_base, messages, stream=True)
+            text = self._safe_call_llm(model, api_key, api_base, messages, max_tokens=max_tokens, stream=True)
             print(f"[摸鱼调试] action={self._action}, 首次文本长度={len(text)}", flush=True)
             if text:
                 return text
-            text = self._safe_call_llm(model, api_key, api_base, messages, stream=False)
+            text = self._safe_call_llm(model, api_key, api_base, messages, max_tokens=max_tokens, stream=False)
             print(f"[摸鱼调试] action={self._action}, 非流式回退文本长度={len(text)}", flush=True)
             if text:
                 return text
@@ -255,7 +255,7 @@ class SlackWorker(QThread):
                 messages + [{
                     "role": "user",
                     "content": "请直接输出要发送的一到两句话，不要调用工具，不要返回空内容。",
-                }],
+                }], max_tokens=max_tokens, stream=True,
             )
             print(f"[摸鱼调试] action={self._action}, 重试文本长度={len(text)}", flush=True)
             if text:
@@ -265,7 +265,7 @@ class SlackWorker(QThread):
                 messages + [{
                     "role": "user",
                     "content": "只输出最终要发送给用户的简短中文，不要展示推理过程。",
-                }],
+                }], max_tokens=max_tokens,
                 stream=False,
             )
             print(f"[摸鱼调试] action={self._action}, 非流式重试文本长度={len(text)}", flush=True)
@@ -278,30 +278,38 @@ class SlackWorker(QThread):
         cfg = get_api_config()
         if cfg.get("provider", "deepseek") == "agnes":
             agnes = get_agnes_config()
-            return f"openai/{agnes['model']}", agnes["api_key"], agnes["base_url"]
+            return f"openai/{agnes['model']}", agnes["api_key"], agnes["base_url"], self._configured_max_tokens()
         from config import normalize_model_for_litellm
         base = str(cfg.get("base_url", "https://api.deepseek.com"))
-        return normalize_model_for_litellm(str(cfg.get("model", "")), base), cfg.get("api_key", ""), base
+        return normalize_model_for_litellm(str(cfg.get("model", "")), base), cfg.get("api_key", ""), base, self._configured_max_tokens()
+
+    @staticmethod
+    def _configured_max_tokens() -> int:
+        try:
+            from config import get_api_config
+            return max(256, int(get_api_config().get("max_tokens", 8192)))
+        except (TypeError, ValueError, AttributeError):
+            return 8192
 
     @classmethod
     def _safe_call_llm(cls, model: str, api_key: str, api_base: str,
-                       messages: list[dict], *, stream: bool) -> str:
+                       messages: list[dict], *, max_tokens: int, stream: bool) -> str:
         try:
-            return cls._call_llm(model, api_key, api_base, messages, stream=stream)
+            return cls._call_llm(model, api_key, api_base, messages, max_tokens=max_tokens, stream=stream)
         except Exception as exc:
             print(f"[摸鱼调试] {('流式' if stream else '非流式')}请求失败: {type(exc).__name__}", flush=True)
             return ""
 
     @classmethod
     def _call_llm(cls, model: str, api_key: str, api_base: str,
-                  messages: list[dict], *, stream: bool) -> str:
+                  messages: list[dict], *, max_tokens: int, stream: bool) -> str:
         import litellm
         response = litellm.completion(
             model=model,
             messages=messages,
             temperature=0.9,
-            # 推理模型可能先消耗 reasoning token；300 会导致可见正文为空。
-            max_tokens=4096,
+            # 使用全局预算；简洁性由提示词约束，而不是摸鱼专用小上限。
+            max_tokens=max_tokens,
             api_key=api_key,
             api_base=api_base,
             stream=stream,
