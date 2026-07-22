@@ -14,6 +14,7 @@
   const ctx = map.getContext('2d');
   const mini = document.getElementById('mini-map'), miniCtx = mini.getContext('2d');
   let W = 0, H = 0, dpr = 1, time = 0;
+  let backgroundReady = false;
   let mx = 0, my = 0, zoom = 1, panX = 0, panY = 0;
   let dragging = false, moved = false, lastX = 0, lastY = 0;
   let level = 'universe', activeGalaxy = null, selected = null, hover = null;
@@ -93,7 +94,7 @@
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight;
     [bg, map].forEach(canvas => { canvas.width = W * dpr; canvas.height = H * dpr; canvas.style.width = `${W}px`; canvas.style.height = `${H}px`; });
-    bx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); nebulaCache.clear(); layoutCache.clear(); galaxyItemsCache.clear();
+    bx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); backgroundReady = false; nebulaCache.clear(); layoutCache.clear(); galaxyItemsCache.clear();
   }
   const rgba = (hex, alpha) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${n >> 8 & 255},${n & 255},${alpha})`; };
   function drawBackground() {
@@ -132,7 +133,7 @@
   function draw(frameAt = 0) {
     if (frameAt - lastFrameAt < 12) { requestAnimationFrame(draw); return; }
     lastFrameAt = frameAt;
-    drawBackground(); ctx.clearRect(0, 0, W, H); drawCore(); hitPoints = [];
+    if (!backgroundReady) { drawBackground(); backgroundReady = true; } ctx.clearRect(0, 0, W, H); drawCore(); hitPoints = [];
     if (level === 'universe') {
       for (const point of galaxyLayout()) { if (!isGalaxyVisible(point.galaxy)) continue; const position = world(point.x, point.y, .55); nebula(point.galaxy, position.x, position.y, point.radius); star(position.x, position.y, 15, point.galaxy.color, .9, hover?.galaxy === point.galaxy, motionEnabled ? .5 + .5 * Math.sin(time * 2) : 0); if (showAllText || hover?.galaxy === point.galaxy) { ctx.fillStyle = rgba(point.galaxy.color, .9); ctx.font = `${fontSize + 1}px Microsoft YaHei`; ctx.textAlign = 'center'; ctx.fillText(point.galaxy.name, position.x, position.y + point.radius + 19); ctx.fillStyle = 'rgba(190,205,245,.65)'; ctx.font = `${Math.max(10, fontSize - 1)}px Microsoft YaHei`; ctx.fillText(`${galaxyItems(point.galaxy).length} 星座`, position.x, position.y + point.radius + 36); } hitPoints.push({ type: 'galaxy', galaxy: point.galaxy, x: position.x, y: position.y, radius: point.radius }); }
     } else if (level === 'galaxy') {

@@ -7,7 +7,7 @@
   const space = document.getElementById('space');
   const mapCtx = map.getContext('2d');
   const spaceCtx = space.getContext('2d');
-  const state = { mode: 'affect', motion: true, labels: true, selected: null, progress: 100 };
+  const state = { mode: 'affect', motion: false, labels: true, selected: null, progress: 100 };
   let stars = [];
   let nodes = [];
   let framePending = false;
