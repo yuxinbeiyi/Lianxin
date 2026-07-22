@@ -24,6 +24,7 @@ from config import get_quick_launch_apps, save_quick_launch_apps
 from brain.graph_memory import ALL_CATEGORIES, CATEGORY_DESCRIPTIONS
 from brain.graph_memory import list_all_facts, delete_facts
 from gui.quick_launch_dialog import QuickLaunchEditDialog
+from gui.avatar_widgets import ChatAvatarSettingsTab
 
 
 
@@ -31,6 +32,7 @@ class SettingsDialog(QDialog):
     date_saved = pyqtSignal()          # 初识日期保存信号
     font_size_changed = pyqtSignal(int)  # 字体大小变化信号
     background_changed = pyqtSignal(bool, str, float, str, str)
+    avatars_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -333,6 +335,8 @@ class SettingsDialog(QDialog):
         scroll_area.setWidget(scroll_content)
         general_layout.addWidget(scroll_area)
         tab_widget.addTab(general_tab, "常规")
+        self._chat_avatar_tab = ChatAvatarSettingsTab(self)
+        tab_widget.addTab(self._chat_avatar_tab, "头像风格")
 
         # ----- 快捷启动设置选项卡 -----
         ql_tab = QWidget()
@@ -734,6 +738,8 @@ class SettingsDialog(QDialog):
             self._day_spin.setValue(max_day)
 
     def _load_from_settings(self):
+        if hasattr(self, "_chat_avatar_tab"):
+            self._chat_avatar_tab.load()
         self._exit_confirm_cb.setChecked(self._settings.show_exit_confirmation)
         self._startup_check_cb.setChecked(self._settings.startup_check_enabled)
         self._autostart_cb.setChecked(is_autostart_enabled())
@@ -780,6 +786,9 @@ class SettingsDialog(QDialog):
         self._load_background_controls()
 
     def _on_save(self):
+        if hasattr(self, "_chat_avatar_tab"):
+            self._chat_avatar_tab.save()
+            self.avatars_changed.emit()
         self._settings.show_exit_confirmation = self._exit_confirm_cb.isChecked()
         self._settings.startup_check_enabled = self._startup_check_cb.isChecked()
         self._settings.font_size = self._font_slider.value()

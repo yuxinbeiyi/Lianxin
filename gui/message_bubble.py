@@ -15,9 +15,14 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QPixmap, QMovie
 
 from utils.settings import get_settings
+from gui.avatar_widgets import CircularAvatar
+from config import get_chat_avatar_config
 
 
 class MessageBubble(QWidget):
+    avatar_interaction_requested = pyqtSignal(str)
+    avatar_clicked = pyqtSignal(str)
+    avatar_long_pressed = pyqtSignal(str)
     quote_requested = pyqtSignal(str, str)  # (text, sender_name)
     speak_requested = pyqtSignal(str)       # 朗读请求
     delete_requested = pyqtSignal()         # 删除请求
@@ -27,6 +32,7 @@ class MessageBubble(QWidget):
         super().__init__(parent)
         self.is_user = is_user
         self._text = text
+        self._avatar = None
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
@@ -36,7 +42,11 @@ class MessageBubble(QWidget):
     def _build_ui(self, text: str):
         outer = QHBoxLayout(self)
         outer.setContentsMargins(16, 4, 16, 4)
-        outer.setSpacing(0)
+        outer.setSpacing(int(get_chat_avatar_config().get("gap", 10)))
+        self._avatar = CircularAvatar("user" if self.is_user else "assistant", parent=self)
+        self._avatar.double_clicked.connect(self.avatar_interaction_requested.emit)
+        self._avatar.clicked.connect(self.avatar_clicked.emit)
+        self._avatar.long_pressed.connect(self.avatar_long_pressed.emit)
 
         # 用容器包裹 label，容器控制最大宽度，label 在容器内自由伸展
         bubble = QWidget()
@@ -76,6 +86,7 @@ class MessageBubble(QWidget):
             """)
             outer.addStretch(1)
             outer.addWidget(bubble)
+            outer.addWidget(self._avatar, 0, Qt.AlignTop)
         else:
             bubble.setStyleSheet("""
                 QWidget {
@@ -89,8 +100,13 @@ class MessageBubble(QWidget):
                     background: transparent;
                 }
             """)
+            outer.addWidget(self._avatar, 0, Qt.AlignTop)
             outer.addWidget(bubble)
             outer.addStretch(1)
+
+    def refresh_avatar(self):
+        if self._avatar:
+            self._avatar.reload()
 
     def _show_context_menu(self, pos):
         menu = QMenu(self)
@@ -135,6 +151,9 @@ class MessageBubble(QWidget):
 
 
 class ImageMessageBubble(QWidget):
+    avatar_interaction_requested = pyqtSignal(str)
+    avatar_clicked = pyqtSignal(str)
+    avatar_long_pressed = pyqtSignal(str)
     """用于显示图片消息的气泡。
     支持 sender 参数：
         - "user": 右侧，紫蓝色背景，白色文字
@@ -147,6 +166,7 @@ class ImageMessageBubble(QWidget):
         self._image_path = image_path
         self._full_text = full_text if full_text else ocr_text
         self._expanded = False
+        self._avatar = None
         self._sender = sender  # "user" 或 "ai"
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._build_ui()
@@ -154,7 +174,7 @@ class ImageMessageBubble(QWidget):
     def _build_ui(self):
         outer = QHBoxLayout(self)
         outer.setContentsMargins(16, 4, 16, 4)
-        outer.setSpacing(0)
+        outer.setSpacing(int(get_chat_avatar_config().get("gap", 10)))
 
         bubble = QWidget()
         bubble.setAttribute(Qt.WA_StyledBackground, True)
@@ -238,6 +258,11 @@ class ImageMessageBubble(QWidget):
             """)
             outer.addStretch(1)
             outer.addWidget(bubble)
+            self._avatar = CircularAvatar("user", parent=self)
+            self._avatar.double_clicked.connect(self.avatar_interaction_requested.emit)
+            self._avatar.clicked.connect(self.avatar_clicked.emit)
+            self._avatar.long_pressed.connect(self.avatar_long_pressed.emit)
+            outer.addWidget(self._avatar, 0, Qt.AlignTop)
         else:
             bubble.setStyleSheet("""
                 QWidget {
@@ -250,8 +275,17 @@ class ImageMessageBubble(QWidget):
                     background: transparent;
                 }
             """)
+            self._avatar = CircularAvatar("assistant", parent=self)
+            self._avatar.double_clicked.connect(self.avatar_interaction_requested.emit)
+            self._avatar.clicked.connect(self.avatar_clicked.emit)
+            self._avatar.long_pressed.connect(self.avatar_long_pressed.emit)
+            outer.addWidget(self._avatar, 0, Qt.AlignTop)
             outer.addWidget(bubble)
             outer.addStretch(1)
+
+    def refresh_avatar(self):
+        if self._avatar:
+            self._avatar.reload()
 
     def _on_toggle(self):
         self._expanded = not self._expanded
@@ -281,6 +315,11 @@ class ImageMessageBubble(QWidget):
             self._toggle_btn.setCursor(Qt.PointingHandCursor)
             self._toggle_btn.linkActivated.connect(self._on_toggle)
             # 找到 inner layout 并添加按钮
-            bubble = self.layout().itemAt(0 if self._sender == "ai" else 1).widget()
+            bubble = None
+            for i in range(self.layout().count()):
+                candidate = self.layout().itemAt(i).widget()
+                if candidate and candidate.layout() and candidate.layout().objectName() == "image_bubble_inner":
+                    bubble = candidate
+                    break
             if bubble:
                 bubble.layout().addWidget(self._toggle_btn)

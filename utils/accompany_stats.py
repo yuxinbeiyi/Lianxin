@@ -33,14 +33,18 @@ class AccompanyStats:
                     self._total_seconds = data.get("total_seconds", 0)
                     self._session_count = data.get("session_count", 0)
                     self._first_meet_date = data.get("first_meet_date", "")
+                    self._avatar_interactions = data.get("avatar_interactions", {}) or {}
+                    self._avatar_interactions.setdefault("events", [])
             except (json.JSONDecodeError, IOError):
                 self._total_seconds = 0
                 self._session_count = 0
                 self._first_meet_date = ""
+                self._avatar_interactions = {"events": []}
         else:
             self._total_seconds = 0
             self._session_count = 0
             self._first_meet_date = ""
+            self._avatar_interactions = {"events": []}
 
     def reload(self):
         """重新从文件加载数据（用于设置保存后立即更新）"""
@@ -53,6 +57,7 @@ class AccompanyStats:
             "total_seconds": self._total_seconds,
             "session_count": self._session_count,
             "first_meet_date": self._first_meet_date,
+            "avatar_interactions": self._avatar_interactions,
             "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         with open(self._stats_file, "w", encoding="utf-8") as f:
@@ -87,6 +92,52 @@ class AccompanyStats:
     def set_first_meet_date(self, date_str: str):
         self._first_meet_date = date_str
         self._save()
+
+    def record_avatar_interaction(self, interaction_type="user_tap", reaction_type="neutral"):
+        """记录头像互动；这是陪伴统计，不写入长期记忆。"""
+        data = self._avatar_interactions
+        data["interaction_count"] = int(data.get("interaction_count", 0)) + 1
+        data["user_tap_count"] = int(data.get("user_tap_count", 0)) + (1 if interaction_type == "user_tap" else 0)
+        data["assistant_counter_tap_count"] = int(data.get("assistant_counter_tap_count", 0)) + (1 if interaction_type == "counter_tap" else 0)
+        data["last_interaction_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        types = data.setdefault("reaction_types", {})
+        types[reaction_type] = int(types.get(reaction_type, 0)) + 1
+        events = data.setdefault("events", [])
+        events.append({
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "type": interaction_type,
+            "reaction": reaction_type,
+        })
+        del events[:-100]
+        self._save()
+
+    def get_avatar_interactions(self) -> dict:
+        return dict(self._avatar_interactions)
+
+    def get_avatar_interaction_summary(self) -> dict:
+        events = self._avatar_interactions.get("events", [])
+        today = datetime.now().date().isoformat()
+        week_start = date.today().toordinal() - date.today().weekday()
+        today_count = 0
+        week_count = 0
+        for event in events:
+            stamp = str(event.get("at", ""))
+            if stamp[:10] == today:
+                today_count += 1
+            try:
+                if datetime.fromisoformat(stamp).date().toordinal() >= week_start:
+                    week_count += 1
+            except ValueError:
+                pass
+        return {
+            "total": int(self._avatar_interactions.get("interaction_count", 0)),
+            "user_taps": int(self._avatar_interactions.get("user_tap_count", 0)),
+            "counter": int(self._avatar_interactions.get("assistant_counter_tap_count", 0)),
+            "today": today_count,
+            "week": week_count,
+            "last_interaction_at": self._avatar_interactions.get("last_interaction_at", ""),
+            "events": list(events),
+        }
 
     def get_total_days_since_first_meet(self) -> int:
         if not self._first_meet_date:
@@ -153,6 +204,7 @@ class AccompanyStats:
         self._total_seconds = 0
         self._session_count = 0
         self._first_meet_date = ""
+        self._avatar_interactions = {"events": []}
         self._session_start_time = datetime.now()
         self._save()
         return "陪伴统计数据已重置"

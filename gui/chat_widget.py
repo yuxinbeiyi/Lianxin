@@ -104,6 +104,9 @@ _BOREDOM_MESSAGES = [
 class ChatWidget(QScrollArea):
     quote_requested = pyqtSignal(str, str)
     speak_requested = pyqtSignal(str)
+    avatar_interaction_requested = pyqtSignal(str)
+    avatar_clicked = pyqtSignal(str)
+    avatar_long_pressed = pyqtSignal(str)
     def __init__(self, parent=None):
         super().__init__(parent)
         self._last_message_time: datetime | None = None
@@ -166,6 +169,9 @@ class ChatWidget(QScrollArea):
         bubble = MessageBubble(text, is_user=True)
         bubble.quote_requested.connect(self.quote_requested.emit)
         bubble.speak_requested.connect(self.speak_requested.emit)
+        bubble.avatar_interaction_requested.connect(self.avatar_interaction_requested.emit)
+        bubble.avatar_clicked.connect(self.avatar_clicked.emit)
+        bubble.avatar_long_pressed.connect(self.avatar_long_pressed.emit)
         bubble.delete_requested.connect(lambda b=bubble: self._delete_message_bubble(b))
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._container.updateGeometry()
@@ -179,6 +185,9 @@ class ChatWidget(QScrollArea):
         bubble = MessageBubble(text, is_user=False)
         bubble.quote_requested.connect(self.quote_requested.emit)
         bubble.speak_requested.connect(self.speak_requested.emit)
+        bubble.avatar_interaction_requested.connect(self.avatar_interaction_requested.emit)
+        bubble.avatar_clicked.connect(self.avatar_clicked.emit)
+        bubble.avatar_long_pressed.connect(self.avatar_long_pressed.emit)
         bubble.delete_requested.connect(lambda b=bubble: self._delete_message_bubble(b))
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._container.updateGeometry()
@@ -197,6 +206,9 @@ class ChatWidget(QScrollArea):
         self._maybe_insert_timestamp()
         sender = "ai" if is_ai else "user"
         bubble = ImageMessageBubble(image_path, ocr_text=desc, full_text=full_text, sender=sender)
+        bubble.avatar_interaction_requested.connect(self.avatar_interaction_requested.emit)
+        bubble.avatar_clicked.connect(self.avatar_clicked.emit)
+        bubble.avatar_long_pressed.connect(self.avatar_long_pressed.emit)
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._container.updateGeometry()
         self._scroll_to_bottom()
@@ -314,6 +326,28 @@ class ChatWidget(QScrollArea):
             if item.widget():
                 item.widget().deleteLater()
 
+    def refresh_avatars(self):
+        """设置页保存头像后，只刷新头像 pixmap，不重建聊天内容。"""
+        from gui.avatar_widgets import CircularAvatar
+        for avatar in self._container.findChildren(CircularAvatar):
+            avatar.reload()
+        self._container.updateGeometry()
+
+    def show_avatar_interaction_notice(self, text: str, duration_ms: int = 1600):
+        label = QLabel(text, self.viewport())
+        label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet("QLabel { color:#F4F0FF; background:rgba(34,28,70,220); border:1px solid #A98BFF; border-radius:14px; padding:8px 16px; font-size:14px; }")
+        label.adjustSize()
+        label.move(max(0, (self.viewport().width() - label.width()) // 2), max(12, self.viewport().height() // 2 - label.height() // 2))
+        label.show(); label.raise_()
+        QTimer.singleShot(duration_ms, label.deleteLater)
+        return label
+
+    def show_avatar_thinking(self, text: str):
+        self._thinking_label.setText("💭  " + text)
+        self._thinking_label.show()
+        self._scroll_to_bottom()
+
     def add_system_tip(self, text: str):
         label = QLabel(text)
         label.setAlignment(Qt.AlignCenter)
@@ -354,6 +388,9 @@ class ChatWidget(QScrollArea):
         self._hide_thinking()
         self._maybe_insert_timestamp()
         bubble = ImageMessageBubble(image_path, ocr_text, full_text)
+        bubble.avatar_interaction_requested.connect(self.avatar_interaction_requested.emit)
+        bubble.avatar_clicked.connect(self.avatar_clicked.emit)
+        bubble.avatar_long_pressed.connect(self.avatar_long_pressed.emit)
         bubble.setObjectName("image_bubble")
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._scroll_to_bottom()
@@ -394,6 +431,9 @@ class ChatWidget(QScrollArea):
         self._hide_thinking()
         self._maybe_insert_timestamp()
         bubble = ImageMessageBubble(image_path, sender="ai", parent=self)
+        bubble.avatar_interaction_requested.connect(self.avatar_interaction_requested.emit)
+        bubble.avatar_clicked.connect(self.avatar_clicked.emit)
+        bubble.avatar_long_pressed.connect(self.avatar_long_pressed.emit)
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._scroll_to_bottom()
     def _delete_message_bubble(self, bubble):

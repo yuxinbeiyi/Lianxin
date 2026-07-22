@@ -864,6 +864,16 @@ class MainWindow(QMainWindow):
         self._input_panel.message_submitted.connect(self._on_user_message)
         self._chat_widget.quote_requested.connect(self._input_panel.set_quote)
         self._chat_widget.speak_requested.connect(self._on_speak_request)
+        self._chat_widget.avatar_interaction_requested.connect(self._on_avatar_interaction)
+        self._chat_widget.avatar_clicked.connect(self._on_avatar_clicked)
+        self._chat_widget.avatar_long_pressed.connect(self._on_avatar_long_pressed)
+        from gui.avatar_interaction import AvatarInteractionController
+        self._avatar_interaction = AvatarInteractionController(self._agent, self._accompany_stats, self)
+        self._avatar_interaction.thinking_started.connect(self._chat_widget.show_avatar_thinking)
+        self._avatar_interaction.response_ready.connect(self._on_avatar_interaction_response)
+        self._avatar_interaction.interaction_blocked.connect(
+            lambda text: self._chat_widget.show_avatar_interaction_notice(text, 1200)
+        )
         self._input_panel.voice_clicked.connect(self._on_voice_clicked)
 
 
@@ -1751,6 +1761,52 @@ class MainWindow(QMainWindow):
         self._accompany_dialog.raise_()
         self._accompany_dialog.activateWindow()
 
+    def _on_avatar_interaction(self, role: str):
+        """头像双击入口；互动独立于正常 AgentWorker。"""
+        if hasattr(self, "_avatar_interaction"):
+            notice = "你拍了拍莲心的头" if role == "assistant" else "你拍了拍自己的头像"
+            self._chat_widget.show_avatar_interaction_notice(notice)
+            self._avatar_interaction.trigger(role)
+
+    def _on_avatar_clicked(self, role: str):
+        if role != "assistant":
+            return
+        try:
+            from brain.emotional import get_manager
+            state = get_manager().state
+            mood = "开心" if state.valence > 0.25 else ("有点低落" if state.valence < -0.25 else "平静")
+            self._chat_widget.show_avatar_interaction_notice(f"莲心现在心情{mood}，正在陪着你", 1800)
+        except Exception:
+            self._chat_widget.show_avatar_interaction_notice("莲心正在这里陪着你", 1600)
+
+    def _on_avatar_long_pressed(self, role: str):
+        if role != "assistant":
+            return
+        self._accompany_stats.record_avatar_interaction("user_long_press", "摸摸头")
+        from gui.avatar_widgets import CircularAvatar
+        for avatar in self._chat_widget.findChildren(CircularAvatar):
+            if avatar.role == "assistant":
+                avatar.play_tap_animation()
+                break
+        self._chat_widget.show_avatar_interaction_notice("你摸了摸莲心的头", 1600)
+
+    def _on_avatar_interaction_response(self, text: str, counter_tap: bool):
+        self._accompany_stats.reload()
+        if self._accompany_dialog is not None and self._accompany_dialog.isVisible():
+            self._accompany_dialog._update_content()
+        from config import get_chat_avatar_config
+        if get_chat_avatar_config().get("response_in_chat", True):
+            self._chat_widget.add_ai_message(text)
+        else:
+            self._chat_widget.show_avatar_interaction_notice(text, 3200)
+        if counter_tap:
+            from gui.avatar_widgets import CircularAvatar
+            for avatar in self._chat_widget.findChildren(CircularAvatar):
+                if avatar.role == "user":
+                    avatar.play_tap_animation()
+                    break
+            self._chat_widget.show_avatar_interaction_notice("莲心反手拍了拍你的头")
+
     def _on_accompany_dialog_closed(self):
         duration_str = self._accompany_stats.get_current_formatted_duration()
         session_count = self._accompany_stats.get_stats()["session_count"]
@@ -1935,6 +1991,7 @@ class MainWindow(QMainWindow):
             self._settings_dialog = SettingsDialog(self)
             self._settings_dialog.date_saved.connect(self._on_first_meet_date_saved)
             self._settings_dialog.background_changed.connect(self._on_background_changed)
+            self._settings_dialog.avatars_changed.connect(self._chat_widget.refresh_avatars)
         self._settings_dialog.show()
         self._settings_dialog.raise_()
         self._settings_dialog.activateWindow()

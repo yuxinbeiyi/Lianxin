@@ -805,6 +805,44 @@ def save_memory_config(config: dict):
     _save_full_config(full)
 
 
+# 聊天气泡头像配置（与角色本体头像完全独立）
+_CHAT_AVATAR_DEFAULTS = {
+    "enabled": True,
+    "size": 60,
+    "gap": 10,
+    "border": True,
+    "assistant_path": "",
+    "user_path": "",
+    "interactions_enabled": True,
+    "dynamic_response": True,
+    "counter_tap": True,
+    "animation_enabled": True,
+    "response_in_chat": True,
+}
+
+
+def get_chat_avatar_config() -> dict:
+    full = _load_full_config()
+    saved = full.get("chat_avatars", {})
+    result = dict(_CHAT_AVATAR_DEFAULTS)
+    result.update({k: saved[k] for k in _CHAT_AVATAR_DEFAULTS if k in saved})
+    # 头像旧版本曾使用 42/84px，统一迁移到更舒适的 60px。
+    try:
+        if "size" in saved and int(saved.get("size", 60) or 60) in (42, 84):
+            result["size"] = 60
+    except (TypeError, ValueError):
+        result["size"] = 60
+    return result
+
+
+def save_chat_avatar_config(config: dict):
+    full = _load_full_config()
+    merged = dict(_CHAT_AVATAR_DEFAULTS)
+    merged.update(config or {})
+    full["chat_avatars"] = merged
+    _save_full_config(full)
+
+
 # ── 涟漪情感系统 v3 ────────────────────────────────────────
 _EMOTION_DEFAULTS = {
     "enabled": True,

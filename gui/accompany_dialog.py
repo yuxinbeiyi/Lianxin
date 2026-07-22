@@ -79,11 +79,16 @@ class AccompanyDialog(QDialog):
         self._music_label.setWordWrap(True)
         self._music_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self._music_label.setStyleSheet("color: #1ABC9C;")  # 咖啡色
+        self._avatar_interaction_label = QLabel()
+        self._avatar_interaction_label.setFont(QFont("Microsoft YaHei UI", 10))
+        self._avatar_interaction_label.setWordWrap(True)
+        self._avatar_interaction_label.setStyleSheet("color: #A98BFF;")
 
         right_layout.addWidget(self._duration_label)
         right_layout.addWidget(self._session_label)
         right_layout.addWidget(self._first_meet_label)
         right_layout.addWidget(self._music_label)
+        right_layout.addWidget(self._avatar_interaction_label)
         right_layout.addStretch()
 
         content_layout.addLayout(right_layout)
@@ -173,6 +178,13 @@ class AccompanyDialog(QDialog):
         else:
             music_text = "🎵 音乐统计功能未启用。"
         self._music_label.setText(music_text)
+        avatar_stats = self._stats.get_avatar_interactions()
+        summary = self._stats.get_avatar_interaction_summary()
+        self._avatar_interaction_label.setText(
+            f"头像互动：你拍了拍莲心 {avatar_stats.get('user_tap_count', 0)} 次，"
+            f"莲心反拍了你 {avatar_stats.get('assistant_counter_tap_count', 0)} 次\n"
+            f"本次累计互动 {summary.get('total', 0)} 次，今日 {summary.get('today', 0)} 次，本周 {summary.get('week', 0)} 次"
+        )
 
     def _on_close(self):
         self.dialog_closed.emit()
