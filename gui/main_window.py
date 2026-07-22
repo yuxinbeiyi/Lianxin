@@ -321,6 +321,9 @@ class MainWindow(QMainWindow):
 
         self._duty_scheduler.proactive_response.connect(self._on_proactive_response)
         self._duty_scheduler.proactive_error.connect(self._on_proactive_error)
+        self._duty_scheduler.proactive_coordination.connect(
+            self._on_proactive_coordination
+        )
         self._duty_scheduler.proactive_observation_text.connect(self._on_observation_result)
         self._duty_scheduler.proactive_observation_image.connect(self._on_observation_image)
         self._duty_scheduler.proactive_behavior_selected.connect(
@@ -2361,6 +2364,14 @@ class MainWindow(QMainWindow):
 
     def _on_proactive_error(self, err: str):
         self._proactive_controller.handle_proactive_error(err)
+
+    def _on_proactive_coordination(self, message: str):
+        """展示情绪与主动调度的协作状态，避免误判为主动聊天故障。"""
+        self._chat_widget.add_system_tip(message)
+        try:
+            self._proactive_controller.set_observation_tip(message)
+        except Exception:
+            pass
 
     def _on_mooyu_data_sources(self, action_name: str, sources: list):
         self._proactive_controller.handle_mooyu_data_sources(action_name, sources)

@@ -144,6 +144,7 @@ class DutyScheduler(QObject):
     proactive_observation_text = pyqtSignal(str)      # observation description
     proactive_observation_image = pyqtSignal(str, str) # image_path, description
     proactive_behavior_selected = pyqtSignal(str)     # normal | observe | bilibili | slack
+    proactive_coordination = pyqtSignal(str)          # 情绪协调导致主动联系延后
 
     slack_response = pyqtSignal(str)                  # message text
     slack_error = pyqtSignal(str)                     # error text
@@ -172,6 +173,7 @@ class DutyScheduler(QObject):
         self._paused = False
         self._agent_busy = False
         self._last_user_message_time = 0.0
+        self._last_emotion_gate_notice = 0.0
 
         self._master_timer = QTimer(self)
         self._master_timer.timeout.connect(self._tick)
@@ -291,6 +293,12 @@ class DutyScheduler(QObject):
             from brain.emotional import get_manager
             mgr = get_manager()
             if mgr.enabled and not mgr.proactive_allowed:
+                now = time.monotonic()
+                if now - self._last_emotion_gate_notice >= 300:
+                    self._last_emotion_gate_notice = now
+                    self.proactive_coordination.emit(
+                        "情绪协调中：当前关系张力较高，主动聊天暂缓以避免打扰；这不是故障。"
+                    )
                 return False
             return True
         except Exception:

@@ -123,7 +123,8 @@ class ProactiveWorker(QThread):
         # ── 情感系统：检查是否允许主动聊天 ────────────────────
         try:
             from brain.emotional import get_manager as _get_emotion_mgr
-            if not _get_emotion_mgr().proactive_allowed:
+            # 自动调度门控由 DutyScheduler 负责；手动调试不应静默跳过。
+            if False and not _get_emotion_mgr().proactive_allowed:
                 print("[观察-调试] 情感系统禁用了主动聊天，退出")
                 self.response_ready.emit("")
                 return
