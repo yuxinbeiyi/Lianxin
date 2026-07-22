@@ -243,6 +243,7 @@ class SlackWorker(QThread):
                 model=model, messages=messages, temperature=0.9, max_tokens=300,
             )
             text = self._response_text(response.choices[0].message)
+            print(f"[摸鱼调试] action={self._action}, 首次文本长度={len(text)}", flush=True)
             if text:
                 return text
             retry = client.chat.completions.create(
@@ -254,14 +255,46 @@ class SlackWorker(QThread):
                 temperature=0.9,
                 max_tokens=300,
             )
-            return self._response_text(retry.choices[0].message) or "我刚刚想问你点什么，但这次没有生成出文字，等我一下再试。"
+            text = self._response_text(retry.choices[0].message)
+            print(f"[摸鱼调试] action={self._action}, 重试文本长度={len(text)}", flush=True)
+            return text or self._fallback_message()
         except Exception as e:
             raise RuntimeError(f"API调用失败: {e}")
 
     @staticmethod
     def _response_text(message) -> str:
         for field in ("content", "text", "output_text"):
-            value = getattr(message, field, None)
+            value = message.get(field) if isinstance(message, dict) else getattr(message, field, None)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+            if isinstance(value, dict):
+                nested = value.get("text") or value.get("content")
+                if isinstance(nested, str) and nested.strip():
+                    return nested.strip()
+            if isinstance(value, list):
+                parts = []
+                for item in value:
+                    if isinstance(item, str):
+                        parts.append(item)
+                    elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                        parts.append(item["text"])
+                    else:
+                        nested = getattr(item, "text", None)
+                        if isinstance(nested, str):
+                            parts.append(nested)
+                joined = "".join(parts).strip()
+                if joined:
+                    return joined
         return ""
+
+    def _fallback_message(self) -> str:
+        """接口没有可显示文本时，按动作给出可用的本地结果，不再静默。"""
+        fallbacks = {
+            "random_question": "我刚刚想到一个问题：最近有没有什么小事，让你觉得今天还不错？",
+            "search_old_topic": "我翻了翻我们之前聊过的内容，等你有空时可以接着告诉我最近的进展。",
+            "review_old_diary": "我刚刚翻了翻旧日记，发现过去的那些小片段还挺值得回味的。",
+            "supplement_diary": "我看了看今天的记录，想再补上一句：别忘了给自己留一点休息时间。",
+            "remind_rest": "你已经忙了一阵子了，要不要先离开屏幕休息几分钟？",
+            "remind_water": "提醒一下，喝口水再继续吧。",
+        }
+        return fallbacks.get(self._action, "我刚刚查看了一下手头的信息，暂时没有新的内容可分享。")
