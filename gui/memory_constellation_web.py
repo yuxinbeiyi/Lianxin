@@ -99,6 +99,36 @@ class _ConstellationBridge(QObject):
         except Exception:
             return False
 
+    @pyqtSlot(str, result=str)
+    def simulateEmotion(self, scenario: str):
+        try:
+            from brain.emotional import get_manager
+            result = get_manager().simulate_scenario(str(scenario or ""))
+            return json.dumps(result, ensure_ascii=False, default=str)
+        except Exception as exc:
+            return json.dumps({"ok": False, "reason": str(exc)}, ensure_ascii=False)
+
+    @pyqtSlot(result=str)
+    def restoreEmotionSimulation(self):
+        try:
+            from brain.emotional import get_manager
+            return json.dumps(get_manager().restore_simulation(), ensure_ascii=False, default=str)
+        except Exception as exc:
+            return json.dumps({"ok": False, "reason": str(exc)}, ensure_ascii=False)
+
+    @pyqtSlot(str, result=bool)
+    def configureEmotion(self, raw_config: str):
+        try:
+            payload = json.loads(raw_config or "{}")
+            from brain.emotional import get_manager
+            get_manager().configure_settings(
+                semantic_analysis=payload.get("semantic_analysis"),
+                significant_memory_threshold=payload.get("significant_memory_threshold"),
+            )
+            return True
+        except Exception:
+            return False
+
 
 class MemoryConstellationWebWindow(QMainWindow):
     def __init__(self, parent=None):

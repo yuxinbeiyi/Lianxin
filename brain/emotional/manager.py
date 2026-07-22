@@ -673,21 +673,25 @@ class EmotionManager:
         state = self._get_state(*key)
         needs, emotions, middle = self._legacy_debug_values(state)
         events = self._store.recent_events(*key, limit=30)
+        saga_bias = self._get_saga_bias(state.persona_id)
         event_stats = self._store.event_stats(
             *key,
             significant=float(self._config.get("significant_memory_threshold", 0.82)),
         )
+        axes = {
+            "connection": round(state.connection, 4),
+            "guardedness": round(state.guardedness, 4),
+            "valence": round(state.valence, 4),
+            "arousal": round(state.arousal, 4),
+            "immersion": round(state.immersion, 4),
+        }
+        motive = self._dynamics.motive(state)
         return {
             "version": 3,
             "persona_id": state.persona_id,
             "subject_id": state.subject_id,
-            "axes": {
-                "connection": round(state.connection, 4),
-                "guardedness": round(state.guardedness, 4),
-                "valence": round(state.valence, 4),
-                "arousal": round(state.arousal, 4),
-                "immersion": round(state.immersion, 4),
-            },
+            "axes": axes,
+            "axis_details": self._axis_details(axes, events, saga_bias),
             "relationship": {
                 "trust": round(state.trust, 4),
                 "intimacy": round(state.intimacy, 4),
@@ -721,8 +725,89 @@ class EmotionManager:
                 }
                 for event in events
             ],
-            "saga_bias": self._get_saga_bias(state.persona_id),
+            "saga_bias": saga_bias,
+            "mood": {"cluster": state.mood_cluster, "label": middle},
+            "motive": {
+                "level": motive.level,
+                "urgency": round(motive.urgency, 4),
+                "action": "contact" if motive.should_contact else ("self_regulate" if motive.should_self_regulate else "observation"),
+                "reason": motive.reason,
+                "will_execute": False,
+            },
+            "influence": {
+                "conversation": self._recent_influence(events),
+                "time_drift": self._event_type_influence(events, ("decay", "drift", "idle")),
+                "long_story": {key: round(float(saga_bias.get(key, 0.0) or 0.0), 4) for key in ("valence", "arousal", "guardedness", "connection", "immersion")} | {
+                    "count": int(saga_bias.get("saga_count", 0) or 0),
+                    "weight_total": float(saga_bias.get("weight_total", 0.0) or 0.0),
+                },
+            },
+            "simulation": {
+                "active": key in self._simulation_baselines,
+                "can_restore": key in self._simulation_baselines,
+            },
+            "sync": {"status": "live", "updated_at": time.time(), "poll_interval_ms": 1500},
         }
+
+    @classmethod
+    def _axis_details(cls, axes: dict, events: list[dict], bias: dict) -> dict:
+        thresholds = {
+            "connection": {"observation": 0.20, "contact": 0.58, "urgent": 0.80},
+            "guardedness": {"caution": 0.42, "repair": 0.58},
+            "valence": {}, "arousal": {"regulation": 0.58}, "immersion": {"activity": 0.30},
+        }
+        result = {}
+        for name, value in axes.items():
+            deltas = []
+            source = "baseline"
+            for event in events[:8]:
+                try:
+                    delta = float(json.loads(event.get("delta_json", "{}")).get(name, 0.0) or 0.0)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    delta = 0.0
+                if abs(delta) > 0.0001:
+                    deltas.append(delta)
+                    source = event.get("event_type", source)
+            total = sum(deltas)
+            result[name] = {
+                "value": value,
+                "normalized": round((value + 1.0) / 2.0, 4) if name in {"valence", "arousal", "guardedness"} else value,
+                "delta": round(deltas[0], 4) if deltas else 0.0,
+                "trend": "up" if total > 0.001 else ("down" if total < -0.001 else "steady"),
+                "velocity": round(total / max(1, len(deltas)), 5),
+                "thresholds": thresholds.get(name, {}),
+                "source": source,
+                "long_story_bias": round(float(bias.get(name, 0.0) or 0.0), 4),
+            }
+        return result
+
+    @staticmethod
+    def _recent_influence(events: list[dict]) -> dict:
+        result = {"valence": 0.0, "arousal": 0.0, "connection": 0.0, "guardedness": 0.0, "immersion": 0.0}
+        for event in events[:8]:
+            if str(event.get("source_channel", "")) == "ui_simulation":
+                continue
+            try:
+                payload = json.loads(event.get("delta_json", "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            for key in result:
+                result[key] += float(payload.get(key, 0.0) or 0.0)
+        return {key: round(value, 4) for key, value in result.items()}
+
+    @staticmethod
+    def _event_type_influence(events: list[dict], types: tuple[str, ...]) -> dict:
+        result = {"connection": 0.0, "valence": 0.0, "arousal": 0.0, "guardedness": 0.0, "immersion": 0.0}
+        for event in events[:8]:
+            if not any(token in str(event.get("event_type", "")).lower() for token in types):
+                continue
+            try:
+                payload = json.loads(event.get("delta_json", "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            for key in result:
+                result[key] += float(payload.get(key, 0.0) or 0.0)
+        return {key: round(value, 4) for key, value in result.items()}
 
     @staticmethod
     def _event_valence(event: dict) -> float:

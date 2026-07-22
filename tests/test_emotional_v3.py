@@ -288,6 +288,16 @@ class V3ManagerTests(unittest.TestCase):
         for key in ("valence", "arousal", "guardedness", "connection", "immersion"):
             self.assertLessEqual(abs(first[key]), 0.08)
 
+    def test_console_observation_contract_keeps_legacy_axes(self):
+        manager = self.make_manager()
+        info = manager.get_debug_info()
+        self.assertIsInstance(info["axes"]["valence"], float)
+        self.assertIn("axis_details", info)
+        self.assertIn("thresholds", info["axis_details"]["connection"])
+        self.assertIn("motive", info)
+        self.assertIn("influence", info)
+        self.assertIn("simulation", info)
+
     def test_significant_memory_uses_existing_events_category_and_provenance(self):
         manager = self.make_manager()
         add_fact = Mock(return_value=17)
