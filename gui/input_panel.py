@@ -1237,12 +1237,15 @@ class InputPanel(QWidget):
     # ── 中途插话条 ───────────────────
     def show_interrupt_bar(self, agent_worker):
         """显示插话输入条，绑定到 AgentWorker 的 interrupt_queue。"""
-        from PyQt5.QtWidgets import QLineEdit, QPushButton, QHBoxLayout, QFrame
+        from PyQt5.QtWidgets import QLineEdit, QPushButton, QHBoxLayout, QFrame, QLabel
         from PyQt5.QtCore import Qt
 
         if hasattr(self, '_interrupt_bar') and self._interrupt_bar is not None:
             self._interrupt_bar.show()
             self._interrupt_input.setText("")
+            self._interrupt_worker = agent_worker
+            if hasattr(self, "_interrupt_status"):
+                self._interrupt_status.setText("就绪")
             self._interrupt_input.setFocus()
             return
 
@@ -1290,6 +1293,9 @@ class InputPanel(QWidget):
 
         layout.addWidget(lbl)
         layout.addWidget(btn)
+        status = QLabel("就绪")
+        status.setStyleSheet("color: #9aa4bd; font-size: 11px; padding: 0 4px;")
+        layout.addWidget(status)
 
         # 插入到当前布局底部
         parent_layout = self.parent().layout() if self.parent() else None
@@ -1298,13 +1304,37 @@ class InputPanel(QWidget):
 
         self._interrupt_bar = bar
         self._interrupt_input = lbl
+        self._interrupt_status = status
+        self._interrupt_worker = agent_worker
         bar.show()
         lbl.setFocus()
+
+        def send_with_status():
+            txt = lbl.text().strip()
+            if not txt:
+                return
+            worker = getattr(self, "_interrupt_worker", None)
+            accepted = worker.send_interrupt(txt) if worker else False
+            if accepted:
+                status.setText("已排队，当前步骤结束后回复")
+                lbl.clear()
+            else:
+                status.setText("当前任务已结束或队列已满")
+
+        # 替换前面绑定的通用发送逻辑，保留按钮和 Enter 两种入口。
+        try:
+            lbl.returnPressed.disconnect(_do_send)
+            btn.clicked.disconnect(_do_send)
+        except Exception:
+            pass
+        lbl.returnPressed.connect(send_with_status)
+        btn.clicked.connect(send_with_status)
 
     def hide_interrupt_bar(self):
         """隐藏插话输入条。"""
         if hasattr(self, '_interrupt_bar') and self._interrupt_bar is not None:
             self._interrupt_bar.hide()
+            self._interrupt_worker = None
     def get_mute_button(self):
         return self._btn_mute
 

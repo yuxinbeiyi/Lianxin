@@ -1215,8 +1215,12 @@ class MainWindow(QMainWindow):
 
 
     def _on_progress_update(self, text: str):
-        """收到插话进度回复（流式文本不显示在聊天界面）。"""
-        pass
+        """显示插话回复；它是当前任务的旁路信息，不冒充最终答案。"""
+        text = str(text or "").strip()
+        if not text:
+            return
+        self._chat_widget.add_system_tip(f"插话回复：{text}")
+        self._task_progress.set_subtitle(f"插话已回复：{text[:80]}")
 
 
     def _on_error(self, err: str):

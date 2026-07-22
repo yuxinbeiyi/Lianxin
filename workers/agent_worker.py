@@ -44,11 +44,13 @@ class AgentWorker(QThread):
         self.disable_tools = disable_tools
         self.interrupt_queue: queue.Queue = queue.Queue()
 
-    def send_interrupt(self, msg: str):
+    def send_interrupt(self, msg: str) -> bool:
         """GUI 线程调用：向工作线程发送一条插话消息。最多缓存 5 条。"""
         msg = msg.strip()
         if msg and self.interrupt_queue.qsize() < 5:
             self.interrupt_queue.put(msg)
+            return True
+        return False
 
     def _process_interrupt(self, interrupt_msg: str) -> str:
         """Worker 线程内调用：用 LLM 处理一条插话，返回简短回复。"""
