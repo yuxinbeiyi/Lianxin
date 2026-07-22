@@ -232,6 +232,8 @@ class SlackWorker(QThread):
         user_prompt = (
             f"{self._context}\n\n"
             f"请以{assistant_name}的身份，给{user_name}发一条消息。"
+            "如果上方包含工具或数据源结果，必须至少引用其中一个具体事实；"
+            "不要说‘暂时没有新的内容’，除非上下文明确标记为无数据。"
         )
 
         messages = [
@@ -239,11 +241,16 @@ class SlackWorker(QThread):
             {"role": "user", "content": user_prompt},
         ]
         try:
-            text = self._call_llm(model, api_key, api_base, messages)
+            print(f"[摸鱼调试] action={self._action}, 上下文长度={len(self._context)}", flush=True)
+            text = self._safe_call_llm(model, api_key, api_base, messages, stream=True)
             print(f"[摸鱼调试] action={self._action}, 首次文本长度={len(text)}", flush=True)
             if text:
                 return text
-            text = self._call_llm(
+            text = self._safe_call_llm(model, api_key, api_base, messages, stream=False)
+            print(f"[摸鱼调试] action={self._action}, 非流式回退文本长度={len(text)}", flush=True)
+            if text:
+                return text
+            text = self._safe_call_llm(
                 model, api_key, api_base,
                 messages + [{
                     "role": "user",
@@ -251,6 +258,17 @@ class SlackWorker(QThread):
                 }],
             )
             print(f"[摸鱼调试] action={self._action}, 重试文本长度={len(text)}", flush=True)
+            if text:
+                return text
+            text = self._safe_call_llm(
+                model, api_key, api_base,
+                messages + [{
+                    "role": "user",
+                    "content": "只输出最终要发送给用户的简短中文，不要展示推理过程。",
+                }],
+                stream=False,
+            )
+            print(f"[摸鱼调试] action={self._action}, 非流式重试文本长度={len(text)}", flush=True)
             return text or self._fallback_message()
         except Exception as e:
             raise RuntimeError(f"API调用失败: {e}")
@@ -266,20 +284,37 @@ class SlackWorker(QThread):
         return normalize_model_for_litellm(str(cfg.get("model", "")), base), cfg.get("api_key", ""), base
 
     @classmethod
-    def _call_llm(cls, model: str, api_key: str, api_base: str, messages: list[dict]) -> str:
+    def _safe_call_llm(cls, model: str, api_key: str, api_base: str,
+                       messages: list[dict], *, stream: bool) -> str:
+        try:
+            return cls._call_llm(model, api_key, api_base, messages, stream=stream)
+        except Exception as exc:
+            print(f"[摸鱼调试] {('流式' if stream else '非流式')}请求失败: {type(exc).__name__}", flush=True)
+            return ""
+
+    @classmethod
+    def _call_llm(cls, model: str, api_key: str, api_base: str,
+                  messages: list[dict], *, stream: bool) -> str:
         import litellm
-        stream = litellm.completion(
+        response = litellm.completion(
             model=model,
             messages=messages,
             temperature=0.9,
-            max_tokens=300,
+            # 推理模型可能先消耗 reasoning token；300 会导致可见正文为空。
+            max_tokens=4096,
             api_key=api_key,
             api_base=api_base,
-            stream=True,
-            timeout=120,
+            stream=stream,
+            timeout=90,
         )
+        if not stream:
+            choices = getattr(response, "choices", None) or []
+            if not choices:
+                return ""
+            message = getattr(choices[0], "message", None)
+            return cls._response_text(message)
         parts = []
-        for chunk in stream:
+        for chunk in response:
             choices = getattr(chunk, "choices", None) or []
             if not choices:
                 continue
@@ -319,6 +354,19 @@ class SlackWorker(QThread):
 
     def _fallback_message(self) -> str:
         """接口没有可显示文本时，按动作给出可用的本地结果，不再静默。"""
+        context = self._context or ""
+        if self._action == "check_cpu_disk":
+            import re
+            values = []
+            for pattern in (r"CPU:\s*[^\n]+", r"内存:\s*[^\n]+", r"磁盘:[^\n]+", r"磁盘：[^\n]+"):
+                match = re.search(pattern, context)
+                if match:
+                    values.append(match.group(0).strip())
+            if values:
+                return "我刚刚看了下电脑状态：" + "，".join(values) + "。整体看起来可以正常使用。"
+        if self._action == "weather_chitchat" and context.strip():
+            weather = context[-500:].replace("\n", " ").strip()
+            return f"我刚刚看了下天气信息：{weather[:260]}"
         fallbacks = {
             "random_question": "我刚刚想到一个问题：最近有没有什么小事，让你觉得今天还不错？",
             "search_old_topic": "我翻了翻我们之前聊过的内容，等你有空时可以接着告诉我最近的进展。",
