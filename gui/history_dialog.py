@@ -395,9 +395,14 @@ class HistoryDialog(QDialog):
             self._current_session_id = current_session_id
         self._load_sessions(
             keyword=self._search_box.text(),
-            date_str=self._date_edit.date().toString("yyyy-MM-dd")
+            date_str=self._date_filter.date().toString("yyyy-MM-dd")
             if self._date_filter.date().year() > 2000 else None,
         )
+        if current_session_id is not None:
+            for row, session in enumerate(self._sessions):
+                if session.get("id") == current_session_id:
+                    self._session_list.setCurrentRow(row)
+                    break
 
     def _on_session_selected(self, row: int):
         """切换会话时刷新右侧内容、摘要、按钮状态。"""
