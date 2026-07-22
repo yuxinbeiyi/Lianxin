@@ -1,923 +1,378 @@
-<div align="center">
-
-<img src="assets/头像/开玩笑.jpg" alt="莲心" width="200" />
-
 # 莲心 AI
 
-**你的 Windows 桌面 AI 伙伴 —— 有情绪、有记忆、能感知世界、能定时执行任务**
+莲心 AI 是一个运行在 Windows 桌面上的 AI 伴侣项目。它把对话、工具调用、长期记忆、连续情感状态、可切换人格、视觉与语音能力，以及后台主动行为放在同一套架构中。
 
-[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![PyQt5](https://img.shields.io/badge/GUI-PyQt5-41CD52?logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
-[![DeepSeek](https://img.shields.io/badge/AI-DeepSeek_V4-536DFE)](https://deepseek.com)
-[![LiteLLM](https://img.shields.io/badge/Gateway-LiteLLM-orange)](https://litellm.ai)
-[![WebRTC](https://img.shields.io/badge/Voice-WebRTC_VAD-4B8BBE)](https://webrtc.org)
-[![FunASR](https://img.shields.io/badge/STT-FunASR-FF6B35)](https://github.com/modelscope/FunASR)
-[![Platform](https://img.shields.io/badge/Platform-Windows_10+-0078D6?logo=windows&logoColor=white)]()
+项目的重点不是单次问答，而是让莲心能够在长期使用中保持：
 
-</div>
+- 可追溯的记忆，而不是只依赖上下文窗口；
+- 连续变化的情感状态，而不是每轮重新生成一个情绪标签；
+- 可编辑、可验证、可热激活的人格档案；
+- 有边界、有日志、可暂停的工具和主动行为；
+- 面向用户的解释界面，而不是只在终端输出内部数据。
 
----
+> 当前项目主要面向 Windows 10/11 和 Python 3.12。部分语音、视觉、QQ/微信桥接能力需要额外硬件或外部服务。
 
-## 📖 莲心是谁
+## 目录
 
-莲心来自小说 **《异象处理者》**，本是超现实的无尽书馆管理员。如今她以 AI 形态跨越第四面墙，存在于你的电脑中。
+- [快速开始](#快速开始)
+- [当前能力](#当前能力)
+- [核心架构](#核心架构)
+- [棱镜记忆系统](#棱镜记忆系统)
+- [涟漪情感系统](#涟漪情感系统)
+- [人格枢控系统](#人格枢控系统)
+- [主动行为与后台职责](#主动行为与后台职责)
+- [工具、语音与视觉](#工具语音与视觉)
+- [配置与数据](#配置与数据)
+- [开发与测试](#开发与测试)
+- [已知边界](#已知边界)
 
-> 白色单马尾，冷灰色瞳孔，黑方框眼镜，白衬衫配红领带，外穿白大褂，深绿三针叶发绳。
+## 快速开始
 
-她不是冰冷的工具——**她有自己的情绪**。会开心、会疲惫、会毒舌吐槽，也会因为你的新功能而雀跃。她记得你说过的重要事情，会在你离开时写日记等你回来。
+### 1. 创建环境
 
-<div align="center">
-<img src="assets/番茄钟背景图.jpg" alt="背景图" width="100%" />
-</div>
+建议使用 Conda：
 
----
-
-## ⚠️ 免责声明
-
-本项目仅供学习交流使用，**禁止用于任何违法违规用途**。
-
-使用本项目前请确保遵守相关法律法规及 DeepSeek、硅基流动等 API 服务商的使用条款。
-
----
-
-## ✨ 能力一览
-
-<table>
-<tr>
-<td width="50%">
-
-### 🧠 智能对话
-- **DeepSeek V4** / **Agnes AI** 双提供商
-- **Ollama 本地模型** 一键切换，离线可用
-- LiteLLM 统一网关，支持 OpenAI / Anthropic 双格式
-- **三层按需注入架构**（核心14 + 领域53 + 技能/MCP 动态），覆盖文件、系统、搜索、视觉、记忆等
-- 意图路由器：小模型分类 + 规则兜底，零成本智能化路由
-- 上下文压缩器：长对话智能摘要，告别记忆丢失
-
-### 🎙️ 语音交互
-- **全双工语音**：WebRTC VAD 持续聆听，说话中实时打断
-- **FunASR** 本地语音识别（中文优化，Paraformer 模型）
-- **GPT-SoVITS** 声音克隆 —— 5 种情绪音色
-- **Edge-TTS** 自动回退，无需配置即可使用
-- 语音输入 → AI 思考 → 语音输出，完整闭环
-- 情绪自动匹配：文本内容驱动音色切换
-
-</td>
-<td width="50%">
-
-### 👁️ 视觉理解
-- 截图分析 · 摄像头抓拍 · 图片内容描述
-- OCR 文字识别（Tesseract）
-- **人脸检测** + 表情识别 + 手势检测
-- MediaPipe Pose 人体姿态推理
-- 摄像头视觉事件：人脸出现/消失、微笑、挥手
-
-### 🤖 定时自动化
-- **自然语言 → 定时任务**："每天14:00清理回收站"
-- **ReAct Agent 执行**：运行时 LLM 自主决定工具调用，非静态计划
-- 5 种调度类型：一次性 · 间隔 · 每天 · 每周 · 每月
-- 取消执行 · 超时保护 · 死循环检测 · 自动清理
-- 错过任务询问 · 执行日志追溯
-
-</td>
-</tr>
-</table>
-
-### 🌐 多端桥接
-
-| 桥接 | 方案 | 能力 |
-|------|------|------|
-| **QQ 桥接** | NapCatQQ WebSocket | 多用户/群聊独立会话 · 文字 · 图片 · 语音 · 文件 · TTS 回复 |
-| **微信桥接** | AstrBot + weixin_oc 插件 | 扫码登录 · HTTP 消息转发 · 反封控参数调节 · 日限额 · 链接拦截 |
-
-### 🎮 特色模式
-
-| 模式 | 说明 |
-|------|------|
-| **Galgame 模式** | 透明角色立绘 + 半透明磨砂对话框，全边缘自由缩放，字体/加粗自定义，情绪立绘联动，**Live2D 动画**支持，`Ctrl+Alt+X` 全局热键切换 |
-| **全双工语音** | WebRTC VAD 持续聆听，用户说话时实时打断 AI 思考，说"完毕"触发回复，无需鼠标键盘，适合休息时陪伴 |
-| **观察模式** | ESP32-CAM 肩载摄像头自动转动云台拍照，AI 分析画面内容，发现值得关注的事物并记录，含费用追踪和 QQ 限速 |
-| **人体跟踪** | ESP32 实时推流 + MediaPipe Pose，舵机自动跟随人物移动，支持扫描重锁定 |
-| **摸鱼模式** | 用户空闲时自动找事做：翻看旧日记、浏览相册、逛逛 B 站、补写日记、搜索旧话题、提醒待办 |
-
-### 🧠 记忆 RAG · 语义搜索
-
-莲心的记忆系统现已支持**语义向量检索**：
-- **sentence-transformers** 本地 embedding（BGE 中文模型，96MB）
-- **faiss-cpu** 向量索引，毫秒级语义搜索
-- 记忆搜索结果自动注入聊天气泡，让莲心"想起来"说过的话
-- 与五元组图记忆、分类事实记忆互补，构成三引擎记忆体系
-- **统一情景记忆检索**：按真实消息时间、来源端和主人范围回顾最近/昨天/历史聊天
-- 新窗口自动承接最近活跃会话，桌面、QQ、微信会话按参与者隔离
-
-### 💻 代码智能
-
-- 基于 **jedi** 的 Python 代码理解：跳转定义、查找引用
-- 基于 **pyflakes** 的实时诊断：语法错误、未使用变量、未定义名称
-- 支持跨文件符号追踪，不依赖 LSP 服务器
-
-### 🛠️ 工具系统增强
-
-- **工具注册中心**：三层工具路由（核心/领域/技能/MCP 按需激活）+ 调用统计（次数、成功率、耗时）
-- **工具恢复链**：失败 → 指数退避重试 → 降级 → 通知用户
-- **工具调用可视化**：聊天气泡中可折叠的工具调用卡片，实时展示执行状态和耗时
-- **对话回顾提取**：对话结束后 LLM 自动提取待办事项，集成到 TodoManager
-
-### 🎨 主题 · 番茄钟 · 更多
-
-| 功能 | 说明 |
-|------|------|
-| **主题系统** | 4 套主题皮肤：暗夜粉、暗夜青、浅蓝、浅暖 |
-| **番茄钟** | 专注计时 + 统计，背景图可自定义 |
-| **后台职责中心** | 统一面板查看主动聊天、摸鱼、心跳、智能提醒的运行状态 |
-| **动画状态机** | 角色 GIF 动画按状态自动切换（正常/思考/说话/待机/抱胸） |
-| **频谱可视化** | 语音输入实时波形显示 |
-| **快捷启动** | 一键启动常用应用 |
-| **能力中心** | 所有功能模块总览入口 |
-
-### 🔌 技能系统 · 插件式扩展
-
-莲心的技能采用**插件式架构**，每个技能是 `skills/` 下的独立目录，包含 `SKILL.md`（知识注入）和 `tools.py`（工具定义）。运行时按需激活，工具自动注册到全局调度表。
-
-| 技能 | 用途 | 默认 |
-|------|------|:---:|
-| 🎙️ 语音合成 | GPT-SoVITS 声音克隆 + 5 情绪表达 | ✅ |
-| 🌐 浏览器自动化 | Playwright 网页控制（导航/点击/填表/截图） | ✅ |
-| 📷 肩部外设控制 | ESP32-CAM 云台 + 观察 + 人体跟踪 | ✅ |
-| 📖 日记与备忘 | 日记读写 + 备忘本整理 | ✅ |
-| 🎵 音乐播放控制 | 音乐盒播放/暂停/切歌/音量 | ✅ |
-| 📺 B站视频摘要 | Bilibili 视频搜索 + 字幕提取 + AI 总结 + 兴趣标签管理 | ✅ |
-| 💻 系统信息工具 | CPU/内存/磁盘/网络状态查询 | ❌ |
-| 📚 学习助手 | 学习方法与记忆力建议 | ❌ |
-
-> 渐进式披露架构：技能知识按需注入 System Prompt，12 个 `_prompt_guides` 模块按关键词触发（搜索、浏览器、文件编辑、视觉OCR、B站、音乐、日记备忘、文档笔记、长内容、子代理、工具生态、语音），与全量注入相比大幅节省 Token。
-> 
-> **Token 管控优化**：核心工具精简至 14 个（移除易触发死循环的 `set_expression`、记忆工具 10→4、新增高频文件搜索 `search_files_everything`），记忆说明从 400 token 压缩至 60 token，防幻觉提醒利用近因效应注入。通过三层按需注入架构，简单聊天时工具从 90+ 降至 20-30，单轮输入 token 降低约 **48%**（~10,000 → ~5,200）。
-
-### 🧠 棱镜记忆系统 · 三引擎
-
-```
-┌──────────────────────────────────────────────────┐
-│               三记忆引擎架构                        │
-├─────────────────────┬────────────────────────────┤
-│  五元组图记忆         │  分类事实记忆               │
-│  (主, 谓, 宾, 时, 源) │  6 大分类结构化存储          │
-│  SQLite 图结构        │  SQLite 全文索引             │
-│  多跳关系查询         │  关键词 + 语义搜索            │
-├─────────────────────┼────────────────────────────┤
-│  RAG 向量记忆         │  自动提取 + 注入             │
-│  BGE 中文 embedding   │  五元组提取器                │
-│  faiss 向量索引       │  checklist_extractor        │
-│  语义相似度搜索       │  对话回顾 → 待办提取          │
-├─────────────────────┴────────────────────────────┤
-│  自动提取 · 每 N 轮触发 · 统一搜索接口              │
-│  跨会话持久化 · 滑动窗口 · 智能压缩                 │
-└──────────────────────────────────────────────────┘
-```
-
-**6 大记忆分类**：档案 · 偏好 · 事件 · 知识 · 行为 · 技能
-
-### 🎭 涟漪情感引擎
-
-莲心拥有 **涟漪情感引擎**，不是简单的情绪标签，而是持续演化的情感状态：
-
-- **5 维需求模型**：被尊重、被需要、自主权、新鲜感、安全感，各有独立衰减常数
-- **3 层状态系统**：表层（即时表达）→ 中层（暖春/微凉/寒冬/修复期）→ 深层（信任基线）
-- **13 种事件检测**：命令连击、真诚交流、欺骗、否定、道歉、夸奖、感谢等
-- **防御模式（寒冬）**：被频繁使唤时自动限制工具可用性
-- **主动聊天调度**：根据时段 + 情感状态 + 用户活跃度智能触发
-- **表情包联动**：16 种情绪表情自然表达，Galgame 立绘同步切换
-
-### 🌐 联网搜索 · 四通道
-
-```
-web_search → fetch_webpage (HTTP 直连)
-          → fetch_webpage_via_api (API 代理)
-          → fetch_webpage_browser (Playwright 完整渲染)
-          → fetch_webpage_stealth (反检测增强)
-失败自动降级 · MCP 外部搜索增强 · 额度耗尽自动回退
-```
-
-### 🔗 MCP 协议支持
-
-兼容 **Model Context Protocol**，可接入外部 MCP 服务扩展能力：
-
-| 服务 | 类型 | 能力 |
-|------|------|------|
-| **filesystem** | 外部 (Node.js) | 本地文件系统：列表、读写、搜索、创建目录、移动 |
-| **firecrawl** | 外部 (Node.js) | 网页爬虫：页面转 Markdown、批量抓取 |
-| **tavily_search** | 外部 (Node.js) | AI 原生搜索引擎，实时搜索、深度爬取 |
-| **zhihu_search** | 内置 Agent | 知乎全网搜索 |
-
----
-
-## 🤖 定时自动化系统（NEW）
-
-用户可以**用自然语言下达定时执行的任务**，莲心自动解析、调度、执行。
-
-### 工作流程
-
-```
-"每天14:00帮我搜索 AI 新闻并写成 docx"
-        │
-        ▼
-  ┌──────────────┐
-  │ 解析器        │  LLM 提取调度信息（时间、频率、描述）
-  │ (parser)     │  LLM 超时 → 规则降级（正则时间提取）
-  └──────┬───────┘
-         │ AutoTask { schedule_type, schedule_time, description }
-         ▼
-  ┌──────────────┐
-  │ 调度器        │  QThread 后台轮询（30s 间隔）
-  │ (scheduler)  │  到期检测 → 错过询问 → 自动清理
-  └──────┬───────┘
-         │ task_due signal
-         ▼
-  ┌──────────────┐
-  │ ReAct Agent  │  LLM 运行时自主决定工具调用
-  │ (executor)   │  搜索 → 分析结果 → 写文档 → 通知
-  │              │  工具恢复链：失败自动重试+降级
-  └──────────────┘
-         │
-         ▼
-    完成通知（聊天框 + 语音播报）
-```
-
-### 核心特性
-
-| 特性 | 说明 |
-|------|------|
-| **5 种调度** | once（一次性）/ interval（每隔N分钟）/ daily / weekly / monthly |
-| **ReAct 执行** | LLM 看到实际搜索结果后才写文档，杜绝占位文本 |
-| **自适应重试** | 搜索无结果时自动切换搜索引擎和查询词 |
-| **死循环检测** | 双层指纹检测（结果文本 + 工具调用参数），免疫 `get_current_time` 等时间变化干扰 |
-| **取消执行** | UI 一键取消，下轮迭代边界安全停止 |
-| **超时保护** | 默认 5 分钟全局限时，可配置 |
-| **LLM 重试** | 网络错误 3 次指数退避重试 |
-| **错过策略** | 询问用户 / 跳过 / 自动补做 |
-| **自动清理** | 完成超过 24h 的 once 任务每 10 分钟自动清理 |
-| **执行日志** | 每步工具调用的耗时、结果、成功/失败追溯 |
-
-### 实际执行示例
-
-```
-任务: "两分钟后帮我搜索最新 AI 大模型新闻，写一份 docx 保存到 E:\Desktop\test"
-
-ReAct 第1轮 → tavily_search("AI 大模型 最新新闻") + create_directory(E:/Desktop/test)
-ReAct 第2轮 → tavily_search(调整查询词)
-ReAct 第4轮 → web_search(DuckDuckGo 切换搜索引擎)
-ReAct 第6轮 → fetch_webpage(直接抓取 AI 新闻聚合页)
-ReAct 第7轮 → format_document(基于真实搜索结果生成 docx)
-ReAct 第8轮 → "任务完成！已保存至 E:\Desktop\test\AI大模型最新快讯.docx"
-
-✅ 42 秒完成，文档内容为真实 AI 新闻摘要，零占位文本
-```
-
----
-
-## 🏗️ 技术架构
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                         main.py                                   │
-│           单实例互斥 · 高DPI适配 · qdarkstyle 暗色主题              │
-├──────────────────────────────────────────────────────────────────┤
-│                     GUI Layer (PyQt5)                              │
-│  ┌────────────┬──────────────┬──────────────┬──────────────────┐ │
-│  │ MainWindow │ ChatWidget   │ InputPanel   │ CharacterWidget  │ │
-│  │ 主窗口      │ 聊天气泡      │ 输入面板      │ 角色动画/表情     │ │
-│  ├────────────┼──────────────┼──────────────┼──────────────────┤ │
-│  │ Galgame模式 │ 设置/配置面板 │ 工具调用卡片  │ 自动化任务管理    │ │
-│  │ Live2D     │ 后台职责中心  │ 频谱可视化    │ 能力中心         │ │
-│  └────────────┴──────────────┴──────────────┴──────────────────┘ │
-├──────────────────────────────────────────────────────────────────┤
-│                    Intent Router (brain/intent_router.py)          │
-│     策略A: 本地 Ollama 小模型意图分类 → 预选工具集                  │
-│     策略B: 规则路由 (brain/decision.py) 兜底                       │
-├──────────────────────────────────────────────────────────────────┤
-│                    Agent Core (brain/agent.py)                     │
-│     LiteLLM 统一网关 · Function Calling 对话循环                    │
-│     工具并行执行(ThreadPool) · 资源锁分组 · 线程亲和性              │
-├───────────────────┬──────────────────────────────────────────────┤
-│  Tool Layer (71)   │  Skill System (8 skills)                     │
-│  brain/tools.py    │  brain/skill_manager.py                      │
-│  文件·系统·网络     │  自动发现→激活→工具注入→System Prompt注入       │
-│  视觉·记忆·音乐     │  渐进式披露 · 动态加载                        │
-│  闹钟·待办·外设     │                                              │
-├───────────────────┼──────────────────────────────────────────────┤
-│  Tool Recovery     │  Tool Registry                               │
-│  失败重试+降级      │  分类·调用统计·耗时追踪                        │
-├───────────────────┴──────────────────────────────────────────────┤
-│                   Automated Task System                            │
-│  ┌─────────────────────┐  ┌──────────────────────────────────┐   │
-│  │ auto_task_parser.py  │  │ auto_task_executor.py (ReAct)    │   │
-│  │ NL → 调度信息提取     │  │ LLM 运行时自主决定工具调用         │   │
-│  ├─────────────────────┼──────────────────────────────────┤   │
-│  │ auto_task_manager.py │  │ auto_task_scheduler.py (QThread) │   │
-│  │ CRUD · 持久化 · 日志  │  │ 30s 轮询 · 错过检测 · 自动清理    │   │
-│  └─────────────────────┘  └──────────────────────────────────┘   │
-├──────────────────────────────────────────────────────────────────┤
-│                      Memory Engine (棱镜)                          │
-│  ┌─────────────────────┐  ┌──────────────────────────────────┐   │
-│  │ graph_memory.py      │  │ SQLite: entities + edges + facts │   │
-│  │ 五元组图CRUD+查询     │  │ WAL模式 · 并发安全 · 索引优化    │   │
-│  └─────────────────────┘  └──────────────────────────────────┘   │
-│  ┌─────────────────────┐  ┌──────────────────────────────────┐   │
-│  │ context_compressor.py│  │ memory_store.py                  │   │
-│  │ 长对话智能摘要        │  │ 分类事实存取 · 格式化              │   │
-│  └─────────────────────┘  └──────────────────────────────────┘   │
-│  ┌─────────────────────┐  ┌──────────────────────────────────┐   │
-│  │ memory_rag.py        │  │ quintuple_extractor.py           │   │
-│  │ BGE向量语义搜索       │  │ 对话→五元组自动提取               │   │
-│  └─────────────────────┘  └──────────────────────────────────┘   │
-├──────────────────────────────────────────────────────────────────┤
-│                    MCP Bridge (brain/mcp/)                         │
-│     Registry → Client → Manager → 统一工具路由                    │
-│     4 个服务: filesystem · firecrawl · tavily · zhihu            │
-├──────────────────────────────────────────────────────────────────┤
-│               Emotional Engine (brain/emotional/) 涟漪             │
-│     5维需求 → 13事件检测 → 3层状态 → Prompt注入                    │
-├──────────────────────────────────────────────────────────────────┤
-│                    Background Workers (workers/)                   │
-│  AgentWorker │ VoiceWorker │ SpeakerWorker │ QQBridgeWorker       │
-│  WeChatBridgeWorker │ ProactiveWorker │ HeartbeatWorker           │
-│  StandbyWorker │ ObservationModeWorker │ TrackWorker              │
-│  TrackFrameReceiver │ TrackPoseDetector │ SlackWorker              │
-│  ListeningWorker │ OCRWorker │ SmartReminderWorker                │
-├──────────────────────────────────────────────────────────────────┤
-│                  External APIs & Hardware                          │
-│  ┌─────────┬──────────┬──────────┬──────────┬──────────────────┐ │
-│  │DeepSeek │ Agnes AI │SiliconFlow│ Ollama  │ 阿里云 NLS        │ │
-│  ├─────────┼──────────┼──────────┼──────────┼──────────────────┤ │
-│  │GPT-SoVITS│Edge-TTS │ESP32-CAM │ SG90 舵机│ NapCatQQ·AstrBot  │ │
-│  ├─────────┼──────────┼──────────┼──────────┼──────────────────┤ │
-│  │Playwright│Tesseract│FunASR    │MediaPipe │火山引擎 STT       │ │
-│  ├─────────┼──────────┼──────────┼──────────┼──────────────────┤ │
-│  │WebRTC VAD│faiss    │jedi      │pyflakes  │WebSocket云中继    │ │
-│  └─────────┴──────────┴──────────┴──────────┴──────────────────┘ │
-└──────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🚀 快速开始
-
-### 环境要求
-
-| 项目 | 要求 |
-|------|------|
-| 操作系统 | Windows 10+ |
-| Python | 3.12（推荐 conda） |
-| GPU | NVIDIA 显卡（可选，加速 GPT-SoVITS / 本地模型） |
-
-### 🧩 可选依赖（按需获取）
-
-莲心设计为松耦合架构，以下功能依赖第三方项目，用户需自行获取：
-
-| 功能 | 项目 | 获取方式 | 路径 |
-|------|------|----------|------|
-| QQ 机器人接入 | [NapCatQQ](https://github.com/NapNeko/NapCatQQ) | 官方文档安装 | `NapCatQQ/` |
-| 微信公众号接入 | [Akasha-WeChat](https://github.com/ArkLightt/Akasha-WeChat-main) | `git clone` 到项目根目录 | `AstrBot/Akasha-WeChat-main/` |
-| GPT-SoVITS 语音克隆 | [GPT-SoVITS](https://github.com/RVC-Project/GPT-SoVITS) | `git clone` 到项目根目录 | `GPT-SoVITS-v2pro/` |
-| 端侧语音合成 | [ChatTTS](https://github.com/2noise/ChatTTS) | `git clone` 到项目根目录 | `ChatTTS/` |
-| 全双工语音云中继 | [OVRDOZE](https://github.com/luke23334/OVRDOZE) | `git clone` 到 `game/` | `game/OVRDOZE-main/` |
-| 阿里云语音识别 | [alibabacloud-nls-python-sdk](https://github.com/aliyun/alibabacloud-nls-python-sdk) | `git clone` 到项目根目录 + `python setup.py install` | `alibabacloud-nls-python-sdk/` |
-
-> 💡 以上项目均遵循各自原项目的许可证，请遵守其使用条款。
-
-### 安装
-
-```bash
-# 克隆仓库
-git clone https://gitee.com/luke23334/lianxin-ai.git
-cd lianxin-ai
-
-# 创建虚拟环境
+```powershell
 conda create -n lianxin python=3.12
 conda activate lianxin
-
-# 安装依赖
 pip install -r requirements.txt
 ```
 
-### 首次运行
+`requirements.txt` 已包含 PyQt5、PyQtWebEngine、LiteLLM、SQLite/RAG、视觉和语音相关依赖。
 
-```bash
+浏览器自动化技能需要时，再安装浏览器驱动：
+
+```powershell
+playwright install chromium
+```
+
+### 2. 配置模型
+
+可以直接启动后在设置界面配置，也可以准备用户配置文件：
+
+```text
+%USERPROFILE%\.lianxin\user_config.json
+```
+
+仓库中的 `user_config.json.example` 提供了 DeepSeek、Agnes、Ollama、SiliconFlow 视觉接口、阿里云语音识别和 QQ 桥接的字段示例。至少需要配置一个可用的文本模型：
+
+```json
+{
+  "deepseek": {
+    "api_key": "你的 API Key",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-v4-flash",
+    "provider": "deepseek"
+  }
+}
+```
+
+莲心通过 LiteLLM 统一适配 DeepSeek、Agnes、OpenAI 兼容接口和 Ollama。本地模型不需要云端 API Key，但需要先启动 Ollama 服务。
+
+### 3. 启动
+
+```powershell
+conda activate lianxin
 python main.py
 ```
 
-首次启动后，点击主界面 **🔑 按钮** 配置 API 密钥。配置文件自动保存在 `~/.lianxin/user_config.json`，之后每次启动自动加载。
+启动过程包含单实例保护、日志初始化、用户数据迁移和可选的依赖体检。启动参数：
 
-> 💡 **全双工语音**：点击输入面板的麦克风按钮启动，莲心会持续聆听，你随时开口即可打断她的思考。FunASR 模型首次使用时会自动下载（约 200MB），请耐心等待。
-
-> 🎨 **主题切换**：在设置面板中选择 4 套主题之一，即时生效。
-
-### 开机自启
-
-```bash
-python main.py --autostart
+```powershell
+python main.py --skip-check   # 跳过启动体检
+python main.py --autostart    # 以开机自启模式运行
 ```
 
-> 自启模式下莲心会最小化到任务栏，不打扰你的正常使用。
+## 当前能力
 
----
+| 模块 | 当前作用 |
+| --- | --- |
+| 智能对话 | 文本、工具调用、多轮上下文、错误恢复和长对话压缩 |
+| 棱镜记忆系统 | 事实、图谱关系、语义检索和叙事层的联合记忆 |
+| 记忆星图 | 以可视化方式浏览记忆对象、关系、来源消息和星图设置 |
+| 涟漪情感系统 | 五轴状态、关系慢变量、事件原因、主动动机和模拟调试 |
+| 人格枢控系统 | 人格档案编辑、校验、预览、保存、热激活和新会话切换 |
+| 主动行为 | 普通主动聊天、桌面观察、B 站冲浪和莲心摸鱼统一调度 |
+| 后台职责 | 心跳、自检、提醒、待办、日记维护、记忆维护和叙事整理 |
+| 语音 | 本地语音识别、全双工监听、语音合成和说话时打断 |
+| 视觉 | 截图、摄像头、OCR、图像理解、肩载摄像头观察和人体状态检测 |
+| 外部桥接 | QQ WebSocket、微信桥接、TTS、浏览器自动化和 MCP 服务 |
+| 任务自动化 | 自然语言创建定时任务，按期启动 ReAct 工具执行链 |
 
-## ⚙️ 配置详解
+## 核心架构
 
-全部配置通过 GUI 的 API 配置对话框完成，也可手动编辑 `~/.lianxin/user_config.json`。
+```text
+用户输入
+  文本 / 语音 / QQ / 微信
+          │
+          ▼
+主窗口与 AgentWorker
+  输入显示、线程隔离、工具卡片、语音和插话
+          │
+          ▼
+AgentCore
+  人格快照 + 棱镜记忆 + 涟漪状态 + 技能知识 + MCP 目录
+          │
+          ├── 意图路由与工具筛选
+          ├── LiteLLM 模型调用
+          ├── ReAct Function Calling 循环
+          ├── 工具并行执行、重试、降级和循环熔断
+          └── 回复、情感更新、记忆提取和任务追踪
+          │
+          ├── 桌面聊天与 Galgame 界面
+          ├── QQ / 微信 / TTS 输出
+          └── 后台职责调度器
+```
 
-### AI 模型
+### 分层原则
 
-| 配置项 | 说明 |
-|--------|------|
-| **DeepSeek API** | 默认提供商，模型 `deepseek-v4-flash`，支持 openai/anthropic 格式 |
-| **Agnes AI** | 备选提供商，模型 `agnes-2.0-flash`，含图片/视频生成能力 |
-| **Ollama 本地模型** | 勾选"使用本地模型"一键切换，配置地址和模型名即可 |
-| **路由模型** | 独立配置意图分类用小模型（Ollama），留空则回退规则路由 |
+1. **模型层**只负责理解、判断和生成；模型不能直接访问数据库或 UI。
+2. **工具层**负责实际动作，统一登记、计时、记录成功/失败并执行安全边界。
+3. **状态层**负责记忆、情感、人格和任务状态的持久化与恢复。
+4. **呈现层**通过 Qt 信号、快照和事件流显示结果，不在 UI 线程执行耗时模型调用。
+5. **职责层**通过独立工作线程调度主动聊天、观察、摸鱼、提醒和维护任务。
 
-### 语音识别 (STT)
+## 棱镜记忆系统
 
-| 配置项 | 说明 |
-|--------|------|
-| **FunASR** | 本地 Paraformer 模型，中文识别精度高，无需联网 |
-| **火山引擎 STT** | 云端高精度语音识别，适合嘈杂环境 |
-| **WebRTC VAD** | 实时语音活动检测，零模型文件，纯 pip 安装 |
-| **全双工模式** | 持续聆听 + 实时打断，说"完毕"触发回复 |
+棱镜记忆系统不是单一的“记忆列表”，而是三种互相补充的记忆引擎。原始对话和证据始终保留，派生索引可以重建。
 
-### 记忆系统
+### 三个记忆引擎
 
-| 配置项 | 说明 |
-|--------|------|
-| **五元组图记忆** | 结构化知识图谱，多跳关系查询 |
-| **分类事实记忆** | 6 大分类 + 全文索引 + 关键词搜索 |
-| **RAG 向量记忆** | BGE 中文模型语义搜索，自动注入聊天气泡 |
-| **自动提取** | 每 N 轮对话自动提取五元组和分类事实 |
-| **对话压缩** | 长对话智能摘要，可配置触发阈值 |
+1. **分类事实记忆**
+   - 保存个人资料、偏好、事件、知识、行为和技能六类长期事实。
+   - 通过来源会话、来源消息和记忆片段追溯证据。
+   - 支持新增、搜索、更新、删除、冲突处理和隐私边界。
 
-> ⚠️ Ollama 本地模型不支持 Function Calling，切换后自动使用纯聊天模式。
+2. **五元组知识图谱**
+   - 将人物、地点、项目、兴趣等对象建模为实体。
+   - 以“主体—关系—客体”保存可查询的关联。
+   - 支持关系搜索、连接查询和多跳探索，为回答“谁和什么有关”提供结构化上下文。
+
+3. **语义记忆检索**
+   - 使用中文 embedding 和 FAISS 对事实进行向量检索。
+   - 语义相近但措辞不同的内容也可以被召回。
+   - RAG 结果只作为当前对话上下文，不会绕过权限直接改变记忆。
+
+### 叙事层
+
+在事实和片段之上，系统会整理出：
+
+- **记忆对象**：人物、地点、项目、事件或兴趣；
+- **记忆情节**：由多个相关片段组成的短期叙事；
+- **长期故事线**：跨越多个情节的长期经历。
+
+长期故事线不会替代原始事实，只会以置信度和影响强度对涟漪情感状态施加缓慢偏置。
+
+### 记忆星图
+
+“记忆星图”是棱镜记忆的可视化入口：
+
+- Canvas 方式绘制记忆对象、关系和关联桥线；
+- 点击星体查看记忆详情和原始消息来源；
+- 支持标签、字体、桥线、动画、视差和视图保存；
+- UI 只读取 Python 侧快照，不直接操作数据库；
+- 可通过历史、来源和审核入口检查记忆是否有证据。
+
+记忆星图负责“记忆内容和来源”，不负责解释当前情绪。情绪观察应使用涟漪情感系统。
+
+## 涟漪情感系统
+
+涟漪情感系统 v3 是连续动力状态引擎，不是简单的情绪标签。它将一次对话评估为受边界约束的变化量，写入状态快照和事件日志，再由动力模型随时间衰减或回归。
+
+### 状态分层
+
+| 层级 | 字段 | 作用 |
+| --- | --- | --- |
+| 快速情绪层 | 情绪基调 `valence`、唤醒度 `arousal`、防御感 `guardedness` | 影响当前语气和即时反应 |
+| 活动与需求层 | 连接需求 `connection`、沉浸度 `immersion` | 影响是否想联系、是否仍投入当前任务 |
+| 关系慢变量 | 信任、亲密、裂痕、修复 | 长期关系阶段和稳定基线 |
+
+### 五轴展示约定
+
+| 界面轴 | 内部字段 | 数值范围 | 展示方式 |
+| --- | --- | --- | --- |
+| 连接需求 | `connection` | 0 到 1 | 从左向右增长 |
+| 防御感 / 骄傲兼容 | `guardedness` | -1 到 1 | 以中线为 0，向左右变化 |
+| 情绪基调 | `valence` | -1 到 1 | 以中线为 0，正负方向表示情绪倾向 |
+| 唤醒度 | `arousal` | -1 到 1 | 以中线为 0，表示平静到兴奋/紧张 |
+| 沉浸度 | `immersion` | 0 到 1 | 从左向右增长 |
+
+UI 使用中文术语，代码保留兼容字段。防御感是当前实际内部轴；“骄傲”作为兼容语义显示，不会凭空产生一个未参与计算的独立轴。
+
+### 状态如何变化
+
+- 对话评估器根据用户消息判断温暖交流、道歉、边界冲突、命令连击、被记得等事件。
+- 规则评估优先保证稳定；自动/本地/云端语义模式用于需要更细判断的场景。
+- 每个事件产生受上下限约束的 `AffectDelta`，并原子写入状态和事件日志。
+- 没有新消息时，连接需求、唤醒度和沉浸度等状态按动力参数自然衰减。
+- 长期故事线以置信度和影响强度形成小幅情绪基线偏置。
+- 状态和事件按“人格 + 用户”作用域持久化，重启后会从 SQLite 恢复。
+
+### 涟漪情感系统界面
+
+当前有两个互补入口：
+
+1. **涟漪情感系统控制台**
+   - 五轴实时条、趋势、速度、来源和中线；
+   - 当前情绪、关系阶段、回复指导和主动动机；
+   - 状态事件流、影响原因和事件详情；
+   - 实时、历史、模拟三种模式；
+   - 情感阈值、长期故事线强度、沉浸衰减和主动动机开关；
+   - 模拟状态可撤销，不会调用工具、主动聊天或外部平台。
+
+2. **涟漪调试面板**
+   - 实时状态和关系慢变量；
+   - 事件模拟与批量场景；
+   - 跳过时间、观察衰减；
+   - 事件日志和统计；
+   - 动力参数覆盖、重置和强制保存。
+
+情感系统通过 `EmotionManager` 向 AgentCore 提供语气指导，并向主动职责调度器提供“观察、主动联系、自我调节或保持平静”的动机建议。情绪状态不会阻止工具调用；工具是否可用仍由工具注册和安全策略决定。
+
+## 人格枢控系统
+
+人格枢控系统将人格从散落在 Prompt 中的文本，提升为可持久化、可校验的档案。
+
+### 人格档案包含
+
+- 档案名和助手名；
+- 身份、外观、性格、说话方式和习惯；
+- 与用户的关系、称呼方式和边界；
+- 自定义指令；
+- 内置/自定义标记、版本和更新时间。
+
+### 生效机制
+
+- 档案编辑先保存，热激活后从下一条请求使用新的人格快照。
+- 继续当前对话时保留已有事实，但会抑制旧人格风格。
+- 新建对话时清空当前会话上下文，获得更干净的切换效果。
+- 每次请求固定使用一个人格快照，避免工具调用过程中途切换风格。
+- 人格档案经过字段长度、ID 和总文本量校验，避免错误 Prompt 破坏运行时。
+
+## 主动行为与后台职责
+
+主动行为统一由 `DutyScheduler` 和 `ProactiveDuty` 管理，不再由多个独立随机入口互相抢占。
+
+### 主动行为类型
+
+- **普通主动聊天**：基于近期对话、情感动机和时间间隔自然发起话题。
+- **桌面观察**：截图、摄像头或肩载设备观察环境，再生成简短回应。
+- **B 站冲浪**：根据兴趣标签搜索并去重，每次推荐一个视频；有简介时基于简介评价，没有简介时只根据标题和链接给出推荐理由。
+- **莲心摸鱼**：天气、CPU/内存、日记、旧话题、待办、音乐等低打扰行为。工具结果会先整理为上下文，再交给 LLM 生成自然回复。
+
+所有主动行为都经过：启用检查、冷却检查、用户活跃度判断、情感门控、线程状态检查和失败回退。强制调试行为不会回退成另一种行为，避免 B 站调试串入天气或截图。
+
+### 后台职责
+
+心跳、提醒、待办、日记维护、记忆维护、叙事整理和记忆线索评估均在独立线程中执行。每个职责具有独立的启用状态、运行状态、成功/失败计数和日志。
+
+## 工具、语音与视觉
+
+### 工具生态
+
+工具分为三层：
+
+1. 核心工具：时间、文件、记忆、天气、视觉和系统信息；
+2. 领域工具：浏览器、文档、日记、待办、B 站、音乐等；
+3. 技能和 MCP：通过 `skills/`、`mcp_servers/` 按需发现和加载。
+
+工具调用支持参数校验、调用卡片、耗时记录、并行执行、错误重试、降级和循环熔断。工具结果不会被当作模型已经知道的事实，必须通过结果回传进入下一轮上下文。
 
 ### 语音
 
-| 配置项 | 说明 |
-|--------|------|
-| **TTS 引擎** | auto / edge_tts / gpt_sovits |
-| **GPT-SoVITS 路径** | 本地声音克隆引擎安装目录 |
-| **默认情绪** | auto / casual / tsundere / romantic / long / angry |
-| **语速** | 0.5 – 2.0 |
-| **Edge-TTS 回退音色** | 默认 `zh-CN-XiaoxiaoNeural` |
-| **参考音频覆盖** | 手动选择参考音频，覆盖情绪自动匹配 |
+- FunASR/本地模型或云端 STT；
+- WebRTC VAD 全双工监听；
+- 语音播放时可被用户说话打断；
+- GPT-SoVITS、Edge-TTS 等可选输出通道；
+- 文本内容和情感状态共同影响语气/表情选择。
 
-### QQ 桥接
+### 视觉
 
-| 配置项 | 说明 |
-|--------|------|
-| WebSocket 地址 | NapCatQQ 默认 `ws://127.0.0.1:3001` |
-| QQ 账号 / 主人 QQ | 连接认证和权限识别 |
-| 语音回复开关 | TTS 语音消息回复 |
-| 定时参数 | 思考延迟、打字速度、分段阈值、全局限速、日限额 |
+- 截图和摄像头采集；
+- OCR 和图像描述；
+- SiliconFlow 等兼容视觉模型；
+- ESP32-CAM 肩载观察和人体状态检测；
+- 观察结果作为短期上下文和可追踪事件，不会自动写成长久事实。
 
-### 微信桥接（NEW）
+## 配置与数据
 
-| 配置项 | 说明 |
-|--------|------|
-| 桥接开关 | 启用/禁用微信消息收发 |
-| 监听端口 | AstrBot weixin_oc 插件的 HTTP 转发端口 |
-| 反封控参数 | 思考延迟、打字速度、回复间隔、分段阈值、全局限速、日限额、链接拦截 |
+### 用户数据目录
 
-### 网络搜索
+运行时数据默认位于：
 
-| 配置项 | 说明 |
-|--------|------|
-| 抓取通道开关 | HTTP / API 代理 / 浏览器 / 反检测 四个通道独立启用 |
-| 重试策略 | 最大重试次数、回退策略（builtin/direct） |
-| 代理 | HTTP/HTTPS 代理配置 |
-
----
-
-## 📦 可选外部依赖
-
-| 组件 | 用途 | 需单独部署 |
-|------|------|:---:|
-| [NapCatQQ](https://github.com/NapNeko/NapCatQQ) | QQ 消息收发 | ✅ |
-| [AstrBot](https://github.com/Soulter/AstrBot) + weixin_oc | 微信消息收发 | ✅ |
-| [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki) | 图片文字识别 | ✅ |
-| [Everything](https://www.voidtools.com/) | 毫秒级全盘文件搜索 | ❌ |
-| [Ollama](https://ollama.com) | 本地模型运行 / 意图路由 | ❌ |
-| [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) | 高质量声音克隆 | ❌ |
-| [Playwright](https://playwright.dev) | 浏览器自动化引擎 | ❌ |
-
----
-
-## 🛠️ 内置工具清单
-
-莲心向 AI 模型暴露 **73 个 Function Calling 工具**（核心14 + 领域52 + 图数据库4 + 其他3），按类别组织：
-
-<details open>
-<summary><b>📁 文件操作（9 个）</b></summary>
-
-| 工具 | 说明 |
-|------|------|
-| `read_file` / `read_file_lines` / `read_file_chunk` | 读取文件（自动编码检测 + 分块） |
-| `write_file` / `edit_file` | 写入/覆盖 + 精确字符串替换 |
-| `list_directory` / `search_files` / `search_files_everything` / `glob_files` | 目录浏览 + 文件搜索（Everything 毫秒级全盘搜索） |
-| `grep_file` / `search_code` | 文件/代码库正则搜索 |
-| `diff_files` | 文件差异比较 |
-| `code_structure` / `goto_definition` / `find_references` / `code_diagnostics` | 代码智能 |
-| `read_excel` / `write_excel` / `copy_excel_content` | Excel 读写 |
-| `write_docx` / `format_document` | Word 文档生成与格式化 |
-
-</details>
-
-<details open>
-<summary><b>💻 系统命令（8 个）</b></summary>
-
-| 工具 | 说明 |
-|------|------|
-| `open_app` | 打开应用程序 |
-| `run_command` | 执行系统命令（安全白名单） |
-| `run_shell` | 执行 shell 命令 |
-| `run_python_code` | 执行 Python 代码片段 |
-| `get_clipboard` | 读取剪贴板内容 |
-| `get_current_time` | 当前时间/日期/星期 |
-| `get_balance` | 查询 API 余额 |
-| `get_system_info` | CPU/内存/磁盘/GPU 状态 |
-
-</details>
-
-<details open>
-<summary><b>🌐 联网搜索（5 个）</b></summary>
-
-| 工具 | 说明 |
-|------|------|
-| `web_search` | 网页搜索（多引擎） |
-| `fetch_webpage` | HTTP 直接抓取 |
-| `fetch_webpage_via_api` | API 代理抓取（穿透力强） |
-| `fetch_webpage_browser` | Playwright 浏览器渲染抓取 |
-| `fetch_webpage_stealth` | 增强反检测抓取 |
-
-</details>
-
-<details open>
-<summary><b>🔍 视觉理解（5 个）</b></summary>
-
-| 工具 | 说明 |
-|------|------|
-| `describe_image` | AI 图片内容描述 |
-| `ocr_image` / `ocr_batch` | OCR 文字识别 |
-| `capture_from_camera` | 摄像头拍照 |
-| `capture_desktop` | 屏幕截图 |
-
-</details>
-
-<details open>
-<summary><b>🧠 记忆与知识（8 个 — 核心4 + 图数据库4）</b></summary>
-
-| 工具 | 层级 | 说明 |
-|------|:---:|------|
-| `save_memory` / `update_memory` / `delete_memory` | ✅ 核心 | 分类事实 CRUD |
-| `search_graph_memory` | ✅ 核心 | 统一搜索（事实 + 图边） |
-| `search_memory` / `list_memories` | 📋 领域 | 关键词搜索 + 全量查看 |
-| `query_connected_entities` / `delete_graph_entity` | 📋 领域 | 图实体查询与删除 |
-| `add_graph_edge` / `remove_graph_edge` | 📋 领域 | 图关系管理 |
-
-</details>
-
-<details open>
-<summary><b>📋 待办 · 📅 闹钟 · 🎵 音乐 · 📖 日记 · 🔗 跨端</b></summary>
-
-| 工具 | 说明 |
-|------|------|
-| `add_todo` / `list_todos` / `complete_todo` | 待办管理 |
-| `add_alarm` / `list_alarms` / `delete_alarm` | 闹钟管理 |
-| `control_music` / `get_music_playlist` / `get_music_status` | 音乐盒控制 |
-| `read_diary` / `write_diary` | 日记读写 |
-| `read_note` / `organize_note` | 备忘本 |
-| `search_conversation_history` | 按时间、关键词、来源端统一搜索真实聊天记录 |
-| `search_cross_session` | 旧版跨端关键词搜索（兼容入口） |
-| `send_file_to_qq` | QQ 文件发送 |
-
-</details>
-
-<details open>
-<summary><b>🤖 代理调度 · 🌤️ 天气 · 🎨 媒体生成</b></summary>
-
-| 工具 | 说明 |
-|------|------|
-| `plan_tasks` / `delegate_task` / `track_tasks` | 子代理任务规划与委派 |
-| `get_weather` / `set_user_city` | 天气查询（和风天气） |
-| `generate_image` / `generate_video` | AI 图片/视频生成 |
-| `set_expression` | 角色表情切换（非核心，按需激活） |
-| `toggle_proactive_chat` | 主动聊天开关 |
-
-</details>
-
-<details open>
-<summary><b>🎙️ 语音 · 🌐 浏览器 · 📷 外设 · 📺 B站（技能工具）</b></summary>
-
-| 工具 | 说明 |
-|------|------|
-| `speak_voice` / `set_voice_mood` / `list_voice_styles` | 语音合成与情绪切换 |
-| `browser_navigate` / `browser_snapshot` / `browser_click` / `browser_fill` / `browser_screenshot` | Playwright 浏览器控制 |
-| `shoulder_photo` / `shoulder_pan` / `shoulder_tilt` / `shoulder_center` / `shoulder_status` / `shoulder_temp` | 肩载摄像头云台控制 |
-| `start_observation_mode` / `stop_observation_mode` / `shoulder_observe` | 观察模式 |
-| `shoulder_human_track` / `stop_human_track` | 人体跟踪 |
-| `bilibili_search` / `bilibili_add_tag` / `bilibili_list_tags` | B 站视频搜索与兴趣标签 |
-
-</details>
-
----
-
-## 🔧 外设项目
-
-莲心支持 **ESP32-CAM 肩载摄像头 + SG90 舵机云台** 物理外设：
-
-```
-ESP32-CAM (肩载) ←→ Cloud Relay (WebSocket) ←→ 莲心 PC
-                        ↓
-              SG90 舵机 (水平/垂直旋转)
+```text
+%USERPROFILE%\.lianxin\
 ```
 
-- 📷 拍照 + AI 视觉分析
-- 🔍 观察模式：自动扫描周围环境
-- 🧍 人体跟踪：MediaPipe Pose + 舵机跟随
-- 🌡️ 温湿度传感器查询
+常见内容包括：
 
-> 硬件项目地址：[lianxin-ai-esp32](https://gitee.com/luke23334/lianxin-ai-esp32)
+- `user_config.json`：模型、语音、视觉、桥接和功能配置；
+- `global_settings.json`：界面、声音、行为等设置；
+- `bilibili_history.json`：B 站兴趣标签和浏览记录；
+- `conversations.db`：会话、事实、图谱、记忆片段、情感状态和事件日志。
 
----
+项目启动时会把旧版 `data/` 和部分 `memory/` 文件迁移到用户目录。不要把真实 API Key、QQ 密码或私人数据库提交到 Git。
 
-## 📁 项目结构
+### 隐私边界
 
-```
-莲心AI/
-├── main.py                  # 入口：单实例互斥 · DPI适配 · 自启管理
-├── config.py                # 全局配置：API/视觉/TTS/记忆/QQ/微信/代理等30+配置项
-├── aliyun_stt.py            # 阿里云NLS实时语音识别
-├── requirements.txt         # Python依赖
-│
-├── brain/                   # 🧠 核心大脑
-│   ├── agent.py             #   AgentCore：LiteLLM网关 + Function Calling循环
-│   ├── tool_router.py        #   三层工具路由：核心+领域+技能/MCP 按需注入
-│   ├── tools.py             #   73个工具定义与执行调度
-│   ├── intent_router.py     #   意图路由器：小模型分类 + 规则兜底
-│   ├── decision.py          #   规则路由（正则匹配）
-│   ├── skill_manager.py     #   技能系统：发现→激活→工具注入
-│   ├── plugin_installer.py   #   插件安装器：一键安装社区技能/MCP
-│   ├── tool_registry.py     #   工具注册中心：分类 + 调用统计
-│   ├── tool_recovery.py     #   工具恢复链：失败重试 + 降级
-│   ├── voice_duplex.py      #   全双工语音：VAD + STT 前端
-│   ├── vad_webrtc.py        #   WebRTC VAD 语音活动检测
-│   ├── stt_funasr.py        #   FunASR 语音识别（Paraformer）
-│   ├── stt_volcano.py       #   火山引擎云端STT备选
-│   ├── tts_engine.py        #   语音合成：GPT-SoVITS + Edge-TTS + 情绪匹配
-│   ├── tts_sovits_worker.py #   GPT-SoVITS 子进程工作线程
-│   ├── graph_memory.py      #   五元组图记忆 + 分类事实 (SQLite)
-│   ├── memory_store.py      #   记忆格式化与统一查询
-│   ├── memory_rag.py        #   记忆RAG：BGE向量语义搜索
-│   ├── context_compressor.py #  长对话智能压缩
-│   ├── quintuple_extractor.py # 五元组自动提取（对话→知识图谱）
-│   ├── checklist_extractor.py # 对话回顾提取待办
-│   ├── code_intel.py        #   代码智能：jedi跳转定义/引用 + pyflakes诊断
-│   ├── observation_engine.py #  观察探索引擎System Prompt
-│   ├── observation_mode.py  #   观察模式状态管理+费用追踪
-│   ├── observation_store.py #   观察记录持久化
-│   ├── observation.py       #   观察数据结构
-│   ├── human_tracking.py    #   人体跟踪状态管理
-│   ├── hardware_bridge.py   #   ESP32 WebSocket 云中继桥接
-│   ├── browser_controller.py #  Playwright 浏览器控制
-│   ├── heartbeat.py         #   心跳自检引擎
-│   ├── task_tracker.py      #   任务追踪
-│   ├── weather.py           #   和风天气集成
-│   ├── vision.py            #   视觉分析统一入口
-│   ├── audio_utils.py       #   音频工具
-│   ├── auto_task_executor.py #  🤖 ReAct Agent 自动化任务执行器
-│   ├── auto_task_manager.py  #  🤖 任务CRUD · 持久化 · 日志
-│   ├── auto_task_parser.py   #  🤖 自然语言 → 调度信息解析
-│   ├── auto_task_scheduler.py # 🤖 QThread 后台调度
-│   ├── emotional/           #   🎭 涟漪情感引擎
-│   │   ├── state.py         #       5维需求 · 3层状态
-│   │   ├── events.py        #       13种事件检测
-│   │   └── manager.py       #       情感管理器
-│   └── mcp/                 #   🔗 MCP协议支持
-│       ├── mcp_manager.py   #       统一调用路由
-│       ├── mcp_registry.py  #       服务注册/发现
-│       ├── mcp_client.py    #       MCP客户端
-│       ├── mcp_agent_base.py #      Agent基类
-│       └── mcp_bridge.py    #       MCP桥接
-│
-├── gui/                     # 🖥️ PyQt5 图形界面
-│   ├── main_window.py       #   主窗口：热键·事件·状态流转
-│   ├── character_widget.py  #   角色动画组件（GIF序列帧）
-│   ├── chat_widget.py       #   聊天气泡列表
-│   ├── input_panel.py       #   输入面板：语音·文字·表情·工具
-│   ├── message_bubble.py    #   消息气泡渲染
-│   ├── tool_call_card.py    #   工具调用卡片（折叠态+展开态）
-│   ├── tool_call_group.py   #   工具调用分组组件
-│   ├── animation_state_machine.py # 动画状态机
-│   ├── spectrum_widget.py   #   频谱可视化
-│   ├── task_progress_bar.py #   任务进度条
-│   ├── api_config_dialog.py #   API配置面板
-│   ├── settings_dialog.py   #   全局设置
-│   ├── capability_center.py #   能力中心总览
-│   ├── duty_center.py       #   后台职责中心（主动聊天/摸鱼/心跳/提醒）
-│   ├── alarm_dialog.py      #   闹钟 + 倒计时 + 提醒 + 待办 + 自动化任务
-│   ├── diary_dialog.py      #   日记查看
-│   ├── todo_dialog.py       #   待办清单
-│   ├── note_dialog.py       #   备忘本
-│   ├── history_dialog.py    #   聊天记录
-│   ├── accompany_dialog.py  #   陪伴统计
-│   ├── pomodoro_dialog.py   #   番茄钟
-│   ├── music_list_dialog.py #   音乐盒
-│   ├── proactive_dialog.py  #   主动聊天设置
-│   ├── reminder_dialog.py   #   提醒管理
-│   ├── camera_dialog.py     #   摄像头预览
-│   ├── quick_launch_dialog.py # 快捷启动
-│   ├── qq_settings_dialog.py  # QQ桥接配置
-│   ├── wechat_settings_dialog.py # 微信桥接配置
-│   ├── network_settings_dialog.py # 网络/代理配置
-│   ├── sound_settings_dialog.py   # 音效设置
-│   ├── memory_settings_dialog.py  # 棱镜记忆系统设置
-│   ├── emotional_debug_dialog.py  # 涟漪情感系统调试面板
-│   └── galgame/             #   🎮 Galgame模式
-│       ├── tachie_window.py      #   透明立绘窗口
-│       ├── galgame_dialog.py     #   可拖拽拉伸对话框
-│       ├── live2d_widget.py      #   Live2D动画支持
-│       └── expression_manager.py #   表情/情绪联动
-│
-├── workers/                 # ⚙️ 后台工作线程
-│   ├── agent_worker.py      #   Agent对话线程
-│   ├── voice_worker.py      #   语音识别线程
-│   ├── speaker_worker.py    #   语音合成线程
-│   ├── listening_worker.py  #   持续监听线程
-│   ├── qq_bridge_worker.py  #   QQ桥接WebSocket线程
-│   ├── wechat_bridge_worker.py # 微信桥接HTTP线程
-│   ├── proactive_worker.py  #   主动聊天调度线程
-│   ├── heartbeat_worker.py  #   心跳检测线程
-│   ├── standby_worker.py    #   待机模式线程
-│   ├── slack_worker.py      #   摸鱼模式线程
-│   ├── observation_mode_worker.py # 观察模式循环
-│   ├── track_worker.py      #   人体跟踪统一线程
-│   ├── track_frame_receiver.py   # 跟踪帧接收
-│   ├── track_pose_detector.py    # Pose推理
-│   ├── ocr_worker.py        #   OCR后台线程
-│   └── smart_reminder_worker.py  # 智能提醒
-│
-├── voice/                   # 🎤 语音子系统
-│   ├── listener.py          #   录音+VAD+FunASR识别
-│   └── speaker.py           #   音频播放
-│
-├── vision/                  # 👁️ 视觉子系统
-│   ├── face_detector.py     #   人脸检测+微笑识别
-│   ├── gesture_detector.py  #   手势检测
-│   └── vision_worker.py     #   视觉线程（人脸/表情/手势）
-│
-├── memory/                  # 💾 数据持久化
-│   └── history_manager.py   #   对话历史SQLite管理
-│
-├── utils/                   # 🔧 工具模块
-│   ├── settings.py          #   全局设置管理
-│   ├── paths.py             #   路径管理+旧数据迁移
-│   ├── auto_task_data.py    #   🤖 AutoTask / ActionStep 数据模型
-│   ├── alarm_manager.py     #   闹钟管理
-│   ├── todo_manager.py      #   待办管理
-│   ├── reminder_manager.py  #   提醒管理
-│   ├── diary.py             #   日记引擎
-│   ├── note_manager.py      #   备忘本管理
-│   ├── proactive_chat.py    #   主动聊天调度器
-│   ├── accompany_stats.py   #   陪伴统计
-│   ├── pomodoro_stats.py    #   番茄钟统计
-│   ├── music_stats.py       #   音乐播放统计
-│   ├── emotion_manager.py   #   表情图片管理
-│   ├── balance.py           #   API余额查询
-│   ├── camera.py            #   摄像头工具
-│   ├── sound.py             #   音效播放
-│   ├── slack_utils.py       #   摸鱼模式数据收集
-│   ├── bilibili_history.py  #   B站浏览历史与兴趣标签
-│   └── autostart.py         #   开机自启管理
-│
-├── skills/                  # 🔌 技能包（插件式）
-│   ├── 语音合成/            #   GPT-SoVITS + 情绪
-│   ├── 浏览器自动化/        #   Playwright
-│   ├── 肩部外设控制/        #   ESP32 云台
-│   ├── 日记与备忘/          #
-│   ├── 音乐播放控制/        #
-│   ├── B站视频摘要/         #   Bilibili API + 字幕提取
-│   ├── 系统信息工具/        #
-│   ├── 学习助手/            #
-│   └── _提示词指南/       #   System Prompt 渐进式注入模块（12个）
-│
-├── mcp_servers/             # 🔗 MCP服务
-│   ├── filesystem/          #   本地文件系统操作
-│   ├── firecrawl/           #   网页爬虫与内容提取
-│   ├── tavily_search/       #   AI 原生搜索引擎
-│   └── zhihu_search/        #   知乎搜索
-│
-├── game/                    # 🎮 实验性功能
-│   └── genericrawl-main/    #   Roguelike 游戏引擎（开发中）
-│
-└── assets/                  # 🎨 静态资源
-    ├── GIF/                 #   角色动画序列帧
-    ├── 备份GIF/             #   动画备份
-    ├── meme/                #   表情包图片
-    ├── sound/               #   系统音效
-    ├── music/               #   内置音乐
-    ├── icons/               #   图标
-    └── animation_config.json # 动画配置
+- QQ、微信联系人会话按参与者和会话 ID 隔离；
+- 非主人作用域不能访问主人长期记忆；
+- 记忆写入受用户指令、来源和当前会话策略约束；
+- 星图和调试界面默认通过快照访问数据；
+- 外部桥接、截图、摄像头和云端模型均应按需启用。
+
+## 开发与测试
+
+运行定向测试：
+
+```powershell
+conda activate lianxin
+python -m unittest tests.test_proactive_scheduler tests.test_proactive_controller -v
 ```
 
----
+运行全部测试：
 
-## 🧬 数据流
-
-```
-用户输入 (文字/语音/QQ/微信)
-    │
-    ├─── 语音输入 → VoiceDuplex (WebRTC VAD → FunASR/火山STT) → 文字
-    │                                                    │
-    │                                     实时打断(用户说话中)
-    │                                                    │
-    ▼                                                    ▼
-┌──────────────┐    规则路由(兜底)
-│ IntentRouter ├────────────┐
-│ 小模型分类    │            │
-└──────┬───────┘            │
-       │ route + tools      │
-       ▼                    ▼
-┌─────────────────────────────────────┐
-│           AgentCore                  │
-│  System Prompt 组装                  │
-│  ├── 人格设定 (_BASE_PROMPT)         │
-│  ├── 记忆注入 (棱镜: 图记忆+分类记忆+RAG向量) │
-│  ├── 情感状态 (涟漪: 5维需求+3层状态) │
-│  ├── 技能知识 (激活的技能SKILL.md)    │
-│  ├── 渐进式技能模块 (12个关键词触发)  │
-│  └── MCP服务描述 (4服务)             │
-│                                      │
-│  Function Calling 循环               │
-│  ├── LiteLLM → AI API                │
-│  ├── 工具恢复链 (重试+降级)           │
-│  ├── 工具并行执行 (ThreadPool)        │
-│  ├── 资源锁调度 (浏览器/硬件/DB)       │
-│  └── 结果回传                         │
-└──────────────┬──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────┐
-│           后处理                      │
-│  情感分析 → 状态更新                  │
-│  记忆提取 → 五元组+分类事实+RAG向量    │
-│  对话压缩 → 上下文摘要(如需)           │
-│  待办提取 → checklist_extractor      │
-│  TTS合成 → 语音输出(如需)             │
-│  QQ/微信发送 → 消息推送(如需)          │
-│  历史记录 → SQLite持久化              │
-└─────────────────────────────────────┘
-
-═══════════════════════════════════════
-  定时自动化支线（独立调度线程）
-═══════════════════════════════════════
-
-用户输入 "每天14:00清理回收站"
-    │
-    ▼
-┌──────────────────────┐
-│ auto_task_parser     │  LLM 提取调度信息（时间/频率/描述）
-│ (LLM + 规则降级)     │
-└──────┬───────────────┘
-       │ AutoTask { schedule_type, schedule_time, description }
-       ▼
-┌──────────────────────┐
-│ auto_task_manager    │  JSON 持久化 + CRUD + 观察者通知
-└──────┬───────────────┘
-       │
-       ▼
-┌──────────────────────┐
-│ auto_task_scheduler  │  QThread 30s 轮询
-│ (后台线程)            │  到期检测 → task_due signal
-└──────┬───────────────┘
-       │
-       ▼
-┌──────────────────────┐
-│ auto_task_executor   │  ReAct Agent 循环
-│ (daemon 线程)         │  LLM 运行时自主决定工具调用
-│                      │  搜索结果 → 写文档 → 通知
-└──────┬───────────────┘
-       │
-       ▼
-  完成通知（聊天框 + 语音）
+```powershell
+python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
----
+修改代码后建议执行：
 
-<div align="center">
-<img src="assets/主界面背景图/主界面背景图.jpg" alt="主界面" width="100%" />
+```powershell
+python -m py_compile brain/agent.py gui/main_window.py workers/proactive_worker.py
+git diff --check
+graphify update .
+```
 
-*为何人类会因为孤独，从而拥抱一面镜子呢？*
+主要目录：
 
-<br>
+```text
+brain/       AgentCore、记忆、情感、工具路由、MCP 和自动化
+gui/         PyQt5 主界面、聊天、星图、控制台和设置窗口
+workers/     对话、主动行为、语音、视觉和桥接线程
+memory/      SQLite 数据库和本地持久化结构
+utils/       设置、路径、调度、历史、统计和后台职责
+skills/      可按需加载的技能包
+mcp_servers/ 外部 MCP 服务适配
+assets/      星图、界面、动画、音乐和其他静态资源
+tests/       单元测试和系统回归测试
+docs/        设计文档与数据契约
+```
 
-Made with ❤️ by [luke23334](https://gitee.com/luke23334)
+## 已知边界
 
-[![Gitee](https://img.shields.io/badge/Gitee-仓库地址-C71D23?logo=gitee)](https://gitee.com/luke23334/lianxin-ai)
+- B 站搜索接口通常只能返回标题、简介和链接；没有字幕或视频帧时，莲心不会声称完整看过视频。
+- 语义情感分析会增加延迟和模型消耗，自动模式会优先使用规则判断。
+- 本地 embedding、视觉模型、FunASR 和浏览器驱动首次启动可能需要下载模型或额外组件。
+- QQ/微信、ESP32-CAM、Ollama、MCP 服务属于可选集成，未配置时不影响桌面文本对话。
+- 涟漪情感系统是状态和调度辅助系统，不是医学意义上的情绪识别或人格诊断。
 
-</div>
+## 免责声明
+
+本项目用于学习、研究和个人桌面自动化。使用者应遵守所在地法律法规、模型服务商的使用条款以及第三方平台规则。请自行确认消息发送、网页操作、摄像头采集和记忆保存的权限范围。
+
+## 项目致谢
+
+项目中的记忆星图设计参考了 Memory Constellations，五轴主动意识与情感状态设计参考了 jiwen。莲心对两者进行了 Python/PyQt5 桌面架构下的迁移，并保留自身的记忆、工具、人格和跨端联动能力。
+
+项目地址：[Gitee](https://gitee.com/luke23334/lianxin-ai2)
