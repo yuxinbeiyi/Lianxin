@@ -380,7 +380,7 @@ class VoiceSpeaker:
         # transient service throttling, so retry with a fresh connection before
         # surfacing the failure to the caller.
         last_error = None
-        for attempt in range(3):
+        for attempt in range(2):
             try:
                 self._remove_temp_file(path)
                 communicate = edge_tts.Communicate(text, self._voice)
@@ -392,7 +392,7 @@ class VoiceSpeaker:
                 last_error = exc
                 if attempt < 2:
                     delay = 0.8 * (attempt + 1)
-                    logger.warning("Edge-TTS 暂时失败（第 %s/3 次）：%s；%.1fs 后重试", attempt + 1, exc, delay)
+                    logger.warning("Edge-TTS 暂时失败（第 %s/2 次）：%s；%.1fs 后重试", attempt + 1, exc, delay)
                     await asyncio.sleep(delay)
         raise last_error
 

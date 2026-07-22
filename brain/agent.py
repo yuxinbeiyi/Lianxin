@@ -1390,6 +1390,10 @@ class AgentCore:
             last_key = getattr(self, "_last_tool_call_key", None)
             if call_key == last_key:
                 logger.warning(f"[ToolLoop] 重复工具调用: {name}，终止循环")
+                self._last_tool_was_duplicate = True
+                if name in ("capture_desktop", "capture_from_camera"):
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": "上一轮已经完成截图/观察，请直接根据已有结果回复用户，不要再次调用截图工具。"})
+                    continue
                 messages.append({
                     "role": "tool", "tool_call_id": tc.id,
                     "content": "工具重复调用已终止。请基于已有信息给出回复。",
@@ -1398,6 +1402,13 @@ class AgentCore:
             # 跨轮次去重：同一工具+同一参数在整个循环中只能调用一次
             if call_key in self._loop_tool_call_history:
                 print(f"  [去重] 跳过重复调用: {name}（参数与之前完全相同）", flush=True)
+                self._last_tool_was_duplicate = True
+                if name in ("capture_desktop", "capture_from_camera"):
+                    messages.append({
+                        "role": "tool", "tool_call_id": tc.id,
+                        "content": "上一轮已经完成截图/观察。请使用已有观察结果直接回复，禁止再次调用截图工具。",
+                    })
+                    continue
                 messages.append({
                     "role": "tool", "tool_call_id": tc.id,
                     "content": (

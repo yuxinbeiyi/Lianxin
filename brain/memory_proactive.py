@@ -5,13 +5,20 @@ from datetime import datetime, timedelta
 from brain.graph_memory import _get_conn
 
 _lock = threading.RLock()
+_schema_ready = False
 
 def _now(): return datetime.now().astimezone()
 def _iso(dt): return dt.isoformat(timespec="seconds")
 
 def _ensure():
+    global _schema_ready
     conn = _get_conn()
-    conn.executescript("""
+    if _schema_ready:
+        return conn
+    with _lock:
+        if _schema_ready:
+            return conn
+        conn.executescript("""
     CREATE TABLE IF NOT EXISTS memory_proactive_cues (
       id INTEGER PRIMARY KEY AUTOINCREMENT, source_kind TEXT NOT NULL, source_id INTEGER NOT NULL,
       fingerprint TEXT NOT NULL UNIQUE, content TEXT NOT NULL, state_type TEXT DEFAULT '',
@@ -26,7 +33,8 @@ def _ensure():
       id INTEGER PRIMARY KEY AUTOINCREMENT, cue_id INTEGER, action TEXT NOT NULL,
       detail TEXT DEFAULT '', created_at TEXT NOT NULL
     );
-    """); conn.commit(); return conn
+        """); conn.commit(); _schema_ready = True
+    return conn
 
 def _fingerprint(kind, source_id, content):
     return hashlib.sha256(f"{kind}:{source_id}:{content}".encode("utf-8")).hexdigest()
@@ -86,10 +94,13 @@ def get_due_cue(now=None):
 
 def get_active_suppression(now=None):
     conn=_ensure(); now=_iso(now or _now())
-    row=conn.execute("""SELECT c.* FROM memory_proactive_cues c WHERE c.status='suppressed'
+    try:
+        row=conn.execute("""SELECT c.* FROM memory_proactive_cues c WHERE c.status='suppressed'
       AND c.due_at<=? AND c.window_end!='' AND c.window_end>=?
       AND (c.source_kind!='current_state' OR EXISTS(SELECT 1 FROM memory_current_states s WHERE s.id=c.source_id AND s.status='active'))
       ORDER BY c.confidence DESC LIMIT 1""",(now,now)).fetchone()
+    except Exception:
+        return None
     return dict(row) if row else None
 
 def mark_cue_delivered(cue_id, text=""):
