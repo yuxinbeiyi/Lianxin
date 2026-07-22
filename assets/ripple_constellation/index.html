@@ -14,7 +14,7 @@
     <div class="top-actions"><span class="sync-dot" id="sync-dot"></span><span id="sync-label">实时同步</span><button id="refresh" class="top-btn">刷新</button><button id="settings" class="top-btn">设置</button><button id="fullscreen" class="top-btn">全屏</button></div>
   </header>
   <main class="dashboard">
-    <section class="card axes-card"><div class="card-head"><div><span class="eyebrow">LIVE AXES</span><h2>五轴实时状态</h2></div><button id="pause" class="mini-btn">暂停刷新</button></div><div id="axes"></div><div class="axis-legend">连接=想联系 · 防御=戒备 · 愉悦=好坏 · 唤醒=兴奋度 · 沉浸=投入度</div></section>
+    <section class="card axes-card"><div class="card-head"><div><span class="eyebrow">LIVE AXES</span><h2>五轴实时状态</h2></div><button id="pause" class="mini-btn">暂停刷新</button></div><div id="axes"></div><div class="axis-legend">连接需求、沉浸度：左→右为 0~1；防御/骄傲、情绪基调、唤醒度：中线为 0，向左为负、向右为正。</div></section>
     <section class="card insight-card"><div class="card-head"><div><span class="eyebrow">INTERPRETATION</span><h2>当前状态解释</h2></div><span id="mood-badge" class="badge">平稳</span></div><div class="hero-state"><span id="mood-label">平稳</span><small id="relationship">关系阶段：—</small></div><div class="insight-row"><span>当前主动动机</span><strong id="motive">观察</strong></div><p id="motive-reason" class="muted">等待状态数据…</p><div class="insight-row"><span>回复指导</span></div><p id="guidance" class="guidance">—</p><div class="influence-grid" id="influence"></div></section>
     <section class="card events-card"><div class="card-head"><div><span class="eyebrow">EVENT STREAM</span><h2>状态事件流</h2></div><span id="event-count" class="muted">0 条</span></div><div id="events" class="events"></div></section>
   </main>
