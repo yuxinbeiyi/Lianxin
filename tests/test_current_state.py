@@ -108,6 +108,39 @@ class CurrentStateLifecycleTests(unittest.TestCase):
             [event["action"] for event in current_state.get_state_events(first["id"])],
         )
 
+    def test_explicit_future_plan_is_distinguished_from_weather_question(self):
+        self.assertIsNone(
+            current_state.extract_explicit_short_term_plan("莲心，明天天气怎么样？")
+        )
+        plan = current_state.extract_explicit_short_term_plan(
+            "莲心，明天天气怎么样，我明天早上八点半要去跟润建股份有限公司的交付工程师，"
+            "一起去3个天线基站站点，测试我做的无人机视觉算法实战效果"
+        )
+        self.assertIsNotNone(plan)
+        self.assertEqual("plan", plan["state_type"])
+        self.assertEqual(3, plan["duration_days"])
+        self.assertIn("无人机视觉算法", plan["content"])
+
+    def test_new_drone_plan_retires_stale_not_started_state(self):
+        stale = current_state.set_current_state(
+            "无人机项目暂时还没推进，因为不着急", "project", now=self.now
+        )
+        captured = current_state.capture_explicit_short_term_plan(
+            "我明天早上八点半要去3个天线基站站点测试无人机视觉算法",
+            source_session_id=12,
+            source_channel="desktop",
+            source_message_id=44,
+            persona_id="default-lianxin",
+        )
+        self.assertEqual("plan", captured["state_type"])
+        self.assertEqual([44], captured["source_message_ids"])
+        all_states = {state["id"]: state for state in current_state.list_current_states(include_inactive=True)}
+        self.assertEqual("resolved", all_states[stale["id"]]["status"])
+        self.assertEqual("resolve", current_state.get_state_events(stale["id"])[-1]["action"])
+        active = current_state.list_current_states()
+        self.assertEqual(1, len(active))
+        self.assertIn("基站站点", active[0]["content"])
+
     def test_active_state_limit_is_enforced_by_code(self):
         distinct_states = [
             "用户正在感冒并且嗓子疼",

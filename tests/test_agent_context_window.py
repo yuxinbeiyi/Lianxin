@@ -320,6 +320,37 @@ class AgentContextWindowTests(unittest.TestCase):
         self.assertNotIn("tool_call", result)
         self.assertEqual(2, completion.call_count)
 
+    def test_empty_length_response_is_retried_instead_of_silence(self):
+        agent = AgentCore.__new__(AgentCore)
+        agent.history = [{"role": "user", "content": "明天天气怎么样"}]
+        agent._use_local = True
+        agent._prev_session_summary = ""
+        agent._request_memory_writes_blocked = False
+        agent._model = "test-model"
+        agent._max_tokens = 200
+        agent._api_key = "key"
+        agent._api_base = "https://example.invalid"
+        agent._last_reasoning = None
+        agent._build_request_system_messages = lambda snapshot: []
+        agent._build_realtime_message = lambda: {"role": "system", "content": "time"}
+
+        def stream(text, finish):
+            delta = SimpleNamespace(content=text, reasoning_content=None, tool_calls=None)
+            return [SimpleNamespace(
+                usage=None,
+                choices=[SimpleNamespace(delta=delta, finish_reason=finish)],
+            )]
+
+        with patch(
+            "brain.agent.litellm.completion",
+            side_effect=[stream(None, "length"), stream("已恢复回复", "stop")],
+        ) as completion:
+            result = agent._function_calling_loop(
+                disable_tools=True, user_message="明天天气怎么样"
+            )
+        self.assertEqual("已恢复回复", result)
+        self.assertEqual(2, completion.call_count)
+
 
 if __name__ == "__main__":
     unittest.main()

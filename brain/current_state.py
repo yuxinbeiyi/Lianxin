@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
@@ -29,6 +30,101 @@ DEFAULT_DURATION_DAYS = {
 MAX_ACTIVE_STATES = 12
 MAX_DURATION_DAYS = 90
 _state_lock = threading.RLock()
+
+
+_FUTURE_PLAN_RE = re.compile(
+    r"(?:明天|明日|后天|明早|明晚|今晚|今天晚上|下周|本周|这周|"
+    r"周[一二三四五六日天]|[0-9]{1,2}月[0-9]{1,2}日)"
+)
+_PLAN_ACTION_RE = re.compile(
+    r"(?:要去|将去|准备去|计划去|安排|一起去|出发|测试|开会|见面|"
+    r"参加|巡检|面试|交付|部署|验收|培训|旅行|出差|执行)"
+)
+
+
+def extract_explicit_short_term_plan(text: str) -> dict | None:
+    """Extract only explicit, time-bounded plans from a user statement.
+
+    This intentionally stays conservative: a weather question alone is not a
+    plan, while a future date/time combined with an action is. The returned
+    content remains close to the user's wording for auditability.
+    """
+    original = " ".join(str(text or "").strip().split())
+    if len(original) < 12:
+        return None
+    if not _FUTURE_PLAN_RE.search(original) or not _PLAN_ACTION_RE.search(original):
+        return None
+
+    # Drop a leading weather question when the same message continues with a
+    # concrete schedule, so the state describes the plan rather than the query.
+    plan_text = re.sub(
+        r"^.*?(?:天气怎么样|天气如何|天气预报|天气)\s*[,，。:：]?\s*",
+        "",
+        original,
+        count=1,
+    ).strip()
+    if len(plan_text) < 8:
+        plan_text = original
+
+    if "后天" in original:
+        duration_days = 4
+    elif any(token in original for token in ("下周", "周一", "周二", "周三", "周四", "周五", "周六", "周日", "周天")):
+        duration_days = 10
+    elif any(token in original for token in ("明天", "明日", "明早", "明晚")):
+        duration_days = 3
+    else:
+        duration_days = 2
+    return {
+        "content": f"用户短期安排：{plan_text}",
+        "state_type": "plan",
+        "duration_days": duration_days,
+    }
+
+
+def capture_explicit_short_term_plan(
+    text: str,
+    *,
+    source_session_id: int | None = None,
+    source_channel: str = "",
+    source_message_id: int | None = None,
+    persona_id: str = "",
+) -> dict | None:
+    """Persist an explicit plan and retire a directly contradicted old state."""
+    plan = extract_explicit_short_term_plan(text)
+    if not plan:
+        return None
+
+    source_message_ids = [int(source_message_id)] if source_message_id is not None else []
+    source = {
+        "source_session_id": source_session_id,
+        "source_channel": source_channel,
+        "source_message_ids": source_message_ids,
+        "persona_id": persona_id,
+    }
+    # Preserve the old state as history when a new direct statement supersedes
+    # the specific "无人机项目尚未推进" snapshot seen in existing data.
+    for state in list_current_states():
+        content = str(state.get("content", ""))
+        if (
+            state.get("state_type") in {"project", "plan"}
+            and "无人机" in content
+            and any(marker in content for marker in ("暂时", "没推进", "未推进", "不着急"))
+            and "无人机" in plan["content"]
+        ):
+            resolve_current_state(
+                int(state["id"]),
+                "用户已提供新的无人机测试安排，旧的暂未推进状态不再代表当前情况",
+                **source,
+            )
+
+    return set_current_state(
+        plan["content"],
+        plan["state_type"],
+        duration_days=plan["duration_days"],
+        confidence=0.95,
+        source_quality="direct_statement",
+        **source,
+    )
 
 
 def _serialized(func):

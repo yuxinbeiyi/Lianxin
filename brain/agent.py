@@ -460,6 +460,32 @@ class AgentCore:
             self._session_id, "user", user_message
         )
 
+        # 明确的未来时间 + 行程/任务属于短期当前状态。提前写入，
+        # 使本轮 prompt、后续会话和星图事件流都能看到同一份有来源的状态。
+        if (
+            self._owner_scope
+            and not self._request_memory_writes_blocked
+            and not self._use_local
+        ):
+            try:
+                from brain.current_state import capture_explicit_short_term_plan
+                profile = getattr(persona_snapshot, "profile", None)
+                captured_state = capture_explicit_short_term_plan(
+                    user_message,
+                    source_session_id=self._session_id,
+                    source_channel=self._source_channel,
+                    source_message_id=user_message_id,
+                    persona_id=getattr(profile, "id", ""),
+                )
+                if captured_state:
+                    print(
+                        f"[当前状态] 已记录短期安排 #{captured_state.get('id')}: "
+                        f"{captured_state.get('content', '')}",
+                        flush=True,
+                    )
+            except Exception as exc:
+                logger.warning("短期安排状态写入失败，继续生成回复: %s", exc)
+
         # 涟漪 v3 在生成当前回复前完成评估，使本条用户消息能够影响本条回复。
         # 消息 ID 同时作为幂等键，渠道重试不会重复叠加情绪变化。
         if self._track_emotion and self._owner_scope:
@@ -2163,6 +2189,16 @@ class AgentCore:
                         import time as _time
                         _time.sleep(1.5)
                         continue
+                    if finish == "length" and not str(content or "").strip() and retry < 1:
+                        print("[空回复恢复] 纯文本响应达到长度上限但没有正文，发起一次简短重试", flush=True)
+                        messages.append({
+                            "role": "system",
+                            "content": (
+                                "上一轮响应在输出上限处中止且没有正文。请立即用简短、自然的中文完成回答，"
+                                "不要输出工具协议、推理过程或空内容。"
+                            ),
+                        })
+                        continue
                     if contains_textual_tool_protocol(content):
                         print("[协议防泄漏] 纯文本模式检测到伪工具调用，已拦截", flush=True)
                         if retry < 1:
@@ -2177,7 +2213,7 @@ class AgentCore:
                             continue
                         return "（检测到异常的内部工具协议，已阻止其显示。请重新发送消息。）"
                     self._last_reasoning = reasoning if reasoning else None
-                    return content or "（莲心没有说话）"
+                    return content or "刚才的回复在生成时被截断了，请再发一次，我会继续处理。"
                 except Exception as e:
                     if retry < 1:
                         import time as _time
@@ -2198,6 +2234,7 @@ class AgentCore:
         _full_tools_injected = False           # 防止工具激活无限重试
         _soft_limit_triggered = False          # 自评估提示只发一次
         _urgent_limit_triggered = False        # 收尾提示只发一次
+        _empty_length_retry_count = 0          # 空正文 + length 只恢复一次，避免无限重试
 
         # ── 三层熔断器状态 ──
         _content_drought_count = 0           # 连续无文本回复计数
@@ -2367,6 +2404,26 @@ class AgentCore:
                 self._last_reasoning = reasoning
 
             if finish == "stop" or finish == "length":
+                if (
+                    finish == "length"
+                    and not str(content or "").strip()
+                    and not stream_tool_calls
+                    and _empty_length_retry_count < 1
+                ):
+                    _empty_length_retry_count += 1
+                    print(
+                        "[空回复恢复] 工具循环响应达到长度上限但没有正文，保留工具能力并发起一次重试",
+                        flush=True,
+                    )
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "上一轮模型响应在输出上限处中止且没有可见正文。"
+                            "请立即完成当前请求：如果需要实时信息，直接调用对应工具；否则用简短自然语言回答。"
+                            "不要输出推理过程，不要输出空内容。"
+                        ),
+                    })
+                    continue
                 if contains_textual_tool_protocol(content):
                     _text_protocol_retry_count += 1
                     print(
@@ -2412,7 +2469,9 @@ class AgentCore:
                             messages[i] = {"role": "system", "content": catalog_text}
                             break
                     continue
-                return content or "（莲心没有说话）"
+                if finish == "length" and not str(content or "").strip():
+                    return "刚才的回复在生成时被截断了，我还没有拿到完整结果。请再发送一次，我会继续处理。"
+                return content or "刚才没有生成出可显示的内容，请再发送一次。"
             elif finish == "tool_calls":
                 from types import SimpleNamespace
                 # 外层用 dict（兼容 messages 列表中其他代码的 .get() 访问）
