@@ -234,16 +234,34 @@ class SlackWorker(QThread):
             f"请以{assistant_name}的身份，给{user_name}发一条消息。"
         )
 
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_prompt},
+        ]
         try:
             response = client.chat.completions.create(
+                model=model, messages=messages, temperature=0.9, max_tokens=300,
+            )
+            text = self._response_text(response.choices[0].message)
+            if text:
+                return text
+            retry = client.chat.completions.create(
                 model=model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_prompt},
-                ],
+                messages=messages + [{
+                    "role": "user",
+                    "content": "请直接输出要发送的一到两句话，不要调用工具，不要返回空内容。",
+                }],
                 temperature=0.9,
                 max_tokens=300,
             )
-            return response.choices[0].message.content.strip()
+            return self._response_text(retry.choices[0].message) or "我刚刚想问你点什么，但这次没有生成出文字，等我一下再试。"
         except Exception as e:
             raise RuntimeError(f"API调用失败: {e}")
+
+    @staticmethod
+    def _response_text(message) -> str:
+        for field in ("content", "text", "output_text"):
+            value = getattr(message, field, None)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""

@@ -371,18 +371,41 @@ class ProactiveWorker(QThread):
             "直接输出消息内容，不要任何前缀或解释。"
         )
 
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_prompt},
+        ]
         response = client.chat.completions.create(
-            model=model,
-            max_tokens=256,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user_prompt},
-            ],
-            timeout=30,
+            model=model, max_tokens=256, messages=messages, timeout=30,
         )
-        # An empty proactive response means the model chose not to interrupt the user.
-        # Keep it empty so the presentation layer can suppress the notification.
-        return (response.choices[0].message.content or "").strip()
+        message = response.choices[0].message
+        text = self._response_text(message)
+        if text:
+            return text
+
+        # Some OpenAI-compatible gateways return only tool_calls/reasoning and
+        # leave content empty. The proactive path has no tool-result roundtrip,
+        # so ask once for plain text instead of silently dropping the message.
+        retry_messages = messages + [{
+            "role": "user",
+            "content": "请直接输出要发给用户的一到两句话，不要调用工具，不要返回空内容。",
+        }]
+        retry = client.chat.completions.create(
+            model=model, max_tokens=256, messages=retry_messages, timeout=30,
+        )
+        text = self._response_text(retry.choices[0].message)
+        if text:
+            return text
+        return "我刚刚想和你聊点什么，但这次没有生成出文字，等我一下再试。"
+
+    @staticmethod
+    def _response_text(message) -> str:
+        """兼容不同 OpenAI 网关的文本字段，避免 content=None 静默丢消息。"""
+        for field in ("content", "text", "output_text"):
+            value = getattr(message, field, None)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
 
     # ── B站冲浪 ──────────────────────────────────────────────
 
