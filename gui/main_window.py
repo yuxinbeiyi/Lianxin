@@ -1908,6 +1908,8 @@ class MainWindow(QMainWindow):
             self._chat_widget.add_system_tip(
                 f"—— 已激活人格“{profile_name}”，并开启全新对话 ——"
             )
+            if self._history_dialog is not None:
+                self._history_dialog.refresh(self._agent._session_id)
             self._duty_scheduler.on_session_started()
         else:
             self._chat_widget.add_system_tip(

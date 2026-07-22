@@ -18,7 +18,7 @@ class RippleConstellationWebWindow(MemoryConstellationWebWindow):
         )
         super().__init__(parent)
         self._asset_dir = self._ripple_asset_dir
-        self.setWindowTitle("莲心 · 涟漪星图")
+        self.setWindowTitle("涟漪情感系统")
         self._load_map()
         self._sync_timer = QTimer(self)
         self._sync_timer.setInterval(5000)

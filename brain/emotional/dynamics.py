@@ -22,10 +22,11 @@ class DynamicsConfig:
     arousal_setpoint: float = -0.08
     arousal_regress: float = 0.0028
     guardedness_setpoint: float = 0.12
-    guardedness_regress: float = 0.0016
+    # 防御感应在正常交流后较快回到基线；避免一次旧冲突让界面数小时停在高位。
+    guardedness_regress: float = 0.0035
     guardedness_defend_threshold: float = 0.58
     guardedness_defend_target: float = 0.42
-    guardedness_defend_rate: float = 0.0010
+    guardedness_defend_rate: float = 0.0020
     immersion_decay: float = 0.006
     rupture_decay: float = 0.000035
     repair_decay: float = 0.00008
@@ -149,7 +150,8 @@ class EmotionalDynamics:
             if state.last_activity_at and at_time - state.last_activity_at > 3600:
                 state.last_activity_type = ""
                 state.last_activity_label = ""
-        state.rupture = max(0.0, state.rupture - cfg.rupture_decay * minutes)
+        repair_relief = max(0.0, state.repair) * 0.0008
+        state.rupture = max(0.0, state.rupture - (cfg.rupture_decay + repair_relief) * minutes)
         state.repair = max(0.0, state.repair - cfg.repair_decay * minutes)
         state.normalize()
 

@@ -389,6 +389,16 @@ class HistoryDialog(QDialog):
         # 尽量恢复原来选中的行
         self._session_list.setCurrentRow(restore_row)
 
+    def refresh(self, current_session_id: int | None = None):
+        """Refresh the session list after another window creates a new session."""
+        if current_session_id is not None:
+            self._current_session_id = current_session_id
+        self._load_sessions(
+            keyword=self._search_box.text(),
+            date_str=self._date_edit.date().toString("yyyy-MM-dd")
+            if self._date_filter.date().year() > 2000 else None,
+        )
+
     def _on_session_selected(self, row: int):
         """切换会话时刷新右侧内容、摘要、按钮状态。"""
         has_valid = 0 <= row < len(self._sessions)
