@@ -814,6 +814,8 @@ _EMOTION_DEFAULTS = {
     "analysis_timeout_seconds": 8,
     "significant_memory_enabled": True,
     "significant_memory_threshold": 0.82,
+    "proactive_motive_enabled": True,
+    "saga_bias_scale": 1.0,
     "tone_profiles": {},
     "dynamics": {},
 }

@@ -302,6 +302,16 @@ class EmotionStore:
             )
             conn.commit()
 
+    def clear_simulation_events(self, persona_id: str, subject_id: str) -> int:
+        with self._lock:
+            conn = self._connect()
+            cur = conn.execute(
+                "DELETE FROM emotion_v3_events WHERE persona_id=? AND subject_id=? AND source_channel='ui_simulation'",
+                (persona_id, subject_id),
+            )
+            conn.commit()
+            return int(cur.rowcount or 0)
+
     def migrate_v2_json(
         self,
         source: Path,

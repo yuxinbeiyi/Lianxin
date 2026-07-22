@@ -161,7 +161,8 @@ class EmotionManager:
                     pass
             weight_total += weight
         if weight_total > 0:
-            result = {key: max(-0.08, min(0.08, value / weight_total * 0.08)) for key, value in totals.items()}
+            scale = max(0.0, min(2.0, float(self._config.get("saga_bias_scale", 1.0) or 1.0)))
+            result = {key: max(-0.08, min(0.08, value / weight_total * 0.08 * scale)) for key, value in totals.items()}
         else:
             result = totals
         result["saga_count"] = saga_count
@@ -550,6 +551,11 @@ class EmotionManager:
         return {"ok": True, "state": state.to_dict()}
 
     @_synchronized
+    def clear_simulation_events(self) -> int:
+        self._simulation_baselines.pop(self._active_key, None)
+        return self._store.clear_simulation_events(*self._active_key)
+
+    @_synchronized
     def configure_dynamics(self, **values) -> None:
         merged = dict(self._config.get("dynamics", {}))
         merged.update(values)
@@ -572,6 +578,9 @@ class EmotionManager:
         analysis_timeout_seconds: float | None = None,
         significant_memory_enabled: bool | None = None,
         significant_memory_threshold: float | None = None,
+        proactive_motive_enabled: bool | None = None,
+        saga_bias_scale: float | None = None,
+        dynamics: dict | None = None,
         tone_profile: dict | None = None,
     ) -> None:
         if semantic_analysis is not None:
@@ -589,6 +598,12 @@ class EmotionManager:
             self._config["significant_memory_threshold"] = max(
                 0.50, min(1.0, float(significant_memory_threshold))
             )
+        if proactive_motive_enabled is not None:
+            self._config["proactive_motive_enabled"] = bool(proactive_motive_enabled)
+        if saga_bias_scale is not None:
+            self._config["saga_bias_scale"] = max(0.0, min(2.0, float(saga_bias_scale)))
+        if isinstance(dynamics, dict) and dynamics:
+            self.configure_dynamics(**dynamics)
         if tone_profile is not None:
             profiles = self._config.setdefault("tone_profiles", {})
             if isinstance(profiles, dict):
@@ -601,6 +616,7 @@ class EmotionManager:
 
     @_synchronized
     def get_config(self) -> dict:
+        enabled = bool(self._config.get("proactive_motive_enabled", True))
         return {
             **self._config,
             "semantic_analysis": self._semantic_mode,
@@ -624,12 +640,14 @@ class EmotionManager:
     def get_proactive_motive(self, *, persona_snapshot=None) -> dict:
         key = self._resolve_key(persona_snapshot=persona_snapshot)
         motive = self._dynamics.motive(self._get_state(*key))
+        enabled = bool(self._config.get("proactive_motive_enabled", True))
         return {
             "level": motive.level,
             "urgency": motive.urgency,
-            "should_contact": motive.should_contact,
-            "should_self_regulate": motive.should_self_regulate,
-            "reason": motive.reason,
+            "should_contact": motive.should_contact and enabled,
+            "should_self_regulate": motive.should_self_regulate and enabled,
+            "reason": motive.reason if enabled else "主动动机已在设置中暂停。",
+            "enabled": enabled,
         }
 
     @property
@@ -732,7 +750,7 @@ class EmotionManager:
                 "urgency": round(motive.urgency, 4),
                 "action": "contact" if motive.should_contact else ("self_regulate" if motive.should_self_regulate else "observation"),
                 "reason": motive.reason,
-                "will_execute": False,
+                "will_execute": bool(self._config.get("proactive_motive_enabled", True) and (motive.should_contact or motive.should_self_regulate)),
             },
             "influence": {
                 "conversation": self._recent_influence(events),

@@ -191,11 +191,13 @@ class V3StoreTests(unittest.TestCase):
 
 class V3ManagerTests(unittest.TestCase):
     def make_manager(self):
-        return EmotionManager(
+        manager = EmotionManager(
             store=EmotionStore(":memory:"),
             semantic_mode="off",
             legacy_state_path=Path("__missing_emotional_state__.json"),
         )
+        manager._config["proactive_motive_enabled"] = True
+        return manager
 
     def test_current_message_changes_current_prompt_and_is_idempotent(self):
         manager = self.make_manager()
@@ -297,6 +299,18 @@ class V3ManagerTests(unittest.TestCase):
         self.assertIn("motive", info)
         self.assertIn("influence", info)
         self.assertIn("simulation", info)
+
+    def test_console_settings_control_motive_and_dynamics(self):
+        manager = self.make_manager()
+        manager.configure_settings(
+            proactive_motive_enabled=False,
+            saga_bias_scale=0.5,
+            dynamics={"contact_threshold": 0.70, "immersion_decay": 0.01},
+        )
+        motive = manager.get_proactive_motive()
+        self.assertFalse(motive["enabled"])
+        self.assertFalse(motive["should_contact"])
+        self.assertAlmostEqual(0.70, manager.get_config()["dynamics"]["contact_threshold"])
 
     def test_significant_memory_uses_existing_events_category_and_provenance(self):
         manager = self.make_manager()

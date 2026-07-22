@@ -124,7 +124,19 @@ class _ConstellationBridge(QObject):
             get_manager().configure_settings(
                 semantic_analysis=payload.get("semantic_analysis"),
                 significant_memory_threshold=payload.get("significant_memory_threshold"),
+                proactive_motive_enabled=payload.get("proactive_motive_enabled"),
+                saga_bias_scale=payload.get("saga_bias_scale"),
+                dynamics=payload.get("dynamics"),
             )
+            return True
+        except Exception:
+            return False
+
+    @pyqtSlot(result=bool)
+    def clearEmotionSimulation(self):
+        try:
+            from brain.emotional import get_manager
+            get_manager().clear_simulation_events()
             return True
         except Exception:
             return False
