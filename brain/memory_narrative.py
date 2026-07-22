@@ -76,6 +76,7 @@ def _ensure_tables():
         emotional_arousal REAL NOT NULL DEFAULT 0,
         emotional_guardedness REAL NOT NULL DEFAULT 0,
         emotional_connection REAL NOT NULL DEFAULT 0,
+        emotional_immersion REAL NOT NULL DEFAULT 0,
         emotional_weight REAL NOT NULL DEFAULT 0,
         persona_id TEXT DEFAULT '',
         status TEXT NOT NULL DEFAULT 'active',
@@ -116,6 +117,7 @@ def _ensure_tables():
         "ALTER TABLE memory_sagas ADD COLUMN emotional_arousal REAL NOT NULL DEFAULT 0",
         "ALTER TABLE memory_sagas ADD COLUMN emotional_guardedness REAL NOT NULL DEFAULT 0",
         "ALTER TABLE memory_sagas ADD COLUMN emotional_connection REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE memory_sagas ADD COLUMN emotional_immersion REAL NOT NULL DEFAULT 0",
         "ALTER TABLE memory_sagas ADD COLUMN emotional_weight REAL NOT NULL DEFAULT 0",
         "ALTER TABLE memory_sagas ADD COLUMN persona_id TEXT DEFAULT ''",
     ):
@@ -355,17 +357,18 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
                 "emotional_arousal": emotion_value("arousal"),
                 "emotional_guardedness": emotion_value("guardedness"),
                 "emotional_connection": emotion_value("connection"),
+                "emotional_immersion": max(-1.0, min(1.0, float(emotional.get("immersion", 0.0) or 0.0))),
                 "emotional_weight": max(0.0, min(1.0, float(emotional.get("weight", 0.0) or 0.0))),
             }
             existing_saga = conn.execute("SELECT id FROM memory_sagas WHERE fingerprint=?", (fingerprint,)).fetchone()
             if existing_saga:
                 conn.execute(
                     """UPDATE memory_sagas SET title=?,summary=?,episode_ids=?,confidence=MAX(confidence,?),
-                       emotional_valence=?,emotional_arousal=?,emotional_guardedness=?,emotional_connection=?,
+                       emotional_valence=?,emotional_arousal=?,emotional_guardedness=?,emotional_connection=?,emotional_immersion=?,
                        emotional_weight=?,updated_at=? WHERE id=?""",
                     (title, summary, json.dumps(episode_ids), saga_confidence,
                      emotional_values["emotional_valence"], emotional_values["emotional_arousal"],
-                     emotional_values["emotional_guardedness"], emotional_values["emotional_connection"],
+                     emotional_values["emotional_guardedness"], emotional_values["emotional_connection"], emotional_values["emotional_immersion"],
                      emotional_values["emotional_weight"], timestamp, int(existing_saga["id"])),
                 )
                 _record_event(conn, "saga_updated", "saga", int(existing_saga["id"]), {"episode_ids": episode_ids})
@@ -373,11 +376,11 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
                 cur = conn.execute(
                     """INSERT INTO memory_sagas
                        (title,summary,episode_ids,confidence,emotional_valence,emotional_arousal,
-                        emotional_guardedness,emotional_connection,emotional_weight,created_at,updated_at,fingerprint)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        emotional_guardedness,emotional_connection,emotional_immersion,emotional_weight,created_at,updated_at,fingerprint)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (title, summary, json.dumps(episode_ids), saga_confidence,
                      emotional_values["emotional_valence"], emotional_values["emotional_arousal"],
-                     emotional_values["emotional_guardedness"], emotional_values["emotional_connection"],
+                     emotional_values["emotional_guardedness"], emotional_values["emotional_connection"], emotional_values["emotional_immersion"],
                      emotional_values["emotional_weight"], timestamp, timestamp, fingerprint),
                 )
                 _record_event(conn, "saga_created", "saga", int(cur.lastrowid), {"episode_ids": episode_ids})

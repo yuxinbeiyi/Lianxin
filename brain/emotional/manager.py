@@ -62,6 +62,7 @@ class EmotionManager:
             else self._config.get("semantic_analysis", "auto")
         ).lower()
         self._states: dict[tuple[str, str], EmotionalStateV3] = {}
+        self._saga_bias_cache: dict[str, tuple[float, dict]] = {}
         self._simulation_baselines: dict[tuple[str, str], dict] = {}
         self._active_key = (DEFAULT_PERSONA_ID, DEFAULT_SUBJECT_ID)
         self._store.migrate_v2_json(
@@ -128,16 +129,19 @@ class EmotionManager:
         self._dynamics.advance(state, bias=self._get_saga_bias(persona_id))
         return state
 
-    @staticmethod
-    def _get_saga_bias(persona_id: str = DEFAULT_PERSONA_ID) -> dict:
+    def _get_saga_bias(self, persona_id: str = DEFAULT_PERSONA_ID) -> dict:
         """Read bounded, confidence-weighted emotional baselines from active sagas."""
+        cached = self._saga_bias_cache.get(str(persona_id))
+        if cached and time.time() - cached[0] < 30.0:
+            return dict(cached[1])
         try:
             from brain.memory_narrative import list_sagas
             sagas = list_sagas(80)
         except Exception:
-            return {"connection": 0.0, "valence": 0.0, "arousal": 0.0, "guardedness": 0.0}
-        totals = {key: 0.0 for key in ("connection", "valence", "arousal", "guardedness")}
+            return {"connection": 0.0, "valence": 0.0, "arousal": 0.0, "guardedness": 0.0, "immersion": 0.0, "saga_count": 0, "weight_total": 0.0}
+        totals = {key: 0.0 for key in ("connection", "valence", "arousal", "guardedness", "immersion")}
         weight_total = 0.0
+        saga_count = 0
         for saga in sagas:
             if str(saga.get("persona_id", "") or "") not in ("", persona_id):
                 continue
@@ -149,15 +153,21 @@ class EmotionManager:
             weight = confidence * emotional_weight
             if weight <= 0:
                 continue
+            saga_count += 1
             for key in totals:
                 try:
                     totals[key] += max(-1.0, min(1.0, float(saga.get(f"emotional_{key}", 0.0) or 0.0))) * weight
                 except (TypeError, ValueError):
                     pass
             weight_total += weight
-        if weight_total <= 0:
-            return totals
-        return {key: max(-0.20, min(0.20, value / weight_total * 0.20)) for key, value in totals.items()}
+        if weight_total > 0:
+            result = {key: max(-0.08, min(0.08, value / weight_total * 0.08)) for key, value in totals.items()}
+        else:
+            result = totals
+        result["saga_count"] = saga_count
+        result["weight_total"] = round(weight_total, 4)
+        self._saga_bias_cache[str(persona_id)] = (time.time(), dict(result))
+        return result
 
     @property
     @_synchronized
@@ -594,7 +604,7 @@ class EmotionManager:
         return {
             **self._config,
             "semantic_analysis": self._semantic_mode,
-            "saga_bias": self._get_saga_bias(state.persona_id),
+            "saga_bias": self._get_saga_bias(self._active_key[0]),
             "dynamics": dict(self._config.get("dynamics", {})),
         }
 
@@ -711,6 +721,7 @@ class EmotionManager:
                 }
                 for event in events
             ],
+            "saga_bias": self._get_saga_bias(state.persona_id),
         }
 
     @staticmethod

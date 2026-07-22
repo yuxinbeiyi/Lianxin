@@ -273,6 +273,21 @@ class V3ManagerTests(unittest.TestCase):
         self.assertTrue(manager.restore_simulation()["ok"])
         self.assertAlmostEqual(before["valence"], manager.get_debug_info()["axes"]["valence"], places=4)
 
+    def test_saga_bias_is_small_weighted_and_cached(self):
+        manager = self.make_manager()
+        manager._saga_bias_cache.clear()
+        saga = {"persona_id": "", "confidence": 1.0, "emotional_weight": 1.0,
+                "emotional_valence": 1.0, "emotional_arousal": -1.0,
+                "emotional_guardedness": 1.0, "emotional_connection": 1.0,
+                "emotional_immersion": 1.0}
+        with patch("brain.memory_narrative.list_sagas", return_value=[saga]) as listed:
+            first = manager._get_saga_bias()
+            second = manager._get_saga_bias()
+        self.assertEqual(first, second)
+        self.assertEqual(1, listed.call_count)
+        for key in ("valence", "arousal", "guardedness", "connection", "immersion"):
+            self.assertLessEqual(abs(first[key]), 0.08)
+
     def test_significant_memory_uses_existing_events_category_and_provenance(self):
         manager = self.make_manager()
         add_fact = Mock(return_value=17)

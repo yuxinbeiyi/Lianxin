@@ -97,10 +97,11 @@ class EmotionalDynamics:
 
     def _step(self, state: EmotionalStateV3, minutes: float, at_time: float, bias: dict) -> None:
         cfg = self.config
-        connection_bias = max(-0.35, min(0.35, float(bias.get("connection", 0) or 0)))
-        valence_bias = max(-0.20, min(0.20, float(bias.get("valence", 0) or 0)))
-        arousal_bias = max(-0.20, min(0.20, float(bias.get("arousal", 0) or 0)))
-        guardedness_bias = max(-0.20, min(0.20, float(bias.get("guardedness", 0) or 0)))
+        connection_bias = max(-0.08, min(0.08, float(bias.get("connection", 0) or 0)))
+        valence_bias = max(-0.08, min(0.08, float(bias.get("valence", 0) or 0)))
+        arousal_bias = max(-0.08, min(0.08, float(bias.get("arousal", 0) or 0)))
+        guardedness_bias = max(-0.08, min(0.08, float(bias.get("guardedness", 0) or 0)))
+        immersion_bias = max(-0.08, min(0.08, float(bias.get("immersion", 0) or 0)))
         idle_minutes = max(0.0, (at_time - state.last_interaction) / 60.0)
         context_factor = self._connection_context_factor(state.last_user_message)
         accel = 1.0
@@ -142,7 +143,7 @@ class EmotionalDynamics:
             state.arousal, arousal_target, cfg.arousal_regress, minutes
         )
 
-        state.immersion = max(0.0, state.immersion - cfg.immersion_decay * minutes)
+        state.immersion = max(0.0, state.immersion - cfg.immersion_decay * (1.0 - immersion_bias) * minutes)
         if state.immersion <= 0.01:
             state.immersion = 0.0
             if state.last_activity_at and at_time - state.last_activity_at > 3600:
