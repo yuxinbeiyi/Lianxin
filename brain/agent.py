@@ -418,6 +418,10 @@ class AgentCore:
             on_progress:       callable(text)，报告进度回复的回调。
             response_guard:    callable() -> bool，False 时丢弃已过期回复且不写入历史。
         """
+        # AgentCore 会在桌面端跨请求复用。中途插话的“停止”只应作用于
+        # 当前请求，不能把取消事件带到下一轮对话。
+        self._cancel_event.clear()
+
         # 用户明确拒绝长期记忆写入时，由代码层执行权限边界，而非仅依赖 Prompt。
         self._request_memory_writes_blocked = self._update_memory_write_policy(
             user_message
@@ -2266,6 +2270,7 @@ class AgentCore:
 
             if self._cancel_event.is_set():
                 print("  [循环终止] 收到取消信号", flush=True)
+                self._cancel_event.clear()
                 return "（任务已被取消）"
 
             if on_round_start:
@@ -2389,6 +2394,7 @@ class AgentCore:
                 if is_retryable and iteration < 3:
                     if self._cancel_event.is_set():
                         print(f"[API重试] 第{iteration}轮收到取消信号，终止重试", flush=True)
+                        self._cancel_event.clear()
                         return "（响应超时，任务已取消。请重新发送消息。）"
                     import time as _time
                     delay = 1.5 * (iteration + 1)
@@ -2656,6 +2662,7 @@ class AgentCore:
                         print(f"  [插话回复] {reply}", flush=True)
                         on_progress(reply)
                         if "[终止]" in reply:
+                            self._cancel_event.clear()
                             return "（任务已取消）"
                         self._cancel_event.clear() 
             else:

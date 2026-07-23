@@ -6,7 +6,7 @@ from PyQt5.QtCore import Qt, QPoint, QRectF, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap, QPainter, QPainterPath, QColor
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox,
-    QSpinBox, QFileDialog, QDialog, QDialogButtonBox, QSlider, QMessageBox,
+    QSpinBox, QDoubleSpinBox, QFileDialog, QDialog, QDialogButtonBox, QSlider, QMessageBox,
 )
 
 from config import get_chat_avatar_config, save_chat_avatar_config
@@ -21,6 +21,7 @@ class CircularAvatar(QLabel):
     double_clicked = pyqtSignal(str)
     clicked = pyqtSignal(str)
     long_pressed = pyqtSignal(str)
+    context_requested = pyqtSignal(str)
     """固定尺寸的抗锯齿圆形头像，图片失效时自动回退占位。"""
     def __init__(self, role="assistant", size=42, parent=None):
         super().__init__(parent)
@@ -40,7 +41,9 @@ class CircularAvatar(QLabel):
             self._path = _default_assistant_path()
         self._border = bool(cfg.get("border", True))
         self._shake_offsets = [0, -4, 5, -5, 4, -3, 2, 0]
+        self._headpat_offsets = [0, -2, -4, -3, -1, 0, 1, 0]
         self._shake_step = 0
+        self._animation_kind = "tap"
         if not hasattr(self, "_shake_timer"):
             self._shake_timer = QTimer(self)
             self._shake_timer.timeout.connect(self._advance_shake)
@@ -59,6 +62,13 @@ class CircularAvatar(QLabel):
             self.play_tap_animation()
             self.double_clicked.emit(self.role)
         super().mouseDoubleClickEvent(event)
+
+    def contextMenuEvent(self, event):
+        if event.reason() == event.Mouse:
+            self.context_requested.emit(self.role)
+            event.accept()
+            return
+        super().contextMenuEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -84,7 +94,15 @@ class CircularAvatar(QLabel):
         if not get_chat_avatar_config().get("animation_enabled", True):
             return
         self._shake_step = 0
+        self._animation_kind = "tap"
         self._shake_timer.start(34)
+
+    def play_headpat_animation(self):
+        if not get_chat_avatar_config().get("animation_enabled", True):
+            return
+        self._shake_step = 0
+        self._animation_kind = "headpat"
+        self._shake_timer.start(48)
 
     def _advance_shake(self):
         self._shake_step += 1
@@ -100,8 +118,12 @@ class CircularAvatar(QLabel):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        offset = self._shake_offsets[self._shake_step] if getattr(self, "_shake_timer", None) and self._shake_timer.isActive() else 0
-        painter.translate(offset, 0)
+        active = getattr(self, "_shake_timer", None) and self._shake_timer.isActive()
+        if active and self._animation_kind == "headpat":
+            painter.translate(0, self._headpat_offsets[self._shake_step])
+        else:
+            offset = self._shake_offsets[self._shake_step] if active else 0
+            painter.translate(offset, 0)
         rect = self.rect().adjusted(1, 1, -1, -1)
         path = QPainterPath(); path.addEllipse(QRectF(rect))
         painter.setClipPath(path)
@@ -176,6 +198,7 @@ class ChatAvatarSettingsTab(QWidget):
         self._counter_tap=QCheckBox("允许莲心反拍我的头像"); self._counter_tap.setChecked(self._draft.get("counter_tap", True)); layout.addWidget(self._counter_tap)
         self._animation_enabled=QCheckBox("启用头像震动动画"); self._animation_enabled.setChecked(self._draft.get("animation_enabled", True)); layout.addWidget(self._animation_enabled)
         self._response_in_chat=QCheckBox("将莲心的拍一拍回应显示为聊天消息"); self._response_in_chat.setChecked(self._draft.get("response_in_chat", True)); layout.addWidget(self._response_in_chat)
+        cooldown_row=QHBoxLayout(); cooldown_row.addWidget(QLabel("拍一拍冷却")); self._cooldown=QDoubleSpinBox(); self._cooldown.setRange(0.5,10.0); self._cooldown.setSingleStep(0.5); self._cooldown.setSuffix(" 秒"); self._cooldown.setValue(float(self._draft.get("tap_cooldown_seconds",1.5))); cooldown_row.addWidget(self._cooldown); cooldown_row.addStretch(); layout.addLayout(cooldown_row)
         settings=QHBoxLayout(); settings.addWidget(QLabel("头像大小")); self._size=QSpinBox(); self._size.setRange(40,100); self._size.setValue(int(self._draft.get("size",60))); settings.addWidget(self._size); settings.addWidget(QLabel("像素，头像与气泡间距")); self._gap=QSpinBox(); self._gap.setRange(4,28); self._gap.setValue(int(self._draft.get("gap",10))); settings.addWidget(self._gap); settings.addWidget(QLabel("像素")); settings.addStretch(); layout.addLayout(settings)
         self._border=QCheckBox("显示头像边框"); self._border.setChecked(self._draft.get("border",True)); layout.addWidget(self._border); layout.addStretch()
     def _choose(self, role):
@@ -188,6 +211,6 @@ class ChatAvatarSettingsTab(QWidget):
     def _reset(self, role):
         key="assistant_path" if role=="assistant" else "user_path"; self._draft[key]=""; self._previews[role].set_preview_path("")
     def load(self):
-        self._draft=get_chat_avatar_config(); self._enabled.setChecked(self._draft.get("enabled",True)); self._interaction_enabled.setChecked(self._draft.get("interactions_enabled", True)); self._dynamic_response.setChecked(self._draft.get("dynamic_response", True)); self._counter_tap.setChecked(self._draft.get("counter_tap", True)); self._animation_enabled.setChecked(self._draft.get("animation_enabled", True)); self._response_in_chat.setChecked(self._draft.get("response_in_chat", True)); self._size.setValue(int(self._draft.get("size",60))); self._gap.setValue(int(self._draft.get("gap",10))); self._border.setChecked(self._draft.get("border",True)); self._previews["assistant"].set_preview_path(self._draft.get("assistant_path", "")); self._previews["user"].set_preview_path(self._draft.get("user_path", ""))
+        self._draft=get_chat_avatar_config(); self._enabled.setChecked(self._draft.get("enabled",True)); self._interaction_enabled.setChecked(self._draft.get("interactions_enabled", True)); self._dynamic_response.setChecked(self._draft.get("dynamic_response", True)); self._counter_tap.setChecked(self._draft.get("counter_tap", True)); self._animation_enabled.setChecked(self._draft.get("animation_enabled", True)); self._response_in_chat.setChecked(self._draft.get("response_in_chat", True)); self._cooldown.setValue(float(self._draft.get("tap_cooldown_seconds",1.5))); self._size.setValue(int(self._draft.get("size",60))); self._gap.setValue(int(self._draft.get("gap",10))); self._border.setChecked(self._draft.get("border",True)); self._previews["assistant"].set_preview_path(self._draft.get("assistant_path", "")); self._previews["user"].set_preview_path(self._draft.get("user_path", ""))
     def save(self):
-        self._draft.update(enabled=self._enabled.isChecked(), interactions_enabled=self._interaction_enabled.isChecked(), dynamic_response=self._dynamic_response.isChecked(), counter_tap=self._counter_tap.isChecked(), animation_enabled=self._animation_enabled.isChecked(), response_in_chat=self._response_in_chat.isChecked(), size=self._size.value(),gap=self._gap.value(),border=self._border.isChecked()); save_chat_avatar_config(self._draft); self.changed.emit()
+        self._draft.update(enabled=self._enabled.isChecked(), interactions_enabled=self._interaction_enabled.isChecked(), dynamic_response=self._dynamic_response.isChecked(), counter_tap=self._counter_tap.isChecked(), animation_enabled=self._animation_enabled.isChecked(), response_in_chat=self._response_in_chat.isChecked(), tap_cooldown_seconds=self._cooldown.value(), size=self._size.value(),gap=self._gap.value(),border=self._border.isChecked()); save_chat_avatar_config(self._draft); self.changed.emit()

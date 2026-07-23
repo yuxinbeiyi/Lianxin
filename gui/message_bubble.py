@@ -23,6 +23,7 @@ class MessageBubble(QWidget):
     avatar_interaction_requested = pyqtSignal(str)
     avatar_clicked = pyqtSignal(str)
     avatar_long_pressed = pyqtSignal(str)
+    avatar_context_requested = pyqtSignal(str)
     quote_requested = pyqtSignal(str, str)  # (text, sender_name)
     speak_requested = pyqtSignal(str)       # 朗读请求
     delete_requested = pyqtSignal()         # 删除请求
@@ -47,6 +48,7 @@ class MessageBubble(QWidget):
         self._avatar.double_clicked.connect(self.avatar_interaction_requested.emit)
         self._avatar.clicked.connect(self.avatar_clicked.emit)
         self._avatar.long_pressed.connect(self.avatar_long_pressed.emit)
+        self._avatar.context_requested.connect(self.avatar_context_requested.emit)
 
         # 用容器包裹 label，容器控制最大宽度，label 在容器内自由伸展
         bubble = QWidget()
@@ -154,6 +156,7 @@ class ImageMessageBubble(QWidget):
     avatar_interaction_requested = pyqtSignal(str)
     avatar_clicked = pyqtSignal(str)
     avatar_long_pressed = pyqtSignal(str)
+    avatar_context_requested = pyqtSignal(str)
     """用于显示图片消息的气泡。
     支持 sender 参数：
         - "user": 右侧，紫蓝色背景，白色文字
@@ -262,6 +265,7 @@ class ImageMessageBubble(QWidget):
             self._avatar.double_clicked.connect(self.avatar_interaction_requested.emit)
             self._avatar.clicked.connect(self.avatar_clicked.emit)
             self._avatar.long_pressed.connect(self.avatar_long_pressed.emit)
+            self._avatar.context_requested.connect(self.avatar_context_requested.emit)
             outer.addWidget(self._avatar, 0, Qt.AlignTop)
         else:
             bubble.setStyleSheet("""
@@ -279,6 +283,7 @@ class ImageMessageBubble(QWidget):
             self._avatar.double_clicked.connect(self.avatar_interaction_requested.emit)
             self._avatar.clicked.connect(self.avatar_clicked.emit)
             self._avatar.long_pressed.connect(self.avatar_long_pressed.emit)
+            self._avatar.context_requested.connect(self.avatar_context_requested.emit)
             outer.addWidget(self._avatar, 0, Qt.AlignTop)
             outer.addWidget(bubble)
             outer.addStretch(1)

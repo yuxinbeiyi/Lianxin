@@ -101,6 +101,11 @@ class AccompanyDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
 
+        self._clear_avatar_btn = QPushButton("清空头像互动")
+        self._clear_avatar_btn.setFixedHeight(36)
+        self._clear_avatar_btn.clicked.connect(self._clear_avatar_events)
+        btn_layout.addWidget(self._clear_avatar_btn)
+
         self._close_btn = QPushButton("好耶！")
         self._close_btn.setFixedSize(100, 36)
         self._close_btn.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
@@ -183,8 +188,22 @@ class AccompanyDialog(QDialog):
         self._avatar_interaction_label.setText(
             f"头像互动：你拍了拍莲心 {avatar_stats.get('user_tap_count', 0)} 次，"
             f"莲心反拍了你 {avatar_stats.get('assistant_counter_tap_count', 0)} 次\n"
-            f"本次累计互动 {summary.get('total', 0)} 次，今日 {summary.get('today', 0)} 次，本周 {summary.get('week', 0)} 次"
+            f"本次累计互动 {summary.get('total', 0)} 次，今日 {summary.get('today', 0)} 次，本周 {summary.get('week', 0)} 次\n"
+            f"莲心主动拍你 {summary.get('assistant_taps', 0)} 次，摸头 {summary.get('assistant_headpats', 0)} 次；"
+            f"你摸头 {summary.get('user_headpats', 0)} 次，自己拍自己 {summary.get('self_taps', 0)} 次\n"
+            f"音效 {summary.get('sound_count', 0)} 次，LLM 动态回复 {summary.get('llm_success', 0)} 次，"
+            f"备用回复 {summary.get('fallback', 0)} 次；最长连续 {summary.get('streak_max', 0)} 次"
         )
+
+    def _clear_avatar_events(self):
+        from PyQt5.QtWidgets import QMessageBox
+        answer = QMessageBox.question(
+            self, "清空头像互动", "只清空头像互动统计和事件记录，不影响陪伴时长与初识日期，确定继续吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer == QMessageBox.Yes:
+            self._stats.clear_avatar_events()
+            self._update_content()
 
     def _on_close(self):
         self.dialog_closed.emit()

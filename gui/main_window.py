@@ -867,10 +867,12 @@ class MainWindow(QMainWindow):
         self._chat_widget.avatar_interaction_requested.connect(self._on_avatar_interaction)
         self._chat_widget.avatar_clicked.connect(self._on_avatar_clicked)
         self._chat_widget.avatar_long_pressed.connect(self._on_avatar_long_pressed)
+        self._chat_widget.avatar_context_requested.connect(self._on_avatar_context)
         from gui.avatar_interaction import AvatarInteractionController
         self._avatar_interaction = AvatarInteractionController(self._agent, self._accompany_stats, self)
         self._avatar_interaction.thinking_started.connect(self._chat_widget.show_avatar_thinking)
         self._avatar_interaction.response_ready.connect(self._on_avatar_interaction_response)
+        self._avatar_interaction.interaction_accepted.connect(self._on_avatar_interaction_accepted)
         self._avatar_interaction.interaction_blocked.connect(
             lambda text: self._chat_widget.show_avatar_interaction_notice(text, 1200)
         )
@@ -1121,6 +1123,11 @@ class MainWindow(QMainWindow):
 
         if text.strip():
             self._chat_widget.add_user_message(display_text)
+            avatar_action = self._detect_avatar_command(text)
+            if avatar_action and hasattr(self, "_avatar_interaction"):
+                self._avatar_interaction.trigger_outbound(avatar_action)
+                self._input_panel.clear_selection()
+                return
         # ── 自动化任务检测 ──────────────────────────────
             if text.strip() and self._detect_auto_task_intent(text):
                 # 剥离【自动化】标签后传给解析器
@@ -1145,7 +1152,10 @@ class MainWindow(QMainWindow):
                 worker.error.connect(lambda err, idx=i: self._on_staged_vision_error(idx, err))
                 worker.start()
         else:
-            self._agent_worker = AgentWorker(self._agent, text, self, forced_tool=selected_tool)
+            self._agent_worker = AgentWorker(
+                self._agent, self._avatar_contextual_message(text), self,
+                forced_tool=selected_tool
+            )
             self._agent_worker.response_ready.connect(self._on_ai_response)
             self._agent_worker.progress_update.connect(self._on_progress_update)
             self._agent_worker.tool_round_start.connect(self._chat_widget.start_tool_round)
@@ -1159,6 +1169,26 @@ class MainWindow(QMainWindow):
 
 
         self._input_panel.clear_selection()
+
+    def _detect_avatar_command(self, text: str):
+        """识别用户明确要求莲心拍击或摸头的短命令。"""
+        import re
+        value = str(text or "").strip().lower()
+        if not value:
+            return None
+        if re.search(r"(摸摸我|摸我|摸一摸我|摸我的头|摸头)", value):
+            return "headpat"
+        if re.search(r"(拍我|拍一拍我|拍我的头像|反过来拍|你也拍)", value):
+            return "tap"
+        return None
+
+    def _avatar_contextual_message(self, text: str):
+        context = ""
+        try:
+            context = self._avatar_interaction.recent_context()
+        except Exception:
+            pass
+        return f"{context}\n\n{text}" if context else text
 
     def _on_staged_vision_done(self, idx: int, description: str):
         self._staged_image_results[idx] = description
@@ -1193,7 +1223,10 @@ class MainWindow(QMainWindow):
         if not self._staged_text.strip():
             full_context += "\n\n请根据你看到的内容自然地回应，描述你看到了什么。"
 
-        self._agent_worker = AgentWorker(self._agent, full_context, self, forced_tool=self._staged_selected_tool)
+        self._agent_worker = AgentWorker(
+            self._agent, self._avatar_contextual_message(full_context), self,
+            forced_tool=self._staged_selected_tool
+        )
         self._agent_worker.response_ready.connect(self._on_ai_response)
         self._agent_worker.progress_update.connect(self._on_progress_update)
         self._agent_worker.tool_round_start.connect(self._chat_widget.start_tool_round)
@@ -1764,33 +1797,76 @@ class MainWindow(QMainWindow):
     def _on_avatar_interaction(self, role: str):
         """头像双击入口；互动独立于正常 AgentWorker。"""
         if hasattr(self, "_avatar_interaction"):
-            notice = "你拍了拍莲心的头" if role == "assistant" else "你拍了拍自己的头像"
-            self._chat_widget.show_avatar_interaction_notice(notice)
             self._avatar_interaction.trigger(role)
 
-    def _on_avatar_clicked(self, role: str):
+    def _on_avatar_interaction_accepted(self, action: str, target: str, source: str):
+        """有效互动才写入聊天事件流；冷却/忙碌请求不会留下假事件。"""
+        try:
+            self._char_widget.start_thinking()
+        except Exception:
+            pass
+        if source == "assistant" and self.isMinimized():
+            self.flash_taskbar(flash_count=2)
+        if action == "tap":
+            play_sound("拍一拍.mp3")
+            if source == "assistant":
+                text = "莲心拍了拍你的头"
+            elif target == "assistant":
+                text = "你拍了拍莲心的头"
+            else:
+                text = "你拍了拍自己的头像"
+        else:
+            text = "莲心轻轻摸了摸你的头" if source == "assistant" else "你摸了摸莲心的头"
+        self._chat_widget.add_system_tip(text)
+        from gui.avatar_widgets import CircularAvatar
+        target_role = "user" if target == "user" else "assistant"
+        for avatar in self._chat_widget.findChildren(CircularAvatar):
+            if avatar.role == target_role:
+                if action == "headpat":
+                    avatar.play_headpat_animation()
+                elif action == "tap":
+                    avatar.play_tap_animation()
+                break
+
+    def _on_avatar_context(self, role: str):
         if role != "assistant":
             return
-        try:
-            from brain.emotional import get_manager
-            state = get_manager().state
-            mood = "开心" if state.valence > 0.25 else ("有点低落" if state.valence < -0.25 else "平静")
-            self._chat_widget.show_avatar_interaction_notice(f"莲心现在心情{mood}，正在陪着你", 1800)
-        except Exception:
-            self._chat_widget.show_avatar_interaction_notice("莲心正在这里陪着你", 1600)
+        menu = QMenu(self)
+        mood_action = menu.addAction("查看当前心情")
+        tap_action = menu.addAction("拍一拍")
+        pat_action = menu.addAction("摸摸头")
+        menu.addSeparator()
+        stats_action = menu.addAction("查看陪伴统计")
+        chosen = menu.exec_(self.cursor().pos())
+        if chosen == mood_action:
+            try:
+                from brain.emotional import get_manager
+                state = get_manager().state
+                mood = "开心" if state.valence > 0.25 else ("有点低落" if state.valence < -0.25 else "平静")
+                self._chat_widget.add_system_tip(f"莲心现在心情{mood}，正在陪着你")
+            except Exception:
+                self._chat_widget.add_system_tip("莲心正在这里陪着你")
+        elif chosen == tap_action:
+            self._avatar_interaction.trigger("assistant")
+        elif chosen == pat_action:
+            self._avatar_interaction.trigger_headpat("assistant")
+        elif chosen == stats_action:
+            self._on_accompany_clicked()
+
+    def _on_avatar_clicked(self, role: str):
+        # 左键单击按设计不触发任何互动；心情查看请使用右键菜单。
+        return
 
     def _on_avatar_long_pressed(self, role: str):
         if role != "assistant":
             return
-        self._accompany_stats.record_avatar_interaction("user_long_press", "摸摸头")
-        from gui.avatar_widgets import CircularAvatar
-        for avatar in self._chat_widget.findChildren(CircularAvatar):
-            if avatar.role == "assistant":
-                avatar.play_tap_animation()
-                break
-        self._chat_widget.show_avatar_interaction_notice("你摸了摸莲心的头", 1600)
+        self._avatar_interaction.trigger_headpat("assistant")
 
     def _on_avatar_interaction_response(self, text: str, counter_tap: bool):
+        try:
+            self._char_widget.stop_thinking()
+        except Exception:
+            pass
         self._accompany_stats.reload()
         if self._accompany_dialog is not None and self._accompany_dialog.isVisible():
             self._accompany_dialog._update_content()
@@ -1799,13 +1875,16 @@ class MainWindow(QMainWindow):
             self._chat_widget.add_ai_message(text)
         else:
             self._chat_widget.show_avatar_interaction_notice(text, 3200)
+        # 头像互动回复也是莲心的真实发言，进入统一语音链路。
+        self._speak(text)
         if counter_tap:
             from gui.avatar_widgets import CircularAvatar
             for avatar in self._chat_widget.findChildren(CircularAvatar):
                 if avatar.role == "user":
                     avatar.play_tap_animation()
                     break
-            self._chat_widget.show_avatar_interaction_notice("莲心反手拍了拍你的头")
+            play_sound("拍一拍.mp3")
+            self._chat_widget.add_system_tip("莲心反手拍了拍你的头")
 
     def _on_accompany_dialog_closed(self):
         duration_str = self._accompany_stats.get_current_formatted_duration()
@@ -2424,6 +2503,16 @@ class MainWindow(QMainWindow):
     def _on_proactive_response(self, text: str):
         """主动聊天回复"""
         self._proactive_controller.handle_proactive_response(text)
+        # 主动聊天完成后，保留少量自然的头像陪伴互动概率。
+        if text and getattr(self._proactive_scheduler, "desktop_enabled", False):
+            if random.random() < 0.20 and hasattr(self, "_avatar_interaction"):
+                action = "headpat" if random.random() < 0.40 else "tap"
+                QTimer.singleShot(700, lambda a=action: self._trigger_proactive_avatar(a))
+
+    def _trigger_proactive_avatar(self, action="tap"):
+        if not hasattr(self, "_avatar_interaction"):
+            return
+        self._avatar_interaction.trigger_outbound(action)
 
     def _on_proactive_error(self, err: str):
         self._proactive_controller.handle_proactive_error(err)

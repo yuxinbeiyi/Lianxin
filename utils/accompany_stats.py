@@ -111,6 +111,62 @@ class AccompanyStats:
         del events[:-100]
         self._save()
 
+    def clear_avatar_events(self):
+        """只清空头像互动明细，保留陪伴时长、会话次数和初识日期。"""
+        data = self._avatar_interactions
+        for key in (
+            "interaction_count", "user_tap_count", "assistant_counter_tap_count",
+            "assistant_tap_user_count", "user_self_tap_count", "user_headpat_count",
+            "assistant_headpat_user_count", "sound_count", "llm_success_count",
+            "fallback_count", "streak_max",
+        ):
+            data.pop(key, None)
+        data["events"] = []
+        data.pop("last_interaction_at", None)
+        self._save()
+
+    def record_avatar_detail(self, interaction_type, *, actor="user", target="assistant",
+                             source="user", reaction="neutral", sound=False,
+                             llm=False, fallback=False, streak=0, context=None):
+        """记录可回溯的头像互动明细；不写入长期记忆。"""
+        self.record_avatar_interaction(interaction_type, reaction)
+        data = self._avatar_interactions
+        counter_map = {
+            "assistant_tap_user": "assistant_tap_user_count",
+            "user_self_tap": "user_self_tap_count",
+            "user_headpat": "user_headpat_count",
+            "assistant_headpat_user": "assistant_headpat_user_count",
+        }
+        key = counter_map.get(interaction_type)
+        if key:
+            data[key] = int(data.get(key, 0)) + 1
+        if sound:
+            data["sound_count"] = int(data.get("sound_count", 0)) + 1
+        if llm:
+            data["llm_success_count"] = int(data.get("llm_success_count", 0)) + 1
+        if fallback:
+            data["fallback_count"] = int(data.get("fallback_count", 0)) + 1
+        data["streak_max"] = max(int(data.get("streak_max", 0)), int(streak or 0))
+        if data.get("events"):
+            event = data["events"][-1]
+            event.update({
+                "actor": actor, "target": target, "source": source,
+                "sound": bool(sound), "llm": bool(llm), "fallback": bool(fallback),
+                "streak": int(streak or 0), "context": context or {},
+            })
+            self._save()
+
+    def record_avatar_outcome(self, *, llm=False, fallback=False):
+        """补写最近一次互动的生成结果。"""
+        data = self._avatar_interactions
+        if llm:
+            data["llm_success_count"] = int(data.get("llm_success_count", 0)) + 1
+        if fallback:
+            data["fallback_count"] = int(data.get("fallback_count", 0)) + 1
+        if data.get("events"):
+            data["events"][-1].update({"llm": bool(llm), "fallback": bool(fallback)})
+        self._save()
+
     def get_avatar_interactions(self) -> dict:
         return dict(self._avatar_interactions)
 
@@ -133,6 +189,14 @@ class AccompanyStats:
             "total": int(self._avatar_interactions.get("interaction_count", 0)),
             "user_taps": int(self._avatar_interactions.get("user_tap_count", 0)),
             "counter": int(self._avatar_interactions.get("assistant_counter_tap_count", 0)),
+            "assistant_taps": int(self._avatar_interactions.get("assistant_tap_user_count", 0)),
+            "self_taps": int(self._avatar_interactions.get("user_self_tap_count", 0)),
+            "user_headpats": int(self._avatar_interactions.get("user_headpat_count", 0)),
+            "assistant_headpats": int(self._avatar_interactions.get("assistant_headpat_user_count", 0)),
+            "sound_count": int(self._avatar_interactions.get("sound_count", 0)),
+            "llm_success": int(self._avatar_interactions.get("llm_success_count", 0)),
+            "fallback": int(self._avatar_interactions.get("fallback_count", 0)),
+            "streak_max": int(self._avatar_interactions.get("streak_max", 0)),
             "today": today_count,
             "week": week_count,
             "last_interaction_at": self._avatar_interactions.get("last_interaction_at", ""),

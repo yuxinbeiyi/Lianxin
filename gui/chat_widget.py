@@ -107,6 +107,7 @@ class ChatWidget(QScrollArea):
     avatar_interaction_requested = pyqtSignal(str)
     avatar_clicked = pyqtSignal(str)
     avatar_long_pressed = pyqtSignal(str)
+    avatar_context_requested = pyqtSignal(str)
     def __init__(self, parent=None):
         super().__init__(parent)
         self._last_message_time: datetime | None = None
@@ -172,6 +173,7 @@ class ChatWidget(QScrollArea):
         bubble.avatar_interaction_requested.connect(self.avatar_interaction_requested.emit)
         bubble.avatar_clicked.connect(self.avatar_clicked.emit)
         bubble.avatar_long_pressed.connect(self.avatar_long_pressed.emit)
+        bubble.avatar_context_requested.connect(self.avatar_context_requested.emit)
         bubble.delete_requested.connect(lambda b=bubble: self._delete_message_bubble(b))
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._container.updateGeometry()
@@ -188,6 +190,7 @@ class ChatWidget(QScrollArea):
         bubble.avatar_interaction_requested.connect(self.avatar_interaction_requested.emit)
         bubble.avatar_clicked.connect(self.avatar_clicked.emit)
         bubble.avatar_long_pressed.connect(self.avatar_long_pressed.emit)
+        bubble.avatar_context_requested.connect(self.avatar_context_requested.emit)
         bubble.delete_requested.connect(lambda b=bubble: self._delete_message_bubble(b))
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._container.updateGeometry()
@@ -209,6 +212,7 @@ class ChatWidget(QScrollArea):
         bubble.avatar_interaction_requested.connect(self.avatar_interaction_requested.emit)
         bubble.avatar_clicked.connect(self.avatar_clicked.emit)
         bubble.avatar_long_pressed.connect(self.avatar_long_pressed.emit)
+        bubble.avatar_context_requested.connect(self.avatar_context_requested.emit)
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._container.updateGeometry()
         self._scroll_to_bottom()
@@ -344,8 +348,10 @@ class ChatWidget(QScrollArea):
         return label
 
     def show_avatar_thinking(self, text: str):
-        self._thinking_label.setText("💭  " + text)
+        self._thinking_label.setText("💭  莲心思考中…  " + (text or "正在组织回应"))
+        self._thinking_label.setFont(QFont("Microsoft YaHei UI", 10))
         self._thinking_label.show()
+        self._thinking_started_at = time.time()
         self._scroll_to_bottom()
 
     def add_system_tip(self, text: str):

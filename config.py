@@ -818,6 +818,7 @@ _CHAT_AVATAR_DEFAULTS = {
     "counter_tap": True,
     "animation_enabled": True,
     "response_in_chat": True,
+    "tap_cooldown_seconds": 1.5,
 }
 
 

@@ -238,7 +238,8 @@ class VoiceSpeaker:
         tts_cfg = get_tts_config()
         try:
             from brain.tts_engine import TtsEngine
-            _temp = TtsEngine()
+            # Edge-TTS 模式不要初始化旧的 GPT-SoVITS/ffmpeg 引擎。
+            _temp = None if tts_cfg.get("engine") == "edge_tts" else TtsEngine()
             engine = _temp if (tts_cfg.get("engine") != "edge_tts" and _temp.gpt_sovits_available) else None
 
         except Exception as e:
@@ -380,7 +381,7 @@ class VoiceSpeaker:
         # transient service throttling, so retry with a fresh connection before
         # surfacing the failure to the caller.
         last_error = None
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 self._remove_temp_file(path)
                 communicate = edge_tts.Communicate(text, self._voice)
@@ -398,6 +399,10 @@ class VoiceSpeaker:
 
     def _play(self, path: str):
         try:
+            if not pygame.get_init():
+                pygame.init()
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
             # 加载为 Sound 对象，避免使用 music 通道
             sound = pygame.mixer.Sound(path)
             from utils.settings import get_settings
