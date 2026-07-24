@@ -3093,7 +3093,9 @@ class MainWindow(QMainWindow):
         # 复制到托管目录，确保聊天气泡不会因原图被删而失效
         managed = self._save_managed_image(image_path)
         display_path = managed or image_path
-        self._chat_widget.add_user_image(display_path, ocr_text="🔍 分析中...")
+        self._vision_pending_bubble = self._chat_widget.add_user_image(
+            display_path, ocr_text="🔍 分析中...", temporary=True
+        )
         self._vision_image_worker = _ImageVisionWorker(display_path, self)
         self._vision_image_worker.finished.connect(lambda desc: self._on_vision_finished(display_path, desc))
         self._vision_image_worker.error.connect(self._on_vision_error)
@@ -3123,12 +3125,10 @@ class MainWindow(QMainWindow):
     def _on_vision_finished(self, image_path: str, description: str):
         """视觉分析完成：更新图片气泡 + 将描述注入对话"""
         self._chat_widget._hide_thinking()
-        # 移除旧的"分析中..."气泡
-        last_index = self._chat_widget._layout.count() - 2
-        if last_index >= 0:
-            item = self._chat_widget._layout.takeAt(last_index)
-            if item.widget():
-                item.widget().deleteLater()
+        # 只移除本次视觉分析创建的临时气泡，不依赖布局索引。
+        pending = getattr(self, "_vision_pending_bubble", None)
+        self._chat_widget.remove_widget(pending)
+        self._vision_pending_bubble = None
         summary = description[:100] + "..." if len(description) > 100 else description
         self._chat_widget.add_user_image(image_path, ocr_text=summary, full_text=description)
 
@@ -3137,6 +3137,9 @@ class MainWindow(QMainWindow):
 
     def _on_vision_error(self, err: str):
         """视觉分析失败处理"""
+        pending = getattr(self, "_vision_pending_bubble", None)
+        self._chat_widget.remove_widget(pending)
+        self._vision_pending_bubble = None
         self._chat_widget.add_system_tip(f"图片分析失败：{err}")
         self._send_user_text_to_agent(f"[图片分析失败] {err}，请告知用户。", skip_bubble=True)
 

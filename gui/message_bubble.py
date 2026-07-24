@@ -54,7 +54,8 @@ class MessageBubble(QWidget):
         bubble = QWidget()
         bubble.setAttribute(Qt.WA_StyledBackground, True)
         bubble.setMaximumWidth(520)
-        bubble.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Preferred)
+        # 气泡只在自身内容需要时扩展，避免窗口宽度变化时整列气泡反复重排。
+        bubble.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
 
         inner = QVBoxLayout(bubble)
         inner.setContentsMargins(0, 0, 0, 0)
@@ -182,7 +183,7 @@ class ImageMessageBubble(QWidget):
         bubble = QWidget()
         bubble.setAttribute(Qt.WA_StyledBackground, True)
         bubble.setMaximumWidth(320)
-        bubble.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Preferred)
+        bubble.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
 
         inner = QVBoxLayout(bubble)
         inner.setContentsMargins(10, 8, 10, 8)
