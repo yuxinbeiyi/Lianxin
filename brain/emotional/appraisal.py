@@ -53,6 +53,7 @@ def appraise_deterministic(text: str, context: AppraisalContext | None = None) -
 
     delta = AffectDelta(
         connection=-0.04 if len(message) <= 3 else -0.09,
+        pride=-0.035 if len(message) > 3 else -0.015,
         event_type="ordinary_reply",
         confidence=0.62,
         summary="对方回复了",
@@ -63,6 +64,7 @@ def appraise_deterministic(text: str, context: AppraisalContext | None = None) -
         severity = 0.34 if _HOSTILE.search(message) else 0.24
         return AffectDelta(
             connection=0.05,
+            pride=0.12,
             guardedness=0.18,
             valence=-0.22,
             arousal=0.18,
@@ -79,6 +81,7 @@ def appraise_deterministic(text: str, context: AppraisalContext | None = None) -
     if _APOLOGY.search(message):
         return AffectDelta(
             connection=-0.18,
+            pride=-0.10,
             guardedness=-0.10,
             valence=0.07,
             arousal=-0.08,
@@ -101,6 +104,7 @@ def appraise_deterministic(text: str, context: AppraisalContext | None = None) -
     if warm or compliment:
         delta.connection = -0.18 if warm else -0.14
         delta.guardedness = -0.035 if warm else 0.025
+        delta.pride = -0.08 if warm else -0.035
         delta.valence = 0.08 + (0.04 if compliment else 0.0)
         delta.arousal = -0.025 if warm else 0.045
         delta.trust = 0.006
@@ -113,6 +117,7 @@ def appraise_deterministic(text: str, context: AppraisalContext | None = None) -
     elif personal and not is_technical:
         delta.connection = -0.15
         delta.guardedness = -0.035
+        delta.pride = -0.06
         delta.valence = 0.025
         delta.arousal = 0.02 if distressed else -0.01
         delta.trust = 0.008
@@ -124,6 +129,7 @@ def appraise_deterministic(text: str, context: AppraisalContext | None = None) -
     elif playful and not is_technical:
         delta.connection = -0.12
         delta.guardedness = -0.025
+        delta.pride = -0.05
         delta.valence = 0.055
         delta.arousal = 0.035
         delta.intimacy = 0.008
@@ -167,7 +173,7 @@ def _semantic_prompt(text: str, context: AppraisalContext) -> list[dict[str, str
 当前用户消息：{text[:1200]}
 
 返回JSON：
-{{"connection":-0.60到0.30,"guardedness":-0.30到0.30,
+{{"connection":-0.60到0.30,"pride":-0.30到0.30,"guardedness":-0.30到0.30,
 "valence":-0.35到0.35,"arousal":-0.35到0.35,"immersion":-0.50到0.50,
 "trust":-0.08到0.05,"intimacy":-0.08到0.08,"rupture":-0.40到0.50,
 "repair":-0.20到0.40,"event_type":"短标签","confidence":0到1,
@@ -211,7 +217,7 @@ def blend_appraisals(rule: AffectDelta, semantic: AffectDelta) -> AffectDelta:
     weight = min(0.72, max(0.0, semantic.confidence) * 0.72)
     values = {}
     for name in (
-        "connection", "guardedness", "valence", "arousal", "immersion",
+        "connection", "pride", "guardedness", "valence", "arousal", "immersion",
         "trust", "intimacy", "rupture", "repair",
     ):
         values[name] = getattr(rule, name) * (1.0 - weight) + getattr(semantic, name) * weight
@@ -222,4 +228,3 @@ def blend_appraisals(rule: AffectDelta, semantic: AffectDelta) -> AffectDelta:
         summary=semantic.summary if semantic.confidence >= 0.58 and semantic.summary else rule.summary,
     )
     return AffectDelta(**values).bounded()
-

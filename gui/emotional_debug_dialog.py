@@ -23,7 +23,7 @@ class EmotionalDebugDialog(QDialog):
     """涟漪情感系统调试面板 v3。"""
 
     NEED_LABELS = {
-        "connection": "连接需求", "guardedness": "防御感",
+        "connection": "连接需求", "pride": "骄傲", "guardedness": "防御感",
         "valence": "愉悦度", "arousal": "唤醒度", "immersion": "沉浸度",
     }
 
@@ -388,13 +388,13 @@ class EmotionalDebugDialog(QDialog):
 
     @staticmethod
     def _axis_to_slider(key: str, value: float) -> int:
-        if key in ("valence", "arousal", "guardedness"):
+        if key in ("pride", "valence", "arousal"):
             return max(0, min(100, round((value + 1.0) * 50.0)))
         return max(0, min(100, round(value * 100.0)))
 
     @staticmethod
     def _slider_to_axis(key: str, value: int) -> float:
-        if key in ("valence", "arousal", "guardedness"):
+        if key in ("pride", "valence", "arousal"):
             return max(-1.0, min(1.0, value / 50.0 - 1.0))
         return max(0.0, min(1.0, value / 100.0))
 

@@ -47,6 +47,14 @@ def _connection_guidance(state: EmotionalStateV3, mode: str, user_name: str) -> 
     return "连接需求平稳，正常回应即可。"
 
 
+def _pride_guidance(value: float) -> str:
+    if value >= 0.42:
+        return "骄傲感偏高：可以保留一点嘴硬和克制，但不要拒绝合理帮助或故意冷落对方。"
+    if value <= -0.20:
+        return "骄傲感偏低：更愿意放松、让步和坦率表达，不必刻意维持距离。"
+    return "骄傲感接近中线，按当前人格自然表达。"
+
+
 def _profile_override(state: EmotionalStateV3, profile: dict | None) -> str:
     if not isinstance(profile, dict):
         return ""
@@ -76,6 +84,7 @@ def render_prompt(
     lines = [
         "【涟漪情感状态 v3】",
         _profile_override(state, profile) or _CLUSTER_GUIDANCE.get(state.mood_cluster, _CLUSTER_GUIDANCE["neutral"]),
+        _pride_guidance(state.pride),
         _guardedness_guidance(state.guardedness),
         _connection_guidance(state, mode, user_name),
     ]

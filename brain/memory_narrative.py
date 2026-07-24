@@ -74,6 +74,7 @@ def _ensure_tables():
         confidence REAL NOT NULL DEFAULT 0.5,
         emotional_valence REAL NOT NULL DEFAULT 0,
         emotional_arousal REAL NOT NULL DEFAULT 0,
+        emotional_pride REAL NOT NULL DEFAULT 0,
         emotional_guardedness REAL NOT NULL DEFAULT 0,
         emotional_connection REAL NOT NULL DEFAULT 0,
         emotional_immersion REAL NOT NULL DEFAULT 0,
@@ -115,6 +116,7 @@ def _ensure_tables():
         "ALTER TABLE memory_narrative_runs ADD COLUMN episodes_updated INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE memory_sagas ADD COLUMN emotional_valence REAL NOT NULL DEFAULT 0",
         "ALTER TABLE memory_sagas ADD COLUMN emotional_arousal REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE memory_sagas ADD COLUMN emotional_pride REAL NOT NULL DEFAULT 0",
         "ALTER TABLE memory_sagas ADD COLUMN emotional_guardedness REAL NOT NULL DEFAULT 0",
         "ALTER TABLE memory_sagas ADD COLUMN emotional_connection REAL NOT NULL DEFAULT 0",
         "ALTER TABLE memory_sagas ADD COLUMN emotional_immersion REAL NOT NULL DEFAULT 0",
@@ -355,6 +357,7 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
             emotional_values = {
                 "emotional_valence": emotion_value("valence"),
                 "emotional_arousal": emotion_value("arousal"),
+                "emotional_pride": emotion_value("pride"),
                 "emotional_guardedness": emotion_value("guardedness"),
                 "emotional_connection": emotion_value("connection"),
                 "emotional_immersion": max(-1.0, min(1.0, float(emotional.get("immersion", 0.0) or 0.0))),
@@ -364,10 +367,10 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
             if existing_saga:
                 conn.execute(
                     """UPDATE memory_sagas SET title=?,summary=?,episode_ids=?,confidence=MAX(confidence,?),
-                       emotional_valence=?,emotional_arousal=?,emotional_guardedness=?,emotional_connection=?,emotional_immersion=?,
+                       emotional_valence=?,emotional_arousal=?,emotional_pride=?,emotional_guardedness=?,emotional_connection=?,emotional_immersion=?,
                        emotional_weight=?,updated_at=? WHERE id=?""",
                     (title, summary, json.dumps(episode_ids), saga_confidence,
-                     emotional_values["emotional_valence"], emotional_values["emotional_arousal"],
+                     emotional_values["emotional_valence"], emotional_values["emotional_arousal"], emotional_values["emotional_pride"],
                      emotional_values["emotional_guardedness"], emotional_values["emotional_connection"], emotional_values["emotional_immersion"],
                      emotional_values["emotional_weight"], timestamp, int(existing_saga["id"])),
                 )
@@ -376,10 +379,10 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
                 cur = conn.execute(
                     """INSERT INTO memory_sagas
                        (title,summary,episode_ids,confidence,emotional_valence,emotional_arousal,
-                        emotional_guardedness,emotional_connection,emotional_immersion,emotional_weight,created_at,updated_at,fingerprint)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        emotional_pride,emotional_guardedness,emotional_connection,emotional_immersion,emotional_weight,created_at,updated_at,fingerprint)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (title, summary, json.dumps(episode_ids), saga_confidence,
-                     emotional_values["emotional_valence"], emotional_values["emotional_arousal"],
+                     emotional_values["emotional_valence"], emotional_values["emotional_arousal"], emotional_values["emotional_pride"],
                      emotional_values["emotional_guardedness"], emotional_values["emotional_connection"], emotional_values["emotional_immersion"],
                      emotional_values["emotional_weight"], timestamp, timestamp, fingerprint),
                 )

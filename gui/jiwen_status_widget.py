@@ -33,8 +33,8 @@ class _AxisBar(QWidget):
         layout.addWidget(self._value)
 
     def set_value(self, value: float):
-        self.value = max(-1.0, min(1.0, float(value))) if self.key in {"valence", "arousal", "guardedness"} else max(0.0, min(1.0, float(value)))
-        self._value.setText(f"{self.value:+.2f}" if self.key in {"valence", "arousal", "guardedness"} else f"{self.value:.2f}")
+        self.value = max(-1.0, min(1.0, float(value))) if self.key in {"pride", "valence", "arousal"} else max(0.0, min(1.0, float(value)))
+        self._value.setText(f"{self.value:+.2f}" if self.key in {"pride", "valence", "arousal"} else f"{self.value:.2f}")
         self._canvas.update()
 
     def _paint_bar(self, event):
@@ -44,7 +44,7 @@ class _AxisBar(QWidget):
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(34, 43, 65, 180))
         painter.drawRoundedRect(rect, 3, 3)
-        signed = self.key in {"valence", "arousal", "guardedness"}
+        signed = self.key in {"pride", "valence", "arousal"}
         if signed:
             mid = rect.left() + rect.width() / 2
             width = abs(self.value) * rect.width() / 2
@@ -80,11 +80,11 @@ class JiwenStatusWidget(QWidget):
         header.addWidget(self._mood)
         root.addLayout(header)
         self._bars = {}
-        for label, key, color in (("连接需求", "connection", "#F3C878"), ("骄傲/防御", "guardedness", "#A992FF"), ("愉悦度", "valence", "#72D7E8"), ("唤醒度", "arousal", "#F49BBE"), ("沉浸度", "immersion", "#86D6A6")):
+        for label, key, color in (("连接需求", "connection", "#F3C878"), ("骄傲", "pride", "#A992FF"), ("情绪基调", "valence", "#72D7E8"), ("唤醒度", "arousal", "#F49BBE"), ("沉浸度", "immersion", "#86D6A6")):
             self._bars[key] = _AxisBar(label, key, color, self)
-            self._bars[key].setToolTip({"connection": "越高表示越想联系用户", "guardedness": "越高表示越戒备，回复会更谨慎", "valence": "正值偏愉快，负值偏低落", "arousal": "正值更兴奋/焦躁，负值更平静", "immersion": "当前活动或任务的投入程度"}[key])
+            self._bars[key].setToolTip({"connection": "越高表示越想联系用户", "pride": "中线为 0；正值更嘴硬，负值更放松", "valence": "正值偏愉快，负值偏低落", "arousal": "正值更兴奋/焦躁，负值更平静", "immersion": "当前活动或任务的投入程度"}[key])
             root.addWidget(self._bars[key])
-        explain = QLabel("连接=想联系 · 防御=戒备 · 愉悦=好坏 · 唤醒=兴奋度 · 沉浸=投入度")
+        explain = QLabel("连接=想联系 · 骄傲中线为0 · 情绪基调=好坏 · 唤醒=兴奋度 · 沉浸=投入度")
         explain.setWordWrap(True)
         explain.setStyleSheet("color:#74809D; background:transparent; font-size:8pt;")
         root.addWidget(explain)

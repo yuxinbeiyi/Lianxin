@@ -63,7 +63,7 @@ class V3ModelAndDynamicsTests(unittest.TestCase):
             cursor = min(now, cursor + 5 * 60)
             dynamics.advance(repeated, now=cursor)
 
-        for axis in ("connection", "valence", "arousal", "guardedness", "immersion"):
+        for axis in ("connection", "pride", "valence", "arousal", "guardedness", "immersion"):
             self.assertAlmostEqual(getattr(one_pass, axis), getattr(repeated, axis), places=8)
 
     def test_known_sleep_context_grows_connection_more_slowly(self):
@@ -94,6 +94,19 @@ class V3AppraisalAndToneTests(unittest.TestCase):
         self.assertGreater(result.rupture, 0.2)
         self.assertGreaterEqual(result.significance, 0.82)
         self.assertLess(result.valence, 0)
+        self.assertGreater(result.pride, 0)
+
+    def test_normal_reply_relaxes_signed_pride(self):
+        result = appraise_deterministic("我回来了，继续刚才的话题")
+        self.assertLess(result.pride, 0)
+        self.assertLess(result.connection, 0)
+
+    def test_pride_returns_to_zero_without_defensive_rupture(self):
+        now = time.time()
+        state = EmotionalStateV3(pride=0.7, last_update=now - 3600, last_interaction=now - 3600)
+        EmotionalDynamics().advance(state, now=now)
+        self.assertLess(state.pride, 0.7)
+        self.assertGreaterEqual(state.pride, 0.0)
 
     def test_apology_moves_repair_without_instantly_erasing_rupture(self):
         state = EmotionalStateV3(rupture=0.55, repair=0.0)
@@ -287,13 +300,14 @@ class V3ManagerTests(unittest.TestCase):
             second = manager._get_saga_bias()
         self.assertEqual(first, second)
         self.assertEqual(1, listed.call_count)
-        for key in ("valence", "arousal", "guardedness", "connection", "immersion"):
+        for key in ("pride", "valence", "arousal", "guardedness", "connection", "immersion"):
             self.assertLessEqual(abs(first[key]), 0.08)
 
     def test_console_observation_contract_keeps_legacy_axes(self):
         manager = self.make_manager()
         info = manager.get_debug_info()
         self.assertIsInstance(info["axes"]["valence"], float)
+        self.assertIsInstance(info["axes"]["pride"], float)
         self.assertIn("axis_details", info)
         self.assertIn("thresholds", info["axis_details"]["connection"])
         self.assertIn("motive", info)
@@ -311,6 +325,14 @@ class V3ManagerTests(unittest.TestCase):
         self.assertFalse(motive["enabled"])
         self.assertFalse(motive["should_contact"])
         self.assertAlmostEqual(0.70, manager.get_config()["dynamics"]["contact_threshold"])
+
+    def test_tool_activity_has_start_and_finish_lifecycle(self):
+        manager = self.make_manager()
+        manager.start_activity("tool", "正在查询天气", immersion=0.45)
+        active = manager.get_debug_info()["axes"]["immersion"]
+        self.assertGreaterEqual(active, 0.45)
+        manager.finish_activity("tool", "天气查询已完成")
+        self.assertEqual("天气查询已完成", manager.state.last_activity_label)
 
     def test_significant_memory_uses_existing_events_category_and_provenance(self):
         manager = self.make_manager()

@@ -354,6 +354,7 @@ class EmotionStore:
             subject_id=subject_id,
             valence=clamp(excitement * 0.55 - anger * 0.55 - hurt * 0.45, -1, 1),
             arousal=clamp(excitement * 0.45 + anger * 0.65 + frustration * 0.45 - hurt * 0.15, -1, 1),
+            pride=clamp(anger * 0.35 + loneliness * 0.12 - excitement * 0.18, -1, 1),
             guardedness=clamp((1.0 - autonomy) * 0.25 + anger * 0.30, -1, 1),
             connection=clamp(0.08 + loneliness * 0.62 + (1.0 - needed) * 0.18, 0, 1),
             trust=deep,

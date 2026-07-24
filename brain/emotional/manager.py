@@ -138,8 +138,8 @@ class EmotionManager:
             from brain.memory_narrative import list_sagas
             sagas = list_sagas(80)
         except Exception:
-            return {"connection": 0.0, "valence": 0.0, "arousal": 0.0, "guardedness": 0.0, "immersion": 0.0, "saga_count": 0, "weight_total": 0.0}
-        totals = {key: 0.0 for key in ("connection", "valence", "arousal", "guardedness", "immersion")}
+            return {"connection": 0.0, "pride": 0.0, "valence": 0.0, "arousal": 0.0, "guardedness": 0.0, "immersion": 0.0, "saga_count": 0, "weight_total": 0.0}
+        totals = {key: 0.0 for key in ("connection", "pride", "valence", "arousal", "guardedness", "immersion")}
         weight_total = 0.0
         saga_count = 0
         for saga in sagas:
@@ -441,11 +441,74 @@ class EmotionManager:
         if not state.enabled:
             return
         if tool_call_count > 0:
-            state.immersion = min(1.0, state.immersion + min(0.18, 0.035 * tool_call_count))
+            # New tool paths anchor immersion at activity start. Keep a small
+            # compatibility bump only for older callers that did not start one.
+            if state.last_activity_type != "tool":
+                state.immersion = min(1.0, state.immersion + min(0.18, 0.035 * tool_call_count))
             state.last_activity_type = "协作任务"
             state.last_activity_label = f"完成了 {tool_call_count} 次工具调用"
             state.last_activity_at = time.time()
         self._store.save_state(state)
+
+    @_synchronized
+    def start_activity(
+        self,
+        activity_type: str,
+        label: str = "",
+        *,
+        immersion: float | None = None,
+        persona_snapshot=None,
+        subject_id: str = DEFAULT_SUBJECT_ID,
+    ) -> None:
+        """Start a tool/browse/observe activity and anchor immersion immediately."""
+        key = self._resolve_key(persona_snapshot=persona_snapshot, subject_id=subject_id)
+        state = self._get_state(*key)
+        if not state.enabled:
+            return
+        now = time.time()
+        state.last_activity_type = str(activity_type or "activity")[:64]
+        state.last_activity_label = str(label or state.last_activity_type)[:160]
+        state.last_activity_at = now
+        state.last_update = now
+        amount = 0.22 if immersion is None else max(0.0, min(0.85, float(immersion)))
+        previous_immersion = state.immersion
+        state.immersion = max(state.immersion, amount)
+        delta = AffectDelta(
+            immersion=state.immersion - previous_immersion,
+            event_type="activity_started",
+            confidence=1.0,
+            significance=0.22,
+            summary=f"开始活动：{state.last_activity_label}",
+        )
+        # The snapshot already contains the anchored immersion. The event delta
+        # is descriptive and must not be replayed into the state.
+        self._store.save_state_with_event(state, delta)
+
+    @_synchronized
+    def finish_activity(
+        self,
+        activity_type: str = "",
+        label: str = "",
+        *,
+        persona_snapshot=None,
+        subject_id: str = DEFAULT_SUBJECT_ID,
+    ) -> None:
+        """Mark an activity complete; dynamics will now decay immersion smoothly."""
+        key = self._resolve_key(persona_snapshot=persona_snapshot, subject_id=subject_id)
+        state = self._get_state(*key)
+        if activity_type:
+            state.last_activity_type = str(activity_type)[:64]
+        if label:
+            state.last_activity_label = str(label)[:160]
+        state.last_activity_at = time.time()
+        state.last_update = state.last_activity_at
+        delta = AffectDelta(
+            event_type="activity_completed",
+            confidence=1.0,
+            significance=0.18,
+            summary=f"活动完成：{state.last_activity_label or state.last_activity_type or '活动'}",
+        )
+        self._store.save_state_with_event(state, delta)
 
     @_synchronized
     def record_proactive_action(
@@ -504,12 +567,12 @@ class EmotionManager:
         """Apply a bounded, UI-only scenario and persist an auditable event."""
         scenarios = {
             "warm_reply": AffectDelta(
-                event_type="simulation_warm_reply", valence=0.12, arousal=-0.06,
+                event_type="simulation_warm_reply", pride=-0.10, valence=0.12, arousal=-0.06,
                 connection=-0.15, trust=0.03, intimacy=0.02,
                 confidence=1.0, significance=0.35, summary="模拟：用户给出了温暖、充分的回应",
             ),
             "cold_reply": AffectDelta(
-                event_type="simulation_cold_reply", valence=-0.08, arousal=0.08,
+                event_type="simulation_cold_reply", pride=0.08, valence=-0.08, arousal=0.08,
                 guardedness=0.10, connection=0.12, rupture=0.03,
                 confidence=1.0, significance=0.35, summary="模拟：用户回复冷淡或敷衍",
             ),
@@ -698,6 +761,7 @@ class EmotionManager:
         )
         axes = {
             "connection": round(state.connection, 4),
+            "pride": round(state.pride, 4),
             "guardedness": round(state.guardedness, 4),
             "valence": round(state.valence, 4),
             "arousal": round(state.arousal, 4),
@@ -755,7 +819,7 @@ class EmotionManager:
             "influence": {
                 "conversation": self._recent_influence(events),
                 "time_drift": self._event_type_influence(events, ("decay", "drift", "idle")),
-                "long_story": {key: round(float(saga_bias.get(key, 0.0) or 0.0), 4) for key in ("valence", "arousal", "guardedness", "connection", "immersion")} | {
+                "long_story": {key: round(float(saga_bias.get(key, 0.0) or 0.0), 4) for key in ("pride", "valence", "arousal", "guardedness", "connection", "immersion")} | {
                     "count": int(saga_bias.get("saga_count", 0) or 0),
                     "weight_total": float(saga_bias.get("weight_total", 0.0) or 0.0),
                 },
@@ -771,6 +835,7 @@ class EmotionManager:
     def _axis_details(cls, axes: dict, events: list[dict], bias: dict) -> dict:
         thresholds = {
             "connection": {"observation": 0.20, "contact": 0.58, "urgent": 0.80},
+            "pride": {"center": 0.0, "block_contact": 0.50, "defensive": 0.42},
             "guardedness": {"caution": 0.42, "repair": 0.58},
             "valence": {}, "arousal": {"regulation": 0.58}, "immersion": {"activity": 0.30},
         }
@@ -789,7 +854,7 @@ class EmotionManager:
             total = sum(deltas)
             result[name] = {
                 "value": value,
-                "normalized": round((value + 1.0) / 2.0, 4) if name in {"valence", "arousal", "guardedness"} else value,
+                "normalized": round((value + 1.0) / 2.0, 4) if name in {"pride", "valence", "arousal", "guardedness"} else value,
                 "delta": round(deltas[0], 4) if deltas else 0.0,
                 "trend": "up" if total > 0.001 else ("down" if total < -0.001 else "steady"),
                 "velocity": round(total / max(1, len(deltas)), 5),
@@ -801,7 +866,7 @@ class EmotionManager:
 
     @staticmethod
     def _recent_influence(events: list[dict]) -> dict:
-        result = {"valence": 0.0, "arousal": 0.0, "connection": 0.0, "guardedness": 0.0, "immersion": 0.0}
+        result = {"pride": 0.0, "valence": 0.0, "arousal": 0.0, "connection": 0.0, "guardedness": 0.0, "immersion": 0.0}
         for event in events[:8]:
             if str(event.get("source_channel", "")) == "ui_simulation":
                 continue
@@ -815,7 +880,7 @@ class EmotionManager:
 
     @staticmethod
     def _event_type_influence(events: list[dict], types: tuple[str, ...]) -> dict:
-        result = {"connection": 0.0, "valence": 0.0, "arousal": 0.0, "guardedness": 0.0, "immersion": 0.0}
+        result = {"connection": 0.0, "pride": 0.0, "valence": 0.0, "arousal": 0.0, "guardedness": 0.0, "immersion": 0.0}
         for event in events[:8]:
             if not any(token in str(event.get("event_type", "")).lower() for token in types):
                 continue
@@ -841,6 +906,7 @@ class EmotionManager:
             return {
                 "valence": float(payload.get("valence", 0)),
                 "arousal": float(payload.get("arousal", 0)),
+                "pride": float(payload.get("pride", 0)),
                 "guardedness": float(payload.get("guardedness", 0)),
                 "connection": float(payload.get("connection", 0)),
                 "immersion": float(payload.get("immersion", 0)),
@@ -853,7 +919,7 @@ class EmotionManager:
     @_synchronized
     def set_axes(self, **values) -> None:
         state = self._get_state(*self._active_key)
-        for name in ("connection", "guardedness", "valence", "arousal", "immersion"):
+        for name in ("connection", "pride", "guardedness", "valence", "arousal", "immersion"):
             if name in values:
                 setattr(state, name, float(values[name]))
         state.normalize()
@@ -911,6 +977,7 @@ class EmotionManager:
         negative = primary < 0 or deep < 0
         delta = AffectDelta(
             connection=0.05 if negative else -0.10,
+            pride=0.12 if negative else -0.05,
             guardedness=min(0.25, abs(primary)) if negative else -0.04,
             valence=max(-0.30, primary) if negative else min(0.20, primary),
             arousal=min(0.25, abs(primary)) if negative else 0.02,

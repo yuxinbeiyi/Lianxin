@@ -21,6 +21,12 @@ class DynamicsConfig:
     valence_regress: float = 0.0022
     arousal_setpoint: float = -0.08
     arousal_regress: float = 0.0028
+    pride_setpoint: float = 0.0
+    pride_regress: float = 0.0030
+    pride_defend_threshold: float = 0.72
+    pride_defend_target: float = 0.42
+    pride_defend_rate: float = 0.0022
+    pride_block: float = 0.50
     guardedness_setpoint: float = 0.12
     # 防御感应在正常交流后较快回到基线；避免一次旧冲突让界面数小时停在高位。
     guardedness_regress: float = 0.0035
@@ -101,6 +107,7 @@ class EmotionalDynamics:
         connection_bias = max(-0.08, min(0.08, float(bias.get("connection", 0) or 0)))
         valence_bias = max(-0.08, min(0.08, float(bias.get("valence", 0) or 0)))
         arousal_bias = max(-0.08, min(0.08, float(bias.get("arousal", 0) or 0)))
+        pride_bias = max(-0.08, min(0.08, float(bias.get("pride", 0) or 0)))
         guardedness_bias = max(-0.08, min(0.08, float(bias.get("guardedness", 0) or 0)))
         immersion_bias = max(-0.08, min(0.08, float(bias.get("immersion", 0) or 0)))
         idle_minutes = max(0.0, (at_time - state.last_interaction) / 60.0)
@@ -121,6 +128,15 @@ class EmotionalDynamics:
             cfg.connection_rate * (1.0 + connection_bias) * context_factor * accel * valence_factor
             * immersion_factor * minutes
         )
+
+        # Pride is a signed Jiwen axis. High connection without a reply can
+        # make the character more defensive; otherwise it slowly returns to 0.
+        pride_target = cfg.pride_setpoint + pride_bias
+        pride_rate = cfg.pride_regress
+        if state.connection >= cfg.pride_defend_threshold and state.rupture > 0.12:
+            pride_target = cfg.pride_defend_target + min(0.18, state.rupture * 0.25)
+            pride_rate = cfg.pride_defend_rate
+        state.pride = self._approach(state.pride, pride_target, pride_rate, minutes)
 
         guarded_target = cfg.guardedness_setpoint + guardedness_bias
         guarded_rate = cfg.guardedness_regress
@@ -168,7 +184,10 @@ class EmotionalDynamics:
                 "连接需求已经持续较高",
             )
         if connection >= cfg.contact_threshold:
-            blocked = state.guardedness >= cfg.guardedness_block and state.rupture > 0.12
+            blocked = (
+                (state.pride >= cfg.pride_block or state.guardedness >= cfg.guardedness_block)
+                and state.rupture > 0.12
+            )
             return ProactiveMotive(
                 "contact", clamp(connection, 0.0, 1.0), not blocked, regulate,
                 "想联系对方" if not blocked else "想联系，但仍处在防御状态",

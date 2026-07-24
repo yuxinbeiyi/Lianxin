@@ -156,6 +156,7 @@ class AvatarInteractionController(QObject):
             values = {
                 "情绪基调": round(float(state.valence), 2),
                 "唤醒度": round(float(state.arousal), 2),
+                "骄傲": round(float(state.pride), 2),
                 "防御感": round(float(state.guardedness), 2),
                 "连接需求": round(float(state.connection), 2),
                 "沉浸度": round(float(state.immersion), 2),

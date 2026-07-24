@@ -8,7 +8,9 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
 
-STATE_SCHEMA_VERSION = 1
+# Version 2 adds the signed pride axis and keeps guardedness as a non-negative
+# safety axis. Older snapshots are loaded with pride=0 and normalized safely.
+STATE_SCHEMA_VERSION = 2
 DEFAULT_PERSONA_ID = "default-lianxin"
 DEFAULT_SUBJECT_ID = "owner"
 
@@ -28,6 +30,7 @@ class AffectDelta:
     """A bounded appraisal result applied atomically to one state snapshot."""
 
     connection: float = 0.0
+    pride: float = 0.0
     guardedness: float = 0.0
     valence: float = 0.0
     arousal: float = 0.0
@@ -44,6 +47,7 @@ class AffectDelta:
     def bounded(self) -> "AffectDelta":
         return AffectDelta(
             connection=clamp(self.connection, -0.60, 0.30),
+            pride=clamp(self.pride, -0.30, 0.30),
             guardedness=clamp(self.guardedness, -0.30, 0.30),
             valence=clamp(self.valence, -0.35, 0.35),
             arousal=clamp(self.arousal, -0.35, 0.35),
@@ -65,7 +69,7 @@ class AffectDelta:
     def from_mapping(cls, payload: Mapping[str, Any] | None) -> "AffectDelta":
         payload = payload if isinstance(payload, Mapping) else {}
         numeric = (
-            "connection", "guardedness", "valence", "arousal", "immersion",
+            "connection", "pride", "guardedness", "valence", "arousal", "immersion",
             "trust", "intimacy", "rupture", "repair", "confidence",
             "significance",
         )
@@ -83,8 +87,10 @@ class EmotionalStateV3:
     subject_id: str = DEFAULT_SUBJECT_ID
 
     # Fast affective layer.
-    valence: float = 0.08
-    arousal: float = -0.08
+    valence: float = 0.0
+    arousal: float = 0.0
+    # Jiwen-compatible pride axis: negative = relaxed/ready to yield, positive = prideful/defensive.
+    pride: float = 0.0
     guardedness: float = 0.12
 
     # Homeostatic and activity layer.
@@ -114,7 +120,9 @@ class EmotionalStateV3:
         self.immersion = clamp(self.immersion, 0.0, 1.0)
         self.valence = clamp(self.valence, -1.0, 1.0)
         self.arousal = clamp(self.arousal, -1.0, 1.0)
-        self.guardedness = clamp(self.guardedness, -1.0, 1.0)
+        self.pride = clamp(self.pride, -1.0, 1.0)
+        # 防御感是独立的非负安全轴；Jiwen 的正负语义由 pride 承担。
+        self.guardedness = clamp(self.guardedness, 0.0, 1.0)
         self.trust = clamp(self.trust, 0.0, 1.0)
         self.intimacy = clamp(self.intimacy, 0.0, 1.0)
         self.rupture = clamp(self.rupture, 0.0, 1.0)
@@ -190,6 +198,7 @@ class EmotionalStateV3:
         self.normalize()
         delta = delta.bounded()
         self.connection += delta.connection
+        self.pride += delta.pride
         self.guardedness += delta.guardedness
         self.valence += delta.valence
         self.arousal += delta.arousal

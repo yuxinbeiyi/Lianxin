@@ -1496,6 +1496,18 @@ class AgentCore:
         if not parsed:
             return
 
+        _activity_started = False
+        if getattr(self, "_track_emotion", False) and getattr(self, "_owner_scope", True):
+            try:
+                from brain.emotional import get_manager as _get_emotion_mgr
+                _get_emotion_mgr().start_activity(
+                    "tool", f"正在执行 {len(parsed)} 个工具调用",
+                    immersion=min(0.85, 0.18 + 0.06 * len(parsed)),
+                )
+                _activity_started = True
+            except Exception as exc:
+                logger.debug("涟漪工具活动开始记录失败: %s", exc)
+
         # ── 第二遍：按资源组分类 ────────────────────────────
         lock_free: list[dict] = []          # 无资源锁，可自由并行
         groups: dict[str, list[dict]] = {}   # 资源组 → 排队项
@@ -1604,6 +1616,12 @@ class AgentCore:
                         result, cfg.get("tool_result_max_chars", 12_000)
                     ),
                 })
+        if _activity_started:
+            try:
+                from brain.emotional import get_manager as _get_emotion_mgr
+                _get_emotion_mgr().finish_activity("tool", "工具调用已完成")
+            except Exception as exc:
+                logger.debug("涟漪工具活动完成记录失败: %s", exc)
 
     def _collect_stream(self, response, on_chunk=None, max_retries=2):
         """收集 litellm 流式响应，拼接成完整 message 对象。
