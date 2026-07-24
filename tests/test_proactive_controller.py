@@ -70,11 +70,13 @@ class ProactivePresentationControllerTests(unittest.TestCase):
         self.spoken = []
         self.flashes = []
         self.next_tracks = 0
+        self.context_messages = []
         self.controller = ProactivePresentationController(
             scheduler=self.scheduler,
             chat_widget=self.chat,
             history_manager_func=lambda: self.history,
             session_id_func=lambda: 7,
+            history_context_func=self.context_messages.append,
             speak_func=self.spoken.append,
             is_minimized_func=lambda: True,
             flash_taskbar_func=lambda **kwargs: self.flashes.append(kwargs),
@@ -95,6 +97,7 @@ class ProactivePresentationControllerTests(unittest.TestCase):
 
         self.assertEqual(["你好"], self.chat.ai_messages)
         self.assertEqual([(7, "assistant", "[主动] 你好")], self.history.messages)
+        self.assertEqual(["[主动] 你好"], self.context_messages)
         self.assertEqual(["你好"], self.spoken)
         self.assertEqual(["你好"], self.bridge.messages)
         self.assertEqual([{"flash_count": 0}], self.flashes)
@@ -116,6 +119,7 @@ class ProactivePresentationControllerTests(unittest.TestCase):
         self.controller.set_slack_action("supplement_diary")
         self.controller.handle_slack_response("日记补充")
         self.assertEqual(1, self.scheduler.diary_supplements)
+        self.assertEqual(["[摸鱼] 日记补充"], self.context_messages)
 
         self.controller.set_slack_action("next_song")
         self.controller.handle_slack_response("换首歌")
@@ -141,7 +145,17 @@ class ProactivePresentationControllerTests(unittest.TestCase):
         self.assertFalse(source.exists())
         self.assertEqual(1, len(self.chat.images))
         self.assertTrue(Path(self.chat.images[0][0]).exists())
-        self.assertEqual("[观察] 莲心看了一眼屏幕", self.history.messages[0][2])
+        self.assertEqual("[观察] 莲心刚才观察到：屏幕内容", self.history.messages[0][2])
+        self.assertEqual(["[观察] 莲心刚才观察到：屏幕内容"], self.context_messages)
+
+    def test_observation_text_and_image_are_deduplicated(self):
+        source = Path(self.temp.name) / "capture.png"
+        source.write_bytes(b"image")
+        self.controller.handle_observation_result("屏幕内容")
+        self.controller.handle_observation_image(str(source), "屏幕内容")
+
+        self.assertEqual(1, len(self.history.messages))
+        self.assertEqual(1, len(self.context_messages))
 
 
 if __name__ == "__main__":

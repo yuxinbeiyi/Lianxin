@@ -102,6 +102,7 @@ class ContextCompressorTests(unittest.TestCase):
         self.assertTrue(contains_textual_tool_protocol("<tool_call>"))
         self.assertTrue(contains_textual_tool_protocol("<function=read_file>"))
         self.assertTrue(contains_textual_tool_protocol("  <tool"))
+        self.assertTrue(contains_textual_tool_protocol('get_weather(city="广州", forecast_type="full")'))
         self.assertFalse(contains_textual_tool_protocol("根据文件内容，结论如下。"))
 
     def test_explicit_memory_persistence_directives(self):

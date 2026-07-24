@@ -68,7 +68,36 @@ _INTERNAL_HISTORY_PREFIX_RE = re.compile(
 
 
 def _clean_history_content(content) -> str:
-    return _INTERNAL_HISTORY_PREFIX_RE.sub("", str(content or ""), count=1).strip()
+    text = _INTERNAL_HISTORY_PREFIX_RE.sub("", str(content or ""), count=1).strip()
+    # 清理历史中由旧版兼容网关写入的伪工具调用，避免下一轮模型把它当作
+    # 莲心已经说过的正常内容，例如 ``web_search(...)`` 或 ``get_weather(...)``。
+    if re.fullmatch(r"[A-Za-z_]\w*\s*\([^\n]{1,2000}\)", text, flags=re.DOTALL):
+        return "（上一轮工具请求未完成，未形成有效回复）"
+    return text
+
+
+def _system_first_messages(messages: list[dict]) -> list[dict]:
+    """Keep system instructions before the conversation turn sequence.
+
+    Some gateways are sensitive to system messages inserted after the latest
+    user message.  Preserve the order of assistant/tool/user messages while
+    moving all system instructions to the front of the request.
+    """
+    system = [item for item in messages if item.get("role") == "system"]
+    conversation = [item for item in messages if item.get("role") != "system"]
+    return system + conversation
+
+
+def _recent_assistant_repetition(history: list[dict], user_message: str) -> bool:
+    """Detect a repeated assistant answer that should not be reinforced."""
+    if re.search(r"(?:重复|再说一遍|复述|原话|刚才那段)", str(user_message or "")):
+        return False
+    recent = [
+        re.sub(r"\s+", "", str(item.get("content", "")).strip())
+        for item in history[-8:]
+        if item.get("role") == "assistant" and str(item.get("content", "")).strip()
+    ]
+    return len(recent) >= 2 and len(set(recent)) < len(recent)
 
 
 def _normalize_memory_provenance(memory: dict, source_rows: list[dict]) -> tuple[list[int], float, str]:
@@ -421,6 +450,10 @@ class AgentCore:
         # AgentCore 会在桌面端跨请求复用。中途插话的“停止”只应作用于
         # 当前请求，不能把取消事件带到下一轮对话。
         self._cancel_event.clear()
+        # 清理旧版本写入的纯文本工具调用，避免它们污染本轮上下文。
+        for _item in self.history:
+            if _item.get("role") == "assistant" and isinstance(_item.get("content"), str):
+                _item["content"] = _clean_history_content(_item["content"])
 
         # 用户明确拒绝长期记忆写入时，由代码层执行权限边界，而非仅依赖 Prompt。
         self._request_memory_writes_blocked = self._update_memory_write_policy(
@@ -492,7 +525,7 @@ class AgentCore:
 
         # 涟漪 v3 在生成当前回复前完成评估，使本条用户消息能够影响本条回复。
         # 消息 ID 同时作为幂等键，渠道重试不会重复叠加情绪变化。
-        if self._track_emotion and self._owner_scope:
+        if getattr(self, "_track_emotion", False) and getattr(self, "_owner_scope", True):
             try:
                 from brain.emotional import get_manager as _get_emotion_mgr
                 recent_text = [
@@ -564,7 +597,7 @@ class AgentCore:
             return ""
 
         # ── 情感系统：记录本轮协作结果 ─────────────────────────
-        if self._track_emotion and self._owner_scope:
+        if getattr(self, "_track_emotion", False) and getattr(self, "_owner_scope", True):
             try:
                 from brain.emotional import get_manager as _get_emotion_mgr
                 _tool_count = 0
@@ -1888,6 +1921,15 @@ class AgentCore:
        
         _t0 = time.time()
         messages = self._build_request_system_messages(persona_snapshot)
+        if _recent_assistant_repetition(self.history, user_message):
+            messages.append({
+                "role": "system",
+                "content": (
+                    "【防复读提醒】最近对话中出现了助手重复旧回复的迹象。"
+                    "本轮必须围绕当前用户消息直接回答，优先处理用户最新问题；"
+                    "不要复制上一条助手回复，不要继续旧话题，除非用户明确要求复述。"
+                ),
+            })
         _text_protocol_retry_count = 0
 
         def _guarded_progress(text: str):
@@ -1916,7 +1958,7 @@ class AgentCore:
 
         # ── 注入情感状态（涟漪系统） ──────────────────────────
 
-        if self._track_emotion and self._owner_scope:
+        if getattr(self, "_track_emotion", False) and getattr(self, "_owner_scope", True):
             try:
                 from brain.emotional import get_manager as _get_emotion_mgr
                 _emotion_snippet = _get_emotion_mgr().build_prompt_snippet(
@@ -2181,7 +2223,7 @@ class AgentCore:
                     stream = litellm.completion(
                         model=self._model,
                         max_tokens=self._max_tokens,
-                        messages=messages,
+                        messages=_system_first_messages(messages),
                         api_key=self._api_key,
                         api_base=self._api_base,
                         stream=True,
@@ -2368,7 +2410,7 @@ class AgentCore:
                     max_tokens=self._max_tokens,
                     tools=all_tools if all_tools else None,
                     tool_choice=tool_choice,
-                    messages=messages,
+                    messages=_system_first_messages(messages),
                     api_key=self._api_key,
                     api_base=self._api_base,
                     stream=True,
@@ -2437,7 +2479,15 @@ class AgentCore:
                         flush=True,
                     )
                     if _text_protocol_retry_count <= 1:
-                        _force_text_response = True
+                        # 纯文本工具调用不能当作最终回复；下一轮重新允许原生 tool_call。
+                        _force_text_response = False
+                        messages.append({
+                            "role": "system",
+                            "content": (
+                                "上一轮把工具写成了纯文本函数调用。请改用接口提供的原生工具调用获取真实结果，"
+                                "工具完成后再用自然语言回答；不要继续输出 function(...) 或 JSON 调用文本。"
+                            ),
+                        })
                         messages.append({
                             "role": "system",
                             "content": (

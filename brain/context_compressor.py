@@ -204,6 +204,13 @@ _TEXT_TOOL_PROTOCOL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 部分兼容网关会把函数调用降级成 ``get_weather(city=...)`` 纯文本。
+# 这不是可执行的 tool_call，不能直接展示或写入对话历史。
+_TEXT_FUNCTION_CALL_RE = re.compile(
+    r"^\s*[A-Za-z_]\w*\s*\([^\n]{1,2000}\)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
 
 def contains_textual_tool_protocol(content: Any) -> bool:
     """检测被模型写进普通正文的内部工具协议，包括未闭合的流式前缀。"""
@@ -216,6 +223,7 @@ def contains_textual_tool_protocol(content: Any) -> bool:
         or "<tool" in lowered
         or "<function" in lowered
         or "<parameter" in lowered
+        or _TEXT_FUNCTION_CALL_RE.match(text) is not None
     )
 
 

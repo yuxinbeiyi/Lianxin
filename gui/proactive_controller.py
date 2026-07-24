@@ -18,6 +18,7 @@ class ProactivePresentationController:
         chat_widget,
         history_manager_func: Callable,
         session_id_func: Callable[[], int],
+        history_context_func: Callable[[str], None] | None = None,
         speak_func: Callable[[str], None],
         is_minimized_func: Callable[[], bool],
         flash_taskbar_func: Callable[..., None],
@@ -30,6 +31,7 @@ class ProactivePresentationController:
         self._chat_widget = chat_widget
         self._history_manager_func = history_manager_func
         self._session_id_func = session_id_func
+        self._history_context_func = history_context_func
         self._speak_func = speak_func
         self._is_minimized_func = is_minimized_func
         self._flash_taskbar_func = flash_taskbar_func
@@ -42,6 +44,8 @@ class ProactivePresentationController:
         self._last_behavior = "normal"
         self._last_slack_action = ""
         self._pending_mooyu_sources: list = []
+        self._last_observation_context = ""
+        self._last_observation_context_at = 0.0
 
     @staticmethod
     def _clean_text(text: str) -> str:
@@ -82,6 +86,24 @@ class ProactivePresentationController:
     def handle_observation_result(self, desc: str):
         if desc:
             self._scheduler.set_last_observation(desc)
+            self._remember_observation(desc)
+
+    def _remember_observation(self, desc: str):
+        """Keep observation results available for an immediate follow-up question."""
+        content = self._clean_text(desc)
+        if not content:
+            return
+        now = time.monotonic()
+        if (
+            content == self._last_observation_context
+            and now - self._last_observation_context_at < 10
+        ):
+            return
+        self._last_observation_context = content
+        self._last_observation_context_at = now
+        stored = f"[观察] 莲心刚才观察到：{content[:1500]}"
+        self._save_message(stored)
+        self._remember_assistant_context(stored)
 
     def handle_observation_image(self, img_path: str, desc: str):
         try:
@@ -107,7 +129,7 @@ class ProactivePresentationController:
             except OSError:
                 pass
 
-            self._save_message("[观察] 莲心看了一眼屏幕")
+            self._remember_observation(desc)
             summary = desc[:100] + "..." if len(desc) > 100 else desc
             self._chat_widget.add_image_message(
                 str(dst), desc=summary, full_text=desc, is_ai=True
@@ -131,6 +153,9 @@ class ProactivePresentationController:
             if pending_sources:
                 self._chat_widget.add_mooyu_data_sources(pending_sources)
             self._save_message(f"[主动] {text}")
+            # SQLite 持久化不会自动更新当前 AgentCore.history；同步内存上下文，
+            # 让用户紧接着追问时模型能看到刚才的主动发言。
+            self._remember_assistant_context(f"[主动] {text}")
             self._chat_widget.add_ai_message(text)
             self._notify_minimized()
             self._speak_func(text)
@@ -176,6 +201,7 @@ class ProactivePresentationController:
             return
         text = self._clean_text(text)
         self._save_message(f"[摸鱼] {text}")
+        self._remember_assistant_context(f"[摸鱼] {text}")
         self._chat_widget.add_ai_message(text)
         self._notify_minimized()
         self._speak_func(text)
@@ -197,6 +223,16 @@ class ProactivePresentationController:
             history.save_message(
                 self._session_id_func(), "assistant", content
             )
+
+    def _remember_assistant_context(self, content: str):
+        """Mirror proactive output into the live AgentCore conversation."""
+        if self._history_context_func is None:
+            return
+        try:
+            self._history_context_func(content)
+        except Exception:
+            # A presentation callback must never break delivery, speech, or QQ.
+            pass
 
     def _notify_minimized(self):
         if self._is_minimized_func():

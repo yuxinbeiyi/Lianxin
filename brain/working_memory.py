@@ -67,14 +67,26 @@ def update_working_topic(*, user_message: str, recent_messages: list[dict] | Non
     lines = []
     facts = []
     open_loops = []
+    seen_assistant = set()
+    seen_user_loops = set()
     for message in messages:
         content = str(message.get("content", "") or "").strip()
         if not content:
             continue
-        role = "用户" if message.get("role") == "user" else "莲心"
+        is_user = message.get("role") == "user"
+        if not is_user:
+            # 重复模型输出通常是一次生成故障，不应被工作记忆再次强化。
+            normalized = re.sub(r"\s+", " ", content)
+            if normalized in seen_assistant:
+                continue
+            seen_assistant.add(normalized)
+        role = "用户" if is_user else "莲心"
         lines.append(f"{role}：{content[:240]}")
-        if message.get("role") == "user" and ("?" in content or "？" in content or "待" in content or "需要" in content):
-            open_loops.append(content[:180])
+        if is_user and ("?" in content or "？" in content or "待" in content or "需要" in content):
+            loop = content[:180]
+            if loop not in seen_user_loops:
+                seen_user_loops.add(loop)
+                open_loops.append(loop)
     if active and not open_loops and active["summary_source"] == "model":
         try:
             open_loops = json.loads(active["open_loops_json"] or "[]")
@@ -138,6 +150,7 @@ def format_working_memory_context(topic: dict | None = None) -> str:
         return ""
     summary = topic.get("model_summary") or topic.get("summary")
     lines = ["【当前话题工作记忆】", f"主题：{topic.get('topic_label', '当前话题')}", summary]
+    lines.append("这是辅助线索；必须优先依据本轮用户消息和最近一条真实对话，不要复述旧回复。")
     if topic.get("model_summary"):
         lines.append(f"模型任务阶段：{topic.get('task_state', 'none')}")
     facts = topic.get("model_facts") or topic.get("facts") or []

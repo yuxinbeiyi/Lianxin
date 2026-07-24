@@ -226,6 +226,9 @@ class MainWindow(QMainWindow):
             chat_widget=self._chat_widget,
             history_manager_func=lambda: self._agent.get_history_manager() if self._agent else None,
             session_id_func=lambda: self._agent._session_id if self._agent else 0,
+            history_context_func=lambda content: self._agent.history.append(
+                {"role": "assistant", "content": content}
+            ) if self._agent is not None else None,
             speak_func=self._speak,
             is_minimized_func=self.isMinimized,
             flash_taskbar_func=self.flash_taskbar,
