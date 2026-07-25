@@ -1,4 +1,4 @@
-const STUDY_ROOM_UI_VERSION = '2026.07.25.11';
+const STUDY_ROOM_UI_VERSION = '2026.07.25.13';
 const RING_LENGTH = 860.8;
 const q = (selector) => document.querySelector(selector);
 const qa = (selector) => [...document.querySelectorAll(selector)];
@@ -314,10 +314,11 @@ function renderTimeRewind(data) {
     const week = Math.floor(index / 7) + 1;
     const date = new Date(`${item.date}T12:00:00`);
     const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
-    if (!seenMonths.has(monthKey) && !item.future) {
+    if (!seenMonths.has(monthKey)) {
       seenMonths.add(monthKey);
       const marker = document.createElement('span');
-      marker.style.gridColumn = String(week);
+      // 月份标签不能参与 CSS Grid 自动排版：同一周内跨月时会被挤到隐藏行。
+      marker.style.left = `${7 + (week - 1) * 21}px`;
       marker.textContent = date.getMonth() === 0 ? `${date.getFullYear()}年1月` : `${date.getMonth() + 1}月`;
       months.appendChild(marker);
     }
@@ -334,7 +335,9 @@ function renderTimeRewind(data) {
       ? `${formatRewindDate(item.date)}\n专注时长：${formatDuration(seconds)}\n完成专注：${completed}次 · 中断专注：${interrupted}次`
       : `${formatRewindDate(item.date)}\n当日还没有专注记录`;
     cell.title = details;
-    cell.setAttribute('aria-label', details.replaceAll('\n', '，'));
+    // Qt 5 自带 Chromium 的版本较旧，并不支持 String.prototype.replaceAll；
+    // 这里若抛错会让整张年度热力图在第一个日期格停止渲染。
+    cell.setAttribute('aria-label', details.split('\n').join('，'));
     if (!item.future) {
       const show = event => {
         tooltip.innerHTML = `<strong>${formatRewindDate(item.date)}</strong><span>${seconds ? `专注时长：${formatDuration(seconds)}` : '当日还没有专注记录'}</span>${seconds ? `<small>完成专注：${completed}次 · 中断专注：${interrupted}次</small>` : ''}`;
@@ -614,7 +617,14 @@ function connectBridge() {
       renderTaskSelect(tasks);
       updateGoal(tasks);
     });
-    bridge.statistics_changed.connect(() => refreshStats());
+    bridge.statistics_changed.connect(payload => {
+      // 完整专注/中断保存后，直接使用后端已写入数据库的最新快照，避免页面停留
+      // 在成长记录时又发起一次异步请求而短暂显示旧的 0 数据。
+      if (currentView !== 'stats') return;
+      const latest = JSON.parse(payload);
+      if (selectedRange === 'today') renderStats(latest);
+      else refreshStats();
+    });
     bridge.companion_message.connect(setCompanion);
     bridge.statistics_changed.connect(() => { if (currentView === 'space') refreshSpace(); });
     bridge.focus_completed.connect(payload => {
