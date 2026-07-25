@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="study-room-version" content="2026.07.25.5">
+  <meta name="study-room-version" content="2026.07.25.11">
   <title>莲心自习室</title>
-  <link rel="stylesheet" href="styles.css?v=20260725-5">
+  <link rel="stylesheet" href="styles.css?v=20260725-11">
 </head>
 <body>
   <div class="room-shell">
@@ -25,7 +25,7 @@
         <span id="sidebar-weekday">星期</span>
         <span id="sidebar-lunar">农历日期</span>
       </div>
-      <span class="ui-version" id="ui-version">界面版本 2026.07.25.5</span>
+      <span class="ui-version" id="ui-version">界面版本 2026.07.25.11</span>
     </aside>
 
     <main class="main-content">
@@ -67,7 +67,7 @@
             <button class="preset" data-focus="50" data-break="10">深度 50 / 10</button>
             <button class="preset" data-focus="90" data-break="15">长时 90 / 15</button>
           </div>
-          <select id="task-select" aria-label="选择今日任务"><option value="-1">选择今天要做的任务（可选）</option></select>
+          <div class="task-picker" id="task-picker"><button id="task-picker-button" type="button" aria-haspopup="listbox" aria-expanded="false">选择今天要做的任务（可选）</button><div id="task-picker-menu" class="task-picker-menu hidden" role="listbox"></div><select id="task-select" class="task-select-native" aria-hidden="true" tabindex="-1"><option value="-1">选择今天要做的任务（可选）</option></select></div>
           <button id="start-focus" class="primary-action">开始专注</button>
           <div class="timer-controls hidden" id="timer-controls">
             <button id="reenter-focus" class="secondary-action">进入沉浸界面</button>
@@ -87,6 +87,10 @@
           </div>
         </div>
         <div class="completion-note hidden" id="completion-note" aria-live="polite"></div>
+        <div class="completion-task-card hidden" id="completion-task-card" aria-live="polite">
+          <div><strong>这一轮完成得很好。</strong><span id="completion-task-hint">这项任务还要继续吗？</span></div>
+          <div><button id="completion-keep-task" class="secondary-action">保留到下一轮</button><button id="completion-mark-task" class="small-primary">任务已完成</button></div>
+        </div>
       </section>
 
       <section class="view focus-view" id="view-focus" aria-label="沉浸专注模式">
@@ -175,12 +179,38 @@
             </div>
           </div>
         </div>
+        <div class="recent-focus-card">
+          <div class="recent-focus-head"><div><strong>最近专注</strong><small>完成与中断都被诚实记录，方便回看自己的节奏。</small></div><span>最近 8 条</span></div>
+          <div class="recent-focus-list" id="recent-focus-list"></div>
+        </div>
+        <div class="time-rewind-card" aria-label="时间回溯：过去一年专注热力图">
+          <div class="time-rewind-head">
+            <div><strong>时间回溯</strong><small>过去一年，每一天都留下了自己的颜色。</small></div>
+            <span>53 周 · 371 天</span>
+          </div>
+          <div class="time-rewind-scroll">
+            <div class="time-rewind-layout">
+              <div class="rewind-weekdays" aria-hidden="true"><span>周一</span><span></span><span>周三</span><span></span><span>周五</span><span></span><span>周日</span></div>
+              <div class="rewind-board">
+                <div class="rewind-months" id="rewind-months"></div>
+                <div class="rewind-grid" id="rewind-grid" role="grid" aria-label="年度专注记录"></div>
+              </div>
+            </div>
+          </div>
+          <div class="rewind-footer">
+            <div class="rewind-legend"><span>少</span><i class="zero"></i><i class="level-1"></i><i class="level-2"></i><i class="level-3"></i><i class="level-4"></i><span>多</span></div>
+            <div class="rewind-summary"><span>最近一年专注：<strong id="rewind-completed">0次</strong></span><span>最长连续专注：<strong id="rewind-longest-streak">0日</strong></span><span>当前连续专注：<strong id="rewind-current-streak">0日</strong></span></div>
+            <small>连续专注按单日累计不少于 5 分钟计算</small>
+          </div>
+          <div class="rewind-tooltip hidden" id="rewind-tooltip" role="tooltip"></div>
+        </div>
         <div class="growth-note" id="growth-note">莲心记录：先从一个 25 分钟的小目标开始吧。</div>
       </section>
 
       <section class="view" id="view-space">
         <div class="section-heading"><div><span class="eyebrow">房间布置</span><h2>我的空间</h2></div></div>
-        <div class="space-placeholder"><div class="lamp">✦</div><h3>这里会慢慢变成你的房间</h3><p>背景、音乐和陪伴形象将在后续版本开放。</p><span>当前阶段先把专注体验打磨完整。</span></div>
+        <section class="space-wallpaper-card"><div class="space-card-head"><div><strong>自习室壁纸</strong><small>选一张适合今天节奏的背景，调整到舒服又清晰的状态。</small></div><button id="space-custom-wallpaper" class="secondary-action">选择本地壁纸</button></div><div class="wallpaper-strip" id="wallpaper-strip"></div><div class="space-controls"><label>壁纸透明度 <input id="space-wallpaper-opacity" type="range" min="0" max="100"><strong id="space-wallpaper-opacity-value">42%</strong></label><label>内容区域遮罩 <input id="space-mask-opacity" type="range" min="35" max="100"><strong id="space-mask-opacity-value">82%</strong></label><label class="space-fit">显示方式 <select id="space-fit"><option value="cover">填满裁切</option><option value="contain">完整显示</option></select></label><button id="space-save" class="small-primary">保存布置</button></div></section>
+        <div class="space-columns"><section class="space-note-board"><div class="space-card-head"><div><strong>莲心留言</strong><small>每次完成专注后，这里会多一张小纸条。</small></div></div><div id="space-notes" class="space-notes"></div></section><section class="space-event-board"><div class="space-card-head"><div><strong>这一周的足迹</strong><small>只记录自习室里的任务与专注。</small></div></div><div id="space-events" class="space-events"></div></section></div>
       </section>
 
       <section class="view" id="view-settings">
@@ -209,6 +239,6 @@
   </div>
   <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-  <script src="app.js?v=20260725-5"></script>
+  <script src="app.js?v=20260725-11"></script>
 </body>
 </html>

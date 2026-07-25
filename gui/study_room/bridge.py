@@ -3,10 +3,15 @@
 import json
 from datetime import datetime
 
-from PyQt5.QtCore import QObject, QSettings, QTimer, pyqtSignal, pyqtSlot
+from pathlib import Path
+
+from PyQt5.QtCore import QObject, QSettings, QTimer, QUrl, pyqtSignal, pyqtSlot
+from PyQt5.QtWidgets import QFileDialog
 
 from .database import StudyDatabase
 from .timer import FocusTimer
+from utils.sound import play_sound
+from utils.resource_path import get_asset_path
 
 try:
     from config import get_user_name
@@ -64,6 +69,7 @@ class StudyRoomBridge(QObject):
     def _stats_payload(self):
         data = self.db.stats_range("today")
         trend = self.db.week_trend()
+        time_rewind = self.db.time_rewind()
         return {
             "focus_seconds": data["focus_seconds"],
             "room_seconds": data["room_seconds"],
@@ -78,6 +84,8 @@ class StudyRoomBridge(QObject):
             "previous_completed_sessions": data.get("previous_completed_sessions", 0),
             "previous_label": data.get("previous_label", "昨天"),
             "trend": [{"date": row["date"].isoformat(), "focus_seconds": row["focus_seconds"]} for row in trend],
+            "time_rewind": time_rewind,
+            "recent_focus": self.db.recent_focus_sessions(),
         }
 
     def _state_payload(self):
@@ -97,6 +105,7 @@ class StudyRoomBridge(QObject):
             "user_name": get_user_name(),
             "settings": self._settings_payload(),
             "clock": self._clock_payload(),
+            "space": self._space_payload(),
         }
 
     @staticmethod
@@ -131,12 +140,64 @@ class StudyRoomBridge(QObject):
             "animations": str(self._settings.value("animations", "true")).lower() in ("1", "true", "yes"),
         }
 
+    def _wallpapers(self):
+        directory = get_asset_path("自习室")
+        allowed = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+        items = [{"id": "default", "name": "默认壁纸", "url": ""}]
+        if directory.is_dir():
+            for image in sorted(directory.iterdir(), key=lambda path: path.name.lower()):
+                if image.is_file() and image.suffix.lower() in allowed:
+                    items.append({"id": str(image.resolve()), "name": image.stem, "url": QUrl.fromLocalFile(str(image.resolve())).toString()})
+        current = str(self._settings.value("space_wallpaper", "default"))
+        if current not in {item["id"] for item in items} and Path(current).is_file():
+            items.append({"id": current, "name": f"自定义：{Path(current).stem}", "url": QUrl.fromLocalFile(current).toString()})
+        return items
+
+    def _space_payload(self):
+        return {
+            "wallpapers": self._wallpapers(),
+            "settings": {
+                "wallpaper": str(self._settings.value("space_wallpaper", "default")),
+                "wallpaper_opacity": float(self._settings.value("space_wallpaper_opacity", 0.42)),
+                "content_mask_opacity": float(self._settings.value("space_content_mask_opacity", 0.82)),
+                "fit": str(self._settings.value("space_wallpaper_fit", "cover")),
+            },
+            "notes": self.db.companion_notes(),
+            "week_events": self.db.week_events(),
+        }
+
     def _emit_tasks_and_stats(self):
         self.tasks_changed.emit(self._json(self._task_payload()))
         self._emit_statistics()
 
     def _emit_statistics(self):
         self.statistics_changed.emit(self._json(self._stats_payload()))
+
+    @pyqtSlot(result=str)
+    def get_space(self):
+        return self._json(self._space_payload())
+
+    @pyqtSlot(str, float, float, str, result=str)
+    def save_space_settings(self, wallpaper, wallpaper_opacity, content_mask_opacity, fit):
+        path = str(wallpaper or "default")
+        if path != "default" and not Path(path).is_file():
+            return self._json(self._space_payload())
+        self._settings.setValue("space_wallpaper", path)
+        self._settings.setValue("space_wallpaper_opacity", max(0.0, min(1.0, float(wallpaper_opacity))))
+        self._settings.setValue("space_content_mask_opacity", max(0.35, min(1.0, float(content_mask_opacity))))
+        self._settings.setValue("space_wallpaper_fit", "contain" if fit == "contain" else "cover")
+        self._settings.sync()
+        return self._json(self._space_payload())
+
+    @pyqtSlot(result=str)
+    def choose_custom_wallpaper(self):
+        path, _ = QFileDialog.getOpenFileName(None, "选择自习室壁纸", "", "图片文件 (*.png *.jpg *.jpeg *.webp *.bmp)")
+        return str(Path(path).resolve()) if path else ""
+
+    @pyqtSlot(int, str)
+    def update_note(self, note_id, action):
+        if self.db.update_note(int(note_id), str(action)):
+            self.companion_message.emit("我收到你的回应啦。" if action == "like" else "这张纸条已经替你整理好了。")
 
     @pyqtSlot(result=str)
     def get_initial_state(self):
@@ -149,6 +210,8 @@ class StudyRoomBridge(QObject):
         data["streak"] = self.db.streak()
         trend = self.db.week_trend()
         data["trend"] = [{"date": row["date"].isoformat(), "focus_seconds": row["focus_seconds"]} for row in trend]
+        data["time_rewind"] = self.db.time_rewind()
+        data["recent_focus"] = self.db.recent_focus_sessions()
         return self._json(data)
 
     @pyqtSlot(int, int, int)
@@ -208,6 +271,12 @@ class StudyRoomBridge(QObject):
     def toggle_task(self, task_id):
         self.db.toggle_task(int(task_id))
         self._emit_tasks_and_stats()
+
+    @pyqtSlot(int)
+    def complete_task(self, task_id):
+        if self.db.complete_task(int(task_id)):
+            self._emit_tasks_and_stats()
+            self.companion_message.emit("这件事已经好好收进今天的完成清单了。")
 
     @pyqtSlot(int)
     def delete_task(self, task_id):
@@ -271,8 +340,16 @@ class StudyRoomBridge(QObject):
         if phase == "focus":
             self.db.add_focus_session(self._task_id, self.timer.task_name,
                                       self.timer.started_at, duration, True)
+            self.db.create_companion_note(self.timer.task_name, duration)
+            # 仅完整走完专注倒计时时播放；暂停、手动结束、休息结束均不触发。
+            play_sound("FinishedClock.mp3")
             self._emit_tasks_and_stats()
-            self.focus_completed.emit(self._json({"task_name": self.timer.task_name, "duration": duration}))
+            self.focus_completed.emit(self._json({
+                "task_id": self._task_id,
+                "task_name": self.timer.task_name,
+                "duration": duration,
+                "repeat_enabled": self.timer.repeat_enabled,
+            }))
             self.companion_message.emit("辛苦啦，这段时间你确实专注在重要的事情上。接下来可以喝口水，再决定是否继续。")
         else:
             self.companion_message.emit("休息结束了。准备好之后，再慢慢回到下一段专注吧。")

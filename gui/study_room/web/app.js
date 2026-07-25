@@ -1,4 +1,4 @@
-const STUDY_ROOM_UI_VERSION = '2026.07.25.5';
+const STUDY_ROOM_UI_VERSION = '2026.07.25.11';
 const RING_LENGTH = 860.8;
 const q = (selector) => document.querySelector(selector);
 const qa = (selector) => [...document.querySelectorAll(selector)];
@@ -9,6 +9,47 @@ let taskFilter = 'all';
 let selectedRange = 'today';
 let currentView = 'home';
 let editingTaskId = null;
+let completionTaskId = null;
+let spaceState = null;
+
+function applySpaceVisuals(settings = {}) {
+  const selected = (spaceState?.wallpapers || []).find(item => item.id === settings.wallpaper);
+  document.body.classList.toggle('has-space-wallpaper', Boolean(selected?.url));
+  document.documentElement.style.setProperty('--space-wallpaper', selected?.url ? `url("${selected.url}")` : 'none');
+  document.documentElement.style.setProperty('--space-wallpaper-opacity', String(Number(settings.wallpaper_opacity ?? .42)));
+  document.documentElement.style.setProperty('--space-mask-opacity', String(Number(settings.content_mask_opacity ?? .82)));
+  document.documentElement.style.setProperty('--space-wallpaper-size', settings.fit === 'contain' ? 'contain' : 'cover');
+}
+
+function eventText(item) {
+  const map = { task_created: '创建了任务', task_updated: '调整了任务设置', task_completed: '完成了任务', task_reopened: '重新打开了任务', task_deleted: '移除了任务', focus_completed: '完成了一段专注', focus_interrupted: '中断了一段专注' };
+  const duration = Number(item.details?.duration_seconds || 0);
+  return `${map[item.event_type] || '更新了自习室记录'}${item.task_name ? `：${item.task_name}` : ''}${duration ? ` · ${formatDuration(duration)}` : ''}`;
+}
+
+function renderSpace(data) {
+  if (!data) return;
+  spaceState = data;
+  const settings = data.settings || {};
+  applySpaceVisuals(settings);
+  q('#space-wallpaper-opacity').value = Math.round(Number(settings.wallpaper_opacity ?? .42) * 100);
+  q('#space-mask-opacity').value = Math.round(Number(settings.content_mask_opacity ?? .82) * 100);
+  q('#space-fit').value = settings.fit || 'cover';
+  q('#space-wallpaper-opacity-value').textContent = `${q('#space-wallpaper-opacity').value}%`;
+  q('#space-mask-opacity-value').textContent = `${q('#space-mask-opacity').value}%`;
+  const strip = q('#wallpaper-strip'); strip.innerHTML = '';
+  (data.wallpapers || []).forEach(item => { const button = document.createElement('button'); button.className = `wallpaper-option${item.id === settings.wallpaper ? ' active' : ''}`; button.dataset.wallpaper = item.id; button.innerHTML = `<span></span><strong></strong>`; if (item.url) button.firstChild.style.backgroundImage = `url("${item.url}")`; button.querySelector('strong').textContent = item.name; button.onclick = () => { spaceState.settings.wallpaper = item.id; renderSpace(spaceState); }; strip.appendChild(button); });
+  const notes = q('#space-notes'); notes.innerHTML = '';
+  const noteItems = data.notes || [];
+  if (!noteItems.length) notes.innerHTML = '<div class="space-empty">完成一次专注后，莲心会把第一张纸条留在这里。</div>';
+  noteItems.forEach(note => { const card = document.createElement('article'); card.className = `note-paper${note.favorited ? ' favorited' : ''}`; card.innerHTML = `<small>${formatSessionTime(note.created_at)} · ${formatDuration(note.duration_seconds)}</small><p></p><div><button data-action="like">${note.liked ? '♥ 已点赞' : '♡ 点赞'}</button><button data-action="favorite">${note.favorited ? '★ 已收藏' : '☆ 收藏'}</button><button data-action="hide">收起</button></div>`; card.querySelector('p').textContent = note.content; card.querySelectorAll('button').forEach(btn => btn.onclick = () => { bridge?.update_note(note.id, btn.dataset.action); setTimeout(refreshSpace, 80); }); if (note.lianxin_liked) card.querySelector('div').insertAdjacentHTML('beforeend', '<em>莲心也收下了这份喜欢</em>'); notes.appendChild(card); });
+  const events = q('#space-events'); events.innerHTML = '';
+  const eventItems = data.week_events || [];
+  if (!eventItems.length) events.innerHTML = '<div class="space-empty">这周还没有新的自习室足迹。</div>';
+  eventItems.forEach(item => { const row = document.createElement('div'); row.className = 'space-event'; row.innerHTML = `<i></i><div><strong></strong><small>${formatSessionTime(item.occurred_at)}</small></div>`; row.querySelector('strong').textContent = eventText(item); events.appendChild(row); });
+}
+
+function refreshSpace() { bridge?.get_space(payload => renderSpace(JSON.parse(payload))); }
 let toastTimer = null;
 let roomSettings = {
   focus_minutes: 25,
@@ -189,6 +230,32 @@ function renderTaskSelect(tasks) {
     select.appendChild(option);
   });
   if ([...select.options].some(option => option.value === selected)) select.value = selected;
+  renderTaskPicker();
+}
+
+function renderTaskPicker() {
+  const select = q('#task-select');
+  const button = q('#task-picker-button');
+  const menu = q('#task-picker-menu');
+  if (!select || !button || !menu) return;
+  button.textContent = select.selectedOptions[0]?.textContent || '选择今天要做的任务（可选）';
+  menu.innerHTML = '';
+  [...select.options].forEach(option => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = `task-picker-option${option.value === select.value ? ' selected' : ''}`;
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', option.value === select.value ? 'true' : 'false');
+    item.textContent = option.textContent;
+    item.onclick = () => {
+      select.value = option.value;
+      menu.classList.add('hidden');
+      button.setAttribute('aria-expanded', 'false');
+      renderTaskPicker();
+      previewSelectedTask();
+    };
+    menu.appendChild(item);
+  });
 }
 
 function comparisonText(stats) {
@@ -210,6 +277,108 @@ function positionChartTooltip(bar, event) {
   const y = barRect.top - plotRect.top;
   tooltip.style.left = `${Math.max(50, Math.min(plotRect.width - 50, x))}px`;
   tooltip.style.top = `${Math.max(32, y)}px`;
+}
+
+function formatRewindDate(value) {
+  const date = new Date(`${value}T12:00:00`);
+  const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${weekdays[date.getDay()]}`;
+}
+
+function localDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function rewindLevel(seconds) {
+  if (!seconds) return 'zero';
+  if (seconds < 25 * 60) return 'level-1';
+  if (seconds < 60 * 60) return 'level-2';
+  if (seconds < 120 * 60) return 'level-3';
+  return 'level-4';
+}
+
+function renderTimeRewind(data) {
+  const grid = q('#rewind-grid');
+  const months = q('#rewind-months');
+  const tooltip = q('#rewind-tooltip');
+  if (!grid || !months || !data) return;
+  const days = Array.isArray(data.days) ? data.days : [];
+  grid.innerHTML = '';
+  months.innerHTML = '';
+  tooltip.classList.add('hidden');
+  const seenMonths = new Set();
+  days.forEach((item, index) => {
+    const week = Math.floor(index / 7) + 1;
+    const date = new Date(`${item.date}T12:00:00`);
+    const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
+    if (!seenMonths.has(monthKey) && !item.future) {
+      seenMonths.add(monthKey);
+      const marker = document.createElement('span');
+      marker.style.gridColumn = String(week);
+      marker.textContent = date.getMonth() === 0 ? `${date.getFullYear()}年1月` : `${date.getMonth() + 1}月`;
+      months.appendChild(marker);
+    }
+    const seconds = Number(item.focus_seconds || 0);
+    const completed = Number(item.completed_sessions || 0);
+    const interrupted = Math.max(0, Number(item.sessions || 0) - completed);
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = `heat-cell ${item.future ? 'future' : rewindLevel(seconds)}`;
+    if (item.date === localDateKey()) cell.classList.add('today');
+    cell.style.gridColumn = String(week);
+    cell.style.gridRow = String(index % 7 + 1);
+    const details = seconds
+      ? `${formatRewindDate(item.date)}\n专注时长：${formatDuration(seconds)}\n完成专注：${completed}次 · 中断专注：${interrupted}次`
+      : `${formatRewindDate(item.date)}\n当日还没有专注记录`;
+    cell.title = details;
+    cell.setAttribute('aria-label', details.replaceAll('\n', '，'));
+    if (!item.future) {
+      const show = event => {
+        tooltip.innerHTML = `<strong>${formatRewindDate(item.date)}</strong><span>${seconds ? `专注时长：${formatDuration(seconds)}` : '当日还没有专注记录'}</span>${seconds ? `<small>完成专注：${completed}次 · 中断专注：${interrupted}次</small>` : ''}`;
+        const rect = cell.getBoundingClientRect();
+        tooltip.style.left = `${rect.left + rect.width / 2}px`;
+        tooltip.style.top = `${rect.top}px`;
+        tooltip.classList.remove('hidden');
+      };
+      cell.addEventListener('mouseenter', show);
+      cell.addEventListener('focus', show);
+      cell.addEventListener('mouseleave', () => tooltip.classList.add('hidden'));
+      cell.addEventListener('blur', () => tooltip.classList.add('hidden'));
+    }
+    grid.appendChild(cell);
+  });
+  q('#rewind-completed').textContent = `${Number(data.completed_sessions || 0)}次`;
+  q('#rewind-longest-streak').textContent = `${Number(data.longest_streak || 0)}日`;
+  q('#rewind-current-streak').textContent = `${Number(data.current_streak || 0)}日`;
+}
+
+function formatSessionTime(value) {
+  const date = new Date(String(value || '').replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) return '时间未知';
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function renderRecentFocus(items) {
+  const list = q('#recent-focus-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const sessions = Array.isArray(items) ? items : [];
+  if (!sessions.length) {
+    list.innerHTML = '<div class="recent-focus-empty">完成第一段专注后，这里会留下你的第一条记录。</div>';
+    return;
+  }
+  sessions.forEach(item => {
+    const row = document.createElement('div');
+    const completed = Boolean(item.completed);
+    row.className = `recent-focus-row ${completed ? 'completed' : 'interrupted'}`;
+    const state = completed ? '已完成' : '中断保存';
+    row.innerHTML = `<span class="recent-focus-dot" aria-hidden="true"></span><div><strong></strong><small>${formatSessionTime(item.ended_at || item.started_at)} · ${formatDuration(item.duration_seconds)}</small></div><em>${state}</em>`;
+    row.querySelector('strong').textContent = item.task_name || '未命名专注';
+    list.appendChild(row);
+  });
 }
 
 function renderStats(stats) {
@@ -237,7 +406,7 @@ function renderStats(stats) {
   axis.innerHTML = '';
   for (let value = axisMax; value >= 0; value -= axisStep) {
     const label = document.createElement('span');
-    label.textContent = minuteMode ? `${value}分` : `${value}时`;
+    label.textContent = minuteMode ? `${value}分钟` : `${value}小时`;
     axis.appendChild(label);
   }
   const grid = q('#chart-grid');
@@ -295,6 +464,8 @@ function renderStats(stats) {
     else note += ` ${comparisonText(stats)}。`;
   }
   q('#growth-note').textContent = note;
+  renderTimeRewind(stats.time_rewind);
+  renderRecentFocus(stats.recent_focus);
 }
 
 function switchView(view) {
@@ -305,6 +476,7 @@ function switchView(view) {
   const labels = { home: '开始专注', tasks: '任务清单', focus: '沉浸专注', stats: '成长记录', space: '我的空间', settings: '设置' };
   q('#page-kicker').textContent = labels[view] || '';
   if (view === 'stats') refreshStats();
+  if (view === 'space') refreshSpace();
 }
 
 function enterFocusView() {
@@ -402,6 +574,7 @@ function connectBridge() {
       timerState = { ...timerState, ...initial.timer };
       loadSettings(initial.settings);
       renderClock(initial.clock);
+      renderSpace(initial.space);
       const hour = new Date().getHours();
       const greeting = hour < 12 ? '早上好' : (hour < 18 ? '下午好' : '晚上好');
       q('#time-greeting').textContent = `${greeting}，${initial.user_name || '朋友'}`;
@@ -443,12 +616,18 @@ function connectBridge() {
     });
     bridge.statistics_changed.connect(() => refreshStats());
     bridge.companion_message.connect(setCompanion);
+    bridge.statistics_changed.connect(() => { if (currentView === 'space') refreshSpace(); });
     bridge.focus_completed.connect(payload => {
       const data = JSON.parse(payload);
       if (roomSettings.show_completion) {
         q('#completion-note').textContent = `本次专注已完成 · ${formatDuration(data.duration)}${data.task_name ? ` · 任务：${data.task_name}` : ''}`;
         q('#completion-note').classList.remove('hidden');
       }
+      const taskCard = q('#completion-task-card');
+      completionTaskId = Number(data.task_id) || null;
+      const canCompleteTask = completionTaskId && !data.repeat_enabled;
+      taskCard.classList.toggle('hidden', !canCompleteTask);
+      if (canCompleteTask) q('#completion-task-hint').textContent = `“${data.task_name || '当前任务'}”还要继续吗？`;
     });
   });
 }
@@ -464,9 +643,38 @@ function bindEvents() {
   });
   q('#start-focus').onclick = startSelectedFocus;
   q('#task-select').onchange = previewSelectedTask;
+  q('#task-picker-button').onclick = event => {
+    event.stopPropagation();
+    const menu = q('#task-picker-menu');
+    const nowHidden = menu.classList.toggle('hidden');
+    q('#task-picker-button').setAttribute('aria-expanded', nowHidden ? 'false' : 'true');
+  };
+  document.addEventListener('click', event => {
+    if (!q('#task-picker').contains(event.target)) {
+      q('#task-picker-menu').classList.add('hidden');
+      q('#task-picker-button').setAttribute('aria-expanded', 'false');
+    }
+  });
   q('#reenter-focus').onclick = enterFocusView;
   q('#pause-focus').onclick = () => bridge?.toggle_pause();
   q('#stop-focus').onclick = () => bridge?.stop_focus();
+  q('#completion-mark-task').onclick = () => {
+    if (!completionTaskId) return;
+    bridge?.complete_task(completionTaskId);
+    q('#completion-task-card').classList.add('hidden');
+    showToast('任务已标记完成。');
+    completionTaskId = null;
+  };
+  q('#completion-keep-task').onclick = () => {
+    q('#completion-task-card').classList.add('hidden');
+    completionTaskId = null;
+    showToast('任务会保留在清单里，下一轮继续。');
+  };
+  q('#space-wallpaper-opacity').oninput = () => { if (!spaceState) return; spaceState.settings.wallpaper_opacity = Number(q('#space-wallpaper-opacity').value) / 100; q('#space-wallpaper-opacity-value').textContent = `${q('#space-wallpaper-opacity').value}%`; applySpaceVisuals(spaceState.settings); };
+  q('#space-mask-opacity').oninput = () => { if (!spaceState) return; spaceState.settings.content_mask_opacity = Number(q('#space-mask-opacity').value) / 100; q('#space-mask-opacity-value').textContent = `${q('#space-mask-opacity').value}%`; applySpaceVisuals(spaceState.settings); };
+  q('#space-fit').onchange = () => { if (!spaceState) return; spaceState.settings.fit = q('#space-fit').value; applySpaceVisuals(spaceState.settings); };
+  q('#space-save').onclick = () => { if (!spaceState) return; const s = spaceState.settings; bridge?.save_space_settings(s.wallpaper, s.wallpaper_opacity, s.content_mask_opacity, s.fit, payload => renderSpace(JSON.parse(payload))); showToast('自习室布置已保存。'); };
+  q('#space-custom-wallpaper').onclick = () => bridge?.choose_custom_wallpaper(path => { if (!path || !spaceState) return; const s = spaceState.settings; bridge?.save_space_settings(path, s.wallpaper_opacity, s.content_mask_opacity, s.fit, payload => renderSpace(JSON.parse(payload))); });
   q('#focus-pause').onclick = () => bridge?.toggle_pause();
   q('#focus-stop').onclick = () => bridge?.stop_focus();
   q('#focus-back').onclick = leaveFocusView;
