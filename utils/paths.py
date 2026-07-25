@@ -43,7 +43,6 @@ def migrate_legacy_files():
     # 可选：迁移其他可能的数据文件
     other_files = [
         ("accompany_stats.json", "accompany_stats.json"),
-        ("pomodoro_stats.json", "pomodoro_stats.json"),
         ("todo_list.json", "todo_list.json"),
     ]
     for src_name, dst_name in other_files:

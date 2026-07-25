@@ -380,7 +380,6 @@ class CharacterWidget(QWidget):
         # 统一的功能卡片。语义色仅作为左侧细线，避免高饱和色块破坏主界面的一致性。
         self._btn_accompany = self._create_button("📊  陪伴时长", "#6C7BFF")
         self._btn_settings = self._create_button("⚙️  全局设置", "#8F96B2")
-        self._btn_pomodoro = self._create_button("🍅  番茄钟", "#E67E22")
         self._btn_study_room = self._create_button("📚  莲心自习室", "#C94B55")
         self._btn_api_config = self._create_button("🔑  API Key", "#F0A84B")
         self._btn_alarm = self._create_button("⏰  闹钟与提醒", "#E2647C")
@@ -422,7 +421,7 @@ class CharacterWidget(QWidget):
         scroll_layout.setContentsMargins(0, 0, 4, 0)
         scroll_layout.setSpacing(12)
         self._add_function_group(scroll_layout, "常用", (
-            self._btn_study_room, self._btn_pomodoro,
+            self._btn_study_room,
             self._btn_alarm,
             self._btn_diary, self._btn_accompany,
         ))
@@ -774,9 +773,6 @@ class CharacterWidget(QWidget):
 
     def get_settings_button(self):
         return self._btn_settings
-
-    def get_pomodoro_button(self):
-        return self._btn_pomodoro
 
     def get_study_room_button(self):
         return self._btn_study_room

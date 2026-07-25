@@ -27,7 +27,6 @@ from gui.input_panel       import InputPanel
 from gui.history_dialog    import HistoryDialog
 from gui.proactive_dialog  import ProactiveDialog
 from gui.settings_dialog   import SettingsDialog
-from gui.pomodoro_dialog   import PomodoroDialog
 from gui.study_room import StudyRoomWebWindow
 from gui.api_config_dialog import ApiConfigDialog
 from gui.alarm_dialog      import AlarmDialog
@@ -50,7 +49,6 @@ from utils.accompany_stats  import AccompanyStats
 
 from utils.proactive_chat import ProactiveChatScheduler
 from utils.settings import get_settings
-from utils.pomodoro_stats import PomodoroStats
 from utils.autostart import check_network
 from utils.alarm_manager import AlarmManager, REPEAT_LABELS
 from utils.todo_manager import TodoManager
@@ -146,11 +144,8 @@ class MainWindow(QMainWindow):
         self._proactive_scheduler = ProactiveChatScheduler()
 
 
-        # ── 番茄钟模块 ────────────────────────────────────────
-        self._pomodoro_dialog: PomodoroDialog | None = None
+        # ── 自习室模块 ────────────────────────────────────────
         self._study_room_window: StudyRoomWebWindow | None = None
-        self._pomodoro_stats = PomodoroStats()
-        self._pomodoro_active = False  # 番茄钟是否运行中
 
         # ── 备忘本模块 ────────────────────────────────────────
         self.note_dialog = NoteDialog(None)
@@ -820,7 +815,6 @@ class MainWindow(QMainWindow):
         self._char_widget.get_accompany_button().clicked.connect(self._on_accompany_clicked)
 
         self._char_widget.get_settings_button().clicked.connect(self._on_settings_clicked)
-        self._char_widget.get_pomodoro_button().clicked.connect(self._on_pomodoro_clicked)
         self._char_widget.get_study_room_button().clicked.connect(self._on_study_room_clicked)
         self._char_widget.get_api_config_button().clicked.connect(self._show_api_config)
         self._char_widget.get_alarm_button().clicked.connect(self._on_alarm_clicked)
@@ -2097,7 +2091,7 @@ class MainWindow(QMainWindow):
         self._accompany_stats.reload()
         self._chat_widget.add_system_tip("📅 初识日期已更新，陪伴统计已同步。")
 
-    # ── 番茄钟 ─────────────────────────────────────────────
+    # ── 莲心自习室 ──────────────────────────────────────────
 
     def _on_study_room_clicked(self):
         play_sound("ButtonAll.mp3")
@@ -2118,31 +2112,6 @@ class MainWindow(QMainWindow):
 
     def _on_study_room_closed(self):
         self._study_room_window = None
-
-    def _on_pomodoro_clicked(self):
-        play_sound("ButtonAll.mp3")
-        if self._pomodoro_dialog is None:
-            self._pomodoro_dialog = PomodoroDialog(self)
-            self._pomodoro_dialog.proactive_message.connect(self._on_pomodoro_message)
-            self._pomodoro_dialog.finished.connect(self._on_pomodoro_finished)
-        self._pomodoro_active = True
-        self._duty_scheduler.pause()
-    
-        self._pomodoro_dialog.show()
-        self._pomodoro_dialog.raise_()
-        self._pomodoro_dialog.activateWindow()
-
-    def _on_pomodoro_finished(self):
-        self._pomodoro_active = False
-        self._duty_scheduler.resume()
-       
-
-    def _on_pomodoro_message(self, text: str):
-        self._agent.get_history_manager().save_message(
-            self._agent._session_id, "assistant", f"[番茄钟] {text}"
-        )
-        self._chat_widget.add_ai_message(text)
-        self._speak(text)
 
     # ── 闹钟功能 ─────────────────────────────────────────────
 
@@ -3238,8 +3207,6 @@ class MainWindow(QMainWindow):
         self._todo_reminder_timer.stop()
         self._stop_autostart_net_poll()
         self._save_music_state()
-        if self._pomodoro_dialog:
-            self._pomodoro_dialog.close()
         if self._study_room_window:
             self._study_room_window.shutdown()
         

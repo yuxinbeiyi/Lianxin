@@ -28,7 +28,7 @@ class CharacterWidgetFunctionPanelTests(unittest.TestCase):
 
     def test_keeps_all_business_button_interfaces(self):
         getters = (
-            "get_accompany_button", "get_settings_button", "get_pomodoro_button",
+            "get_accompany_button", "get_settings_button", "get_study_room_button",
             "get_api_config_button", "get_alarm_button", "get_camera_button",
             "get_emotion_button", "get_sound_button", "get_memory_button",
             "get_network_button", "get_capability_button", "get_persona_button",
