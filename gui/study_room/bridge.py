@@ -50,9 +50,10 @@ class StudyRoomBridge(QObject):
         self._clock_timer.timeout.connect(self._emit_clock)
         self._clock_timer.start()
         self._stats_timer = QTimer(self)
-        self._stats_timer.setInterval(30_000)
+        # 年度热力图和周趋势包含多次数据库聚合，只在用户打开成长记录时刷新。
+        # 一分钟一次已经足够显示“今日打开时长”，并避免隐藏页面持续占用主线程。
+        self._stats_timer.setInterval(60_000)
         self._stats_timer.timeout.connect(self._emit_statistics)
-        self._stats_timer.start()
 
     @staticmethod
     def _json(payload):
@@ -299,6 +300,16 @@ class StudyRoomBridge(QObject):
     def refresh_statistics(self):
         self.statistics_changed.emit(self._json(self._stats_payload()))
 
+    @pyqtSlot(bool)
+    def set_statistics_active(self, active):
+        """仅在成长记录可见时保留周期统计刷新。"""
+        active = bool(active)
+        if active:
+            if not self._stats_timer.isActive():
+                self._stats_timer.start()
+        else:
+            self._stats_timer.stop()
+
     @pyqtSlot(int, int, bool, bool, bool, bool)
     def save_settings(self, focus_minutes, break_minutes, auto_break, auto_fullscreen,
                       show_completion, animations):
@@ -358,6 +369,8 @@ class StudyRoomBridge(QObject):
         if self._closed:
             return
         self._closed = True
+        self._clock_timer.stop()
+        self._stats_timer.stop()
         if self.timer.active:
             phase = self.timer.phase
             elapsed = self.timer.stop()

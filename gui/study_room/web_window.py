@@ -27,6 +27,9 @@ class StudyRoomWebWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("莲心自习室")
+        # 主窗口会在下一次打开时创建新实例，因此关闭后必须释放旧 WebEngine，
+        # 否则反复开关会累积渲染进程和后台定时器。
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setMinimumSize(980, 680)
         self.resize(1380, 860)
         self._is_fullscreen = False
@@ -112,5 +115,4 @@ class StudyRoomWebWindow(QMainWindow):
 
     def shutdown(self):
         self._bridge.shutdown()
-        self.hide()
-        self.closed.emit()
+        self.close()

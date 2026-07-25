@@ -1,4 +1,4 @@
-const STUDY_ROOM_UI_VERSION = '2026.07.25.13';
+const STUDY_ROOM_UI_VERSION = '2026.07.25.15';
 const RING_LENGTH = 860.8;
 const q = (selector) => document.querySelector(selector);
 const qa = (selector) => [...document.querySelectorAll(selector)];
@@ -11,13 +11,29 @@ let currentView = 'home';
 let editingTaskId = null;
 let completionTaskId = null;
 let spaceState = null;
+let lastRewindSignature = '';
+
+function setTextIfChanged(selector, value) {
+  const element = q(selector);
+  if (element && element.textContent !== value) element.textContent = value;
+}
+
+function setStyleIfChanged(element, property, value) {
+  if (element && element.style[property] !== value) element.style[property] = value;
+}
 
 function applySpaceVisuals(settings = {}) {
   const selected = (spaceState?.wallpapers || []).find(item => item.id === settings.wallpaper);
+  const wallpaperOpacity = Math.max(0, Math.min(1, Number(settings.wallpaper_opacity ?? .42)));
+  const maskOpacity = Math.max(.35, Math.min(1, Number(settings.content_mask_opacity ?? .82)));
+  // 过去由 body 伪元素和 room-shell 各绘制一次壁纸，代价较高。
+  // 合并后用等价的不透明度保留“壁纸透明度 × 内容遮罩”两项控制。
+  const effectiveMask = 1 - wallpaperOpacity * (1 - maskOpacity);
   document.body.classList.toggle('has-space-wallpaper', Boolean(selected?.url));
   document.documentElement.style.setProperty('--space-wallpaper', selected?.url ? `url("${selected.url}")` : 'none');
-  document.documentElement.style.setProperty('--space-wallpaper-opacity', String(Number(settings.wallpaper_opacity ?? .42)));
-  document.documentElement.style.setProperty('--space-mask-opacity', String(Number(settings.content_mask_opacity ?? .82)));
+  document.documentElement.style.setProperty('--space-wallpaper-opacity', String(wallpaperOpacity));
+  document.documentElement.style.setProperty('--space-mask-opacity', String(maskOpacity));
+  document.documentElement.style.setProperty('--space-effective-mask', String(effectiveMask));
   document.documentElement.style.setProperty('--space-wallpaper-size', settings.fit === 'contain' ? 'contain' : 'cover');
 }
 
@@ -38,7 +54,20 @@ function renderSpace(data) {
   q('#space-wallpaper-opacity-value').textContent = `${q('#space-wallpaper-opacity').value}%`;
   q('#space-mask-opacity-value').textContent = `${q('#space-mask-opacity').value}%`;
   const strip = q('#wallpaper-strip'); strip.innerHTML = '';
-  (data.wallpapers || []).forEach(item => { const button = document.createElement('button'); button.className = `wallpaper-option${item.id === settings.wallpaper ? ' active' : ''}`; button.dataset.wallpaper = item.id; button.innerHTML = `<span></span><strong></strong>`; if (item.url) button.firstChild.style.backgroundImage = `url("${item.url}")`; button.querySelector('strong').textContent = item.name; button.onclick = () => { spaceState.settings.wallpaper = item.id; renderSpace(spaceState); }; strip.appendChild(button); });
+  (data.wallpapers || []).forEach(item => {
+    const button = document.createElement('button');
+    button.className = `wallpaper-option${item.id === settings.wallpaper ? ' active' : ''}`;
+    button.dataset.wallpaper = item.id;
+    button.innerHTML = `<img loading="lazy" decoding="async" alt=""><strong></strong>`;
+    if (item.url) button.firstChild.src = item.url;
+    button.querySelector('strong').textContent = item.name;
+    button.onclick = () => {
+      spaceState.settings.wallpaper = item.id;
+      applySpaceVisuals(spaceState.settings);
+      qa('.wallpaper-option').forEach(option => option.classList.toggle('active', option === button));
+    };
+    strip.appendChild(button);
+  });
   const notes = q('#space-notes'); notes.innerHTML = '';
   const noteItems = data.notes || [];
   if (!noteItems.length) notes.innerHTML = '<div class="space-empty">完成一次专注后，莲心会把第一张纸条留在这里。</div>';
@@ -105,6 +134,10 @@ function phaseLabel() {
 }
 
 function renderTimer() {
+  // 倒计时只更新当前可见的那套圆环。旧实现每秒同时修改首页和全屏页，
+  // 即使其中一页 display:none，也会触发两套 SVG 样式失效与重绘。
+  const focusVisible = currentView === 'focus';
+  if (!focusVisible && currentView !== 'home') return;
   const remaining = Math.max(0, Number(timerState.remaining) || 0);
   const total = Math.max(1, Number(timerState.total) || 1);
   const display = `${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`;
@@ -112,24 +145,33 @@ function renderTimer() {
   const dashOffset = RING_LENGTH * (1 - progress);
   const isBreak = timerState.phase === 'break';
   const status = timerState.paused ? '计时已暂停，准备好再继续' : (isBreak ? '让眼睛和思绪都休息一下' : (timerState.active ? '保持自己的节奏' : '选择一个任务或常用时长'));
+  const timerSelector = focusVisible ? '#focus-timer-value' : '#timer-value';
+  const phaseSelector = focusVisible ? '#focus-phase-value' : '#phase-value';
+  const statusSelector = focusVisible ? '#focus-status' : '#timer-status';
+  const ring = q(focusVisible ? '#focus-ring-progress' : '#ring-progress');
+  const wrap = ring?.closest('.timer-wrap');
+  setTextIfChanged(timerSelector, display);
+  setTextIfChanged(phaseSelector, phaseLabel());
+  setTextIfChanged(statusSelector, status);
+  setStyleIfChanged(ring, 'strokeDashoffset', String(dashOffset));
+  wrap?.classList.toggle('is-break', isBreak);
+  wrap?.querySelectorAll('.ring-gradient-start').forEach(stop => {
+    const color = isBreak ? '#a9d0bb' : '#f3cf72';
+    if (stop.getAttribute('stop-color') !== color) stop.setAttribute('stop-color', color);
+  });
+  wrap?.querySelectorAll('.ring-gradient-end').forEach(stop => {
+    const color = isBreak ? '#5b927d' : '#a9633c';
+    if (stop.getAttribute('stop-color') !== color) stop.setAttribute('stop-color', color);
+  });
 
-  q('#timer-value').textContent = display;
-  q('#focus-timer-value').textContent = display;
-  q('#phase-value').textContent = phaseLabel();
-  q('#focus-phase-value').textContent = phaseLabel();
-  q('#timer-status').textContent = status;
-  q('#focus-status').textContent = status;
-  q('#ring-progress').style.strokeDashoffset = String(dashOffset);
-  q('#focus-ring-progress').style.strokeDashoffset = String(dashOffset);
-  qa('.timer-wrap').forEach(item => item.classList.toggle('is-break', isBreak));
-  qa('.ring-gradient-start').forEach(stop => stop.setAttribute('stop-color', isBreak ? '#a9d0bb' : '#f3cf72'));
-  qa('.ring-gradient-end').forEach(stop => stop.setAttribute('stop-color', isBreak ? '#5b927d' : '#a9633c'));
-
-  const selectedText = q('#task-select').selectedOptions[0]?.textContent;
-  q('#focus-task-name').textContent = timerState.task_name || (selectedText && q('#task-select').value !== '-1' ? selectedText : '未绑定任务');
-  q('#focus-badge').textContent = timerState.paused ? '莲心在等你回来' : (isBreak ? '莲心陪你休息' : '莲心陪伴中');
-  q('#pause-focus').textContent = timerState.paused ? '继续' : '暂停';
-  q('#focus-pause').textContent = timerState.paused ? '继续' : '暂停';
+  if (focusVisible) {
+    const selectedText = q('#task-select').selectedOptions[0]?.textContent;
+    setTextIfChanged('#focus-task-name', timerState.task_name || (selectedText && q('#task-select').value !== '-1' ? selectedText : '未绑定任务'));
+    setTextIfChanged('#focus-badge', timerState.paused ? '莲心在等你回来' : (isBreak ? '莲心陪你休息' : '莲心陪伴中'));
+    setTextIfChanged('#focus-pause', timerState.paused ? '继续' : '暂停');
+  } else {
+    setTextIfChanged('#pause-focus', timerState.paused ? '继续' : '暂停');
+  }
 }
 
 function updateGoal(tasks = allTasks) {
@@ -306,6 +348,17 @@ function renderTimeRewind(data) {
   const tooltip = q('#rewind-tooltip');
   if (!grid || !months || !data) return;
   const days = Array.isArray(data.days) ? data.days : [];
+  setTextIfChanged('#rewind-completed', `${Number(data.completed_sessions || 0)}次`);
+  setTextIfChanged('#rewind-longest-streak', `${Number(data.longest_streak || 0)}日`);
+  setTextIfChanged('#rewind-current-streak', `${Number(data.current_streak || 0)}日`);
+  const rewindSignature = JSON.stringify({
+    first: days[0]?.date || '',
+    last: days[days.length - 1]?.date || '',
+    values: days.filter(item => Number(item.focus_seconds || 0) > 0)
+      .map(item => [item.date, item.focus_seconds, item.sessions, item.completed_sessions]),
+  });
+  if (rewindSignature === lastRewindSignature && grid.childElementCount === days.length) return;
+  lastRewindSignature = rewindSignature;
   grid.innerHTML = '';
   months.innerHTML = '';
   tooltip.classList.add('hidden');
@@ -334,28 +387,39 @@ function renderTimeRewind(data) {
     const details = seconds
       ? `${formatRewindDate(item.date)}\n专注时长：${formatDuration(seconds)}\n完成专注：${completed}次 · 中断专注：${interrupted}次`
       : `${formatRewindDate(item.date)}\n当日还没有专注记录`;
-    cell.title = details;
+    // 不使用 title：Qt WebEngine 会额外绘制原生深色提示，和咖啡色悬停卡片重叠，
+    // 还会在两种提示之间切换时造成闪烁。
     // Qt 5 自带 Chromium 的版本较旧，并不支持 String.prototype.replaceAll；
     // 这里若抛错会让整张年度热力图在第一个日期格停止渲染。
     cell.setAttribute('aria-label', details.split('\n').join('，'));
     if (!item.future) {
-      const show = event => {
-        tooltip.innerHTML = `<strong>${formatRewindDate(item.date)}</strong><span>${seconds ? `专注时长：${formatDuration(seconds)}` : '当日还没有专注记录'}</span>${seconds ? `<small>完成专注：${completed}次 · 中断专注：${interrupted}次</small>` : ''}`;
-        const rect = cell.getBoundingClientRect();
-        tooltip.style.left = `${rect.left + rect.width / 2}px`;
-        tooltip.style.top = `${rect.top}px`;
-        tooltip.classList.remove('hidden');
-      };
-      cell.addEventListener('mouseenter', show);
-      cell.addEventListener('focus', show);
-      cell.addEventListener('mouseleave', () => tooltip.classList.add('hidden'));
-      cell.addEventListener('blur', () => tooltip.classList.add('hidden'));
+      cell.dataset.dateLabel = formatRewindDate(item.date);
+      cell.dataset.durationLabel = seconds ? `专注时长：${formatDuration(seconds)}` : '当日还没有专注记录';
+      cell.dataset.sessionLabel = seconds ? `完成专注：${completed}次 · 中断专注：${interrupted}次` : '';
     }
     grid.appendChild(cell);
   });
-  q('#rewind-completed').textContent = `${Number(data.completed_sessions || 0)}次`;
-  q('#rewind-longest-streak').textContent = `${Number(data.longest_streak || 0)}日`;
-  q('#rewind-current-streak').textContent = `${Number(data.current_streak || 0)}日`;
+}
+
+function showRewindTooltip(target) {
+  const cell = target?.closest?.('.heat-cell:not(.future)');
+  const tooltip = q('#rewind-tooltip');
+  if (!cell || !tooltip || !q('#rewind-grid').contains(cell)) return;
+  tooltip.innerHTML = `<strong>${cell.dataset.dateLabel}</strong><span>${cell.dataset.durationLabel}</span>${cell.dataset.sessionLabel ? `<small>${cell.dataset.sessionLabel}</small>` : ''}`;
+  const rect = cell.getBoundingClientRect();
+  tooltip.style.left = `${rect.left + rect.width / 2}px`;
+  tooltip.style.top = `${rect.top}px`;
+  tooltip.classList.remove('hidden');
+}
+
+function bindRewindEvents() {
+  const grid = q('#rewind-grid');
+  const tooltip = q('#rewind-tooltip');
+  if (!grid || !tooltip) return;
+  grid.addEventListener('mouseover', event => showRewindTooltip(event.target));
+  grid.addEventListener('focusin', event => showRewindTooltip(event.target));
+  grid.addEventListener('mouseout', () => tooltip.classList.add('hidden'));
+  grid.addEventListener('focusout', () => tooltip.classList.add('hidden'));
 }
 
 function formatSessionTime(value) {
@@ -478,8 +542,10 @@ function switchView(view) {
   qa('.view').forEach(section => section.classList.toggle('active', section.id === `view-${view}`));
   const labels = { home: '开始专注', tasks: '任务清单', focus: '沉浸专注', stats: '成长记录', space: '我的空间', settings: '设置' };
   q('#page-kicker').textContent = labels[view] || '';
+  bridge?.set_statistics_active(view === 'stats');
   if (view === 'stats') refreshStats();
   if (view === 'space') refreshSpace();
+  if (view === 'home' || view === 'focus') renderTimer();
 }
 
 function enterFocusView() {
@@ -494,7 +560,10 @@ function leaveFocusView() {
 
 function refreshStats() {
   if (!bridge || currentView !== 'stats') return;
-  bridge.get_statistics(selectedRange, payload => renderStats(JSON.parse(payload)));
+  const requestedRange = selectedRange;
+  bridge.get_statistics(requestedRange, payload => {
+    if (currentView === 'stats' && selectedRange === requestedRange) renderStats(JSON.parse(payload));
+  });
 }
 
 function previewSelectedTask() {
@@ -573,11 +642,13 @@ function connectBridge() {
       const initial = JSON.parse(payload);
       renderTasks(initial.tasks);
       renderTaskSelect(initial.tasks);
-      renderStats(initial.stats);
       timerState = { ...timerState, ...initial.timer };
       loadSettings(initial.settings);
       renderClock(initial.clock);
-      renderSpace(initial.space);
+      // 首页只应用当前背景，不提前构建隐藏的壁纸列表和 371 个年度热力格。
+      // 对应页面首次打开时再按需渲染，降低启动时的图片解码和 DOM 压力。
+      spaceState = initial.space;
+      applySpaceVisuals(initial.space?.settings || {});
       const hour = new Date().getHours();
       const greeting = hour < 12 ? '早上好' : (hour < 18 ? '下午好' : '晚上好');
       q('#time-greeting').textContent = `${greeting}，${initial.user_name || '朋友'}`;
@@ -643,6 +714,7 @@ function connectBridge() {
 }
 
 function bindEvents() {
+  bindRewindEvents();
   qa('.nav-item').forEach(button => button.onclick = () => switchView(button.dataset.view));
   qa('.preset').forEach(button => button.onclick = () => {
     if (timerState.active) return showToast('当前计时进行中，结束后才能更换时长。');
