@@ -56,6 +56,7 @@ class _AxisBar(QWidget):
         else:
             painter.setBrush(self.color)
             painter.drawRoundedRect(rect.left(), rect.top(), int(rect.width() * self.value), rect.height(), 3, 3)
+        painter.end()
 
 
 class JiwenStatusWidget(QWidget):

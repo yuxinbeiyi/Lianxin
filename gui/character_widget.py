@@ -381,6 +381,7 @@ class CharacterWidget(QWidget):
         self._btn_accompany = self._create_button("📊  陪伴时长", "#6C7BFF")
         self._btn_settings = self._create_button("⚙️  全局设置", "#8F96B2")
         self._btn_pomodoro = self._create_button("🍅  番茄钟", "#E67E22")
+        self._btn_study_room = self._create_button("📚  莲心自习室", "#C94B55")
         self._btn_api_config = self._create_button("🔑  API Key", "#F0A84B")
         self._btn_alarm = self._create_button("⏰  闹钟与提醒", "#E2647C")
         self._btn_camera = self._create_button("👁️  视觉理解", "#5B9A8B")
@@ -421,7 +422,8 @@ class CharacterWidget(QWidget):
         scroll_layout.setContentsMargins(0, 0, 4, 0)
         scroll_layout.setSpacing(12)
         self._add_function_group(scroll_layout, "常用", (
-            self._btn_pomodoro, self._btn_alarm,
+            self._btn_study_room, self._btn_pomodoro,
+            self._btn_alarm,
             self._btn_diary, self._btn_accompany,
         ))
         self._add_function_group(scroll_layout, "莲心", (
@@ -775,6 +777,9 @@ class CharacterWidget(QWidget):
 
     def get_pomodoro_button(self):
         return self._btn_pomodoro
+
+    def get_study_room_button(self):
+        return self._btn_study_room
 
     def get_api_config_button(self):
         return self._btn_api_config

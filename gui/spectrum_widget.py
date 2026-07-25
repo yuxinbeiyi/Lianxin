@@ -80,3 +80,4 @@ class SpectrumWidget(QWidget):
             rect_h = max(2, int(h))
             y = height - rect_h
             painter.fillRect(x, y, rect_w, rect_h, gradient)
+        painter.end()

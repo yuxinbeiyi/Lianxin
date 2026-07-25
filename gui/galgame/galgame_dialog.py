@@ -369,6 +369,7 @@ class GalgameDialog(QWidget):
             sp.addRoundedRect(float(sr.x()), float(sr.y()), float(sr.width()), float(sr.height()), 12, 12)
             painter.setPen(QColor(0, 0, 0, 10 - i * 3))
             painter.drawPath(sp)
+        painter.end()
 
     # ── 鼠标拖拽 ──
     def _get_resize_edge(self, pos):

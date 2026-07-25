@@ -82,6 +82,7 @@ class BackgroundWidget(QWidget):
         # of it, so lowering its opacity never reveals the user's desktop.
         painter.fillRect(self.rect(), QColor("#10162A"))
         if self._pixmap.isNull() or self._opacity <= 0:
+            painter.end()
             return
         target = self.rect()
         if self._fit_mode == "stretch":
@@ -94,6 +95,7 @@ class BackgroundWidget(QWidget):
         x = target.x() + (target.width() - scaled.width()) // 2
         y = target.y() + (target.height() - scaled.height()) // 2
         painter.drawPixmap(x, y, scaled)
+        painter.end()
 
 
 class FrostedPanel(QWidget):
@@ -135,3 +137,4 @@ class FrostedPanel(QWidget):
                 painter.drawLine(x, 0, x + self.height(), self.height())
         painter.setPen(QColor(150, 180, 255, min(55, round(alpha * 0.22))))
         painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10)
+        painter.end()

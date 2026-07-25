@@ -139,6 +139,7 @@ class CircularAvatar(QLabel):
         if self._border:
             painter.setPen(QColor("#AAB4FF" if self.role == "assistant" else "#8BD8BA"))
             painter.setBrush(Qt.NoBrush); painter.drawEllipse(rect)
+        painter.end()
 
 
 class _CropCanvas(QLabel):
@@ -151,6 +152,7 @@ class _CropCanvas(QLabel):
         pos = QPoint((self.width()-base.width())//2 + self.offset.x(), (self.height()-base.height())//2 + self.offset.y()); p.drawPixmap(pos, base)
         side = min(self.width(), self.height()) - 36; x=(self.width()-side)//2; y=(self.height()-side)//2
         p.setPen(QColor("#FFFFFF")); p.drawRect(x, y, side, side)
+        p.end()
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton: self._drag = e.pos()
     def mouseMoveEvent(self, e):

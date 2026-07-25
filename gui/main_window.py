@@ -28,6 +28,7 @@ from gui.history_dialog    import HistoryDialog
 from gui.proactive_dialog  import ProactiveDialog
 from gui.settings_dialog   import SettingsDialog
 from gui.pomodoro_dialog   import PomodoroDialog
+from gui.study_room import StudyRoomWebWindow
 from gui.api_config_dialog import ApiConfigDialog
 from gui.alarm_dialog      import AlarmDialog
 from gui.qq_settings_dialog import QqSettingsDialog
@@ -147,6 +148,7 @@ class MainWindow(QMainWindow):
 
         # ── 番茄钟模块 ────────────────────────────────────────
         self._pomodoro_dialog: PomodoroDialog | None = None
+        self._study_room_window: StudyRoomWebWindow | None = None
         self._pomodoro_stats = PomodoroStats()
         self._pomodoro_active = False  # 番茄钟是否运行中
 
@@ -819,6 +821,7 @@ class MainWindow(QMainWindow):
 
         self._char_widget.get_settings_button().clicked.connect(self._on_settings_clicked)
         self._char_widget.get_pomodoro_button().clicked.connect(self._on_pomodoro_clicked)
+        self._char_widget.get_study_room_button().clicked.connect(self._on_study_room_clicked)
         self._char_widget.get_api_config_button().clicked.connect(self._show_api_config)
         self._char_widget.get_alarm_button().clicked.connect(self._on_alarm_clicked)
         self._char_widget.get_camera_button().clicked.connect(self._on_camera_capture)
@@ -2096,6 +2099,26 @@ class MainWindow(QMainWindow):
 
     # ── 番茄钟 ─────────────────────────────────────────────
 
+    def _on_study_room_clicked(self):
+        play_sound("ButtonAll.mp3")
+        if self._study_room_window is None:
+            self._study_room_window = StudyRoomWebWindow(self)
+            self._study_room_window.focus_completed.connect(self._on_study_focus_completed)
+            self._study_room_window.closed.connect(self._on_study_room_closed)
+        self._study_room_window.show()
+        self._study_room_window.raise_()
+        self._study_room_window.activateWindow()
+
+    def _on_study_focus_completed(self, task_name: str, duration: int):
+        minutes = max(1, int(duration) // 60)
+        text = f"📚 专注完成啦，这次坚持了 {minutes} 分钟，辛苦了。"
+        if task_name:
+            text = f"📚 你完成了「{task_name}」的 {minutes} 分钟专注，辛苦啦。"
+        self._chat_widget.add_system_tip(text)
+
+    def _on_study_room_closed(self):
+        self._study_room_window = None
+
     def _on_pomodoro_clicked(self):
         play_sound("ButtonAll.mp3")
         if self._pomodoro_dialog is None:
@@ -3217,6 +3240,8 @@ class MainWindow(QMainWindow):
         self._save_music_state()
         if self._pomodoro_dialog:
             self._pomodoro_dialog.close()
+        if self._study_room_window:
+            self._study_room_window.shutdown()
         
         # ── 停止待机模式相关线程（新版）──
         if hasattr(self, '_note_poll_timer') and self._note_poll_timer:
