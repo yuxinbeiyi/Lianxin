@@ -166,7 +166,7 @@ TOOL_ALIASES = {
 }
 
 
-DEFAULT_GROUP = "🔧 其他（音乐盒+日记本+备忘本+OCR相机）"
+DEFAULT_GROUP = "🔧 其他（音乐盒+时间胶囊+备忘本+OCR相机）"
 
 
 def get_tool_group(tool_name: str) -> str:

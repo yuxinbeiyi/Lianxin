@@ -57,8 +57,8 @@ from utils.todo_manager import TodoManager
 from datetime import datetime
 import sys
 import threading
-from utils.diary import init_diary_db, DiaryWorker, get_all_diaries
-from gui.diary_dialog import DiaryDialog
+from utils.diary import init_diary_db, DiaryWorker
+from gui.time_capsule.web_window import TimeCapsuleWindow
 from config import get_diary_config
 import pygame
 import random
@@ -1188,9 +1188,12 @@ class MainWindow(QMainWindow):
             action_keywords = ["打开", "启动", "运行", "执行", "开启"]
             if any(kw in text for kw in action_keywords):
                 text = "[重要：你必须调用相应工具来执行(比如open_app)，不要直接回复结果。]\n" + text
-            diary_keywords = ["读日记", "日记里", "回忆一下日记", "看看日记", "日记写了什么", "读一下", "最近日记"]
+            diary_keywords = [
+                "读日记", "日记里", "回忆一下日记", "看看日记", "日记写了什么",
+                "时间胶囊", "共同书页", "回忆某天", "读一下", "最近日记",
+            ]
             if any(kw in text for kw in diary_keywords):
-                text = "[重要：你必须调用 read_diary 工具来获取日记内容，不要直接回答。]\n" + text
+                text = "[重要：你必须调用 read_diary 工具读取时间胶囊中的真实内容，不要凭空回答。]\n" + text
         if self._speaker_worker and self._speaker_worker.isRunning():
             self._speaker.stop()
 
@@ -2402,7 +2405,7 @@ class MainWindow(QMainWindow):
         self._set_normal_state()
     def _on_diary_finished(self, success: bool, result: str):
         if success:
-            self._chat_widget.add_system_tip(f"📔 莲心已写好 {result} 的日记")
+            self._chat_widget.add_system_tip(f"🌙 莲心已在 {result} 的时间胶囊里留下了她的书页")
             # 播放写完成音效
             try:
                 if not pygame.mixer.get_init():
@@ -2415,86 +2418,11 @@ class MainWindow(QMainWindow):
                     print(f"[写日记音效] 文件不存在: {sound_path}")
             except Exception as e:
                 print(f"[写日记音效] 播放失败: {e}")
-            # 刷新日记本列表
+            # 刷新时间胶囊
             if self._diary_dialog is not None and self._diary_dialog.isVisible():
-                self._diary_dialog._load_diaries()
+                self._diary_dialog.refresh(result)
         else:
-            self._chat_widget.add_system_tip(f"📔 日记生成失败：{result}")
-
-
-    def _show_full_content(self, content):
-        # 播放随机翻页音效
-        try:
-            # 确保 pygame.mixer 已初始化
-            if not pygame.mixer.get_init():
-                pygame.mixer.init()
-            from utils.resource_path import get_asset_path
-            sound_dir = get_asset_path("sound")
-            page_files = ["page1.mp3", "page2.mp3"]
-            selected = random.choice(page_files)
-            sound_path = sound_dir / selected
-            if sound_path.exists():
-                pygame.mixer.Sound(str(sound_path)).play()
-            else:
-                print(f"[翻页音效] 文件不存在: {sound_path}")
-        except Exception as e:
-            print(f"[翻页音效] 播放失败: {e}")
-
-        # 以下为原有弹窗代码（保持不变）
-        dialog = QDialog(self)
-        dialog.setWindowTitle("完整日记")
-        dialog.setMinimumSize(500, 400)
-        dialog.resize(550, 450)
-        
-        dialog.setStyleSheet("""
-            QDialog {
-                background-color: #FDF8F0;
-            }
-        """)
-        
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(16, 16, 16, 16)
-        
-        text_edit = QTextEdit()
-        text_edit.setPlainText(content)
-        text_edit.setReadOnly(True)
-        text_edit.setFont(QFont("Microsoft YaHei UI", 12))
-        text_edit.setStyleSheet("""
-            QTextEdit {
-                background-color: #FFF8F0;
-                color: #4A2A1A;
-                border: 1px solid #E8D8C0;
-                border-radius: 8px;
-                padding: 12px;
-                font-size: 12pt;
-            }
-            QTextEdit:focus {
-                border: 1px solid #D8C8A0;
-            }
-        """)
-        layout.addWidget(text_edit)
-        
-        btn = QPushButton("关闭")
-        btn.setFixedSize(80, 30)
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3D3028;
-                color: #D8C0A0;
-                border-radius: 6px;
-                border: none;
-            }
-            QPushButton:hover {
-                background-color: #4D4038;
-            }
-        """)
-        btn.clicked.connect(dialog.accept)
-        
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        btn_layout.addWidget(btn)
-        layout.addLayout(btn_layout)
-        
-        dialog.exec_()
+            self._chat_widget.add_system_tip(f"🌙 莲心的书页暂时没有写好：{result}")
 
 
     def _check_overdue_todos(self):
@@ -3459,16 +3387,18 @@ class MainWindow(QMainWindow):
     def _open_diary_dialog(self):
         play_sound("OpenDiary.mp3")
         if self._diary_dialog is None:
-            self._diary_dialog = DiaryDialog(None, main_window=self)
-            self._diary_dialog.diary_changed.connect(self._refresh_diary_display)
-        self._diary_dialog._load_diaries()
+            self._diary_dialog = TimeCapsuleWindow(
+                None, generation_callback=self.regenerate_diary_by_date,
+                settings_callback=self._setup_diary_timer,
+            )
+            self._diary_dialog.closed.connect(self._on_time_capsule_closed)
+        self._diary_dialog.refresh()
         self._diary_dialog.show()
         self._diary_dialog.raise_()
         self._diary_dialog.activateWindow()
 
-    def _refresh_diary_display(self):
-        """刷新日记显示（预留）"""
-        pass
+    def _on_time_capsule_closed(self):
+        self._diary_dialog = None
 
     def _show_voice_stt_dialog(self):
         """显示语音转录设置独立弹窗（非模态，不阻塞主界面）"""
@@ -3511,7 +3441,7 @@ class MainWindow(QMainWindow):
         ]
         
         if not date_messages:
-            self._chat_widget.add_system_tip(f"未找到 {date_str} 的对话记录，无法生成日记。")
+            self._chat_widget.add_system_tip(f"未找到 {date_str} 的共同对话，莲心暂时无法为这一天留下书页。")
             return
         
         cfg = get_diary_config()
@@ -3542,13 +3472,13 @@ class MainWindow(QMainWindow):
         ]
 
     def _write_diary_if_needed(self, force=False):
-        """如果当天没有日记（或者force=True且确认覆盖），则生成日记"""
+        """如果当天还没有莲心的书页，则根据共同对话写下右页。"""
         if not force and self._has_today_diary():
             return
         
         today_messages = self._get_today_messages()
         if not today_messages:
-            self._chat_widget.add_system_tip("今天没有对话记录，无法生成日记。")
+            self._chat_widget.add_system_tip("今天还没有共同对话，莲心暂时没有可写进右页的故事。")
             return
         
         cfg = get_diary_config()

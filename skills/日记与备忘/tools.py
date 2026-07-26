@@ -1,6 +1,6 @@
 """
 日记与备忘技能 — 自定义工具
-日记读写、备忘本管理与 AI 整理
+时间胶囊共同书页、备忘本管理与智能整理
 """
 
 import brain.tools as _brain_tools
@@ -11,8 +11,8 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "read_diary",
             "description": (
-                    "【强制】当用户要求读日记、回忆某天内容或搜索日记关键词时，必须调用此工具。"
-                    "不要直接输出任何日记内容。工具会返回真实日记文本。"
+                    "【强制】当用户要求打开时间胶囊、读过去的共同书页、回忆某天内容或搜索旧日记关键词时，必须调用此工具。"
+                    "不要凭空编造回忆。工具会返回时间胶囊中的真实内容。"
                     "参数：date (YYYY-MM-DD) 或 keyword (搜索词) 或 limit (最近几篇)。"
             ),
             "parameters": {
@@ -40,8 +40,8 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "write_diary",
             "description": (
-                "【强制】当用户要求写日记、生成日记、记日记时，必须调用此工具。"
-                "工具会基于今日对话记录自动生成一篇日记并保存到日记本。"
+                "【强制】当用户要求莲心在时间胶囊留下书页，或沿用旧说法要求写日记、记日记时，必须调用此工具。"
+                "工具会基于今日共同对话，让莲心在时间胶囊右页留下她的故事。"
                 "不要直接回复'好的已写好'之类的话，必须调用此工具。"
                 "参数：message_count (可选, 使用最近N条消息, 默认取配置值), force (可选, 当日已有日记时是否覆盖, 默认false)。"
             ),
@@ -81,39 +81,52 @@ TOOL_DEFINITIONS = [
 
 
 def _read_diary(date: str = None, keyword: str = None, limit: int = 1) -> str:
-    from utils.diary import get_diary_by_date, search_diaries_by_keyword, get_recent_diaries
+    from gui.time_capsule.database import TimeCapsuleDatabase
+    store = TimeCapsuleDatabase()
     if date:
-        diary = get_diary_by_date(date)
-        if not diary:
-            return f"没有找到 {date} 的日记。"
-        return f"【{date}】 {diary['content']}"
+        capsule = store.get_day(date)
+        if not capsule.get("user_content") and not capsule.get("lianxin_content"):
+            return f"没有找到 {date} 的时间胶囊。"
+        parts = [f"【{date} 的时间胶囊】"]
+        if capsule.get("user_content"):
+            parts.append(f"主人留下的书页：\n{capsule['user_content']}")
+        if capsule.get("lianxin_content"):
+            parts.append(f"莲心留下的书页：\n{capsule['lianxin_content']}")
+        if capsule.get("traces"):
+            parts.append("后来的笔迹：\n" + "\n".join(
+                f"- {'莲心' if item['author'] == 'lianxin' else '主人'}：{item['content']}"
+                for item in capsule["traces"]
+            ))
+        return "\n\n".join(parts)
     elif keyword:
-        results = search_diaries_by_keyword(keyword, limit=limit)
+        results = store.search(keyword, limit=limit)
         if not results:
-            return f"没有找到包含「{keyword}」的日记。"
-        output = f"找到 {len(results)} 篇包含「{keyword}」的日记：\n"
+            return f"没有找到包含「{keyword}」的时间胶囊。"
+        output = f"找到 {len(results)} 页包含「{keyword}」的共同回忆：\n"
         for r in results:
-            output += f"\n- {r['date']}：{r['content'][:100]}...\n"
+            content = r.get("user_content") or r.get("lianxin_content") or ""
+            output += f"\n- {r['date']}：{content[:100]}...\n"
         return output
     else:
-        results = get_recent_diaries(limit=limit)
+        results = store.timeline(limit=limit)
         if not results:
-            return "日记本还是空的，还没有写过日记。"
-        output = f"最近 {len(results)} 篇日记：\n"
+            return "时间胶囊还是空的，第一张书页正在等待被写下。"
+        output = f"最近 {len(results)} 页共同回忆：\n"
         for r in results:
-            output += f"\n- {r['date']}：{r['content'][:100]}...\n"
+            content = r.get("user_content") or r.get("lianxin_content") or ""
+            output += f"\n- {r['date']}：{content[:100]}...\n"
         return output
 
 
 def _write_diary(message_count: int = None, force: bool = False) -> str:
-    """基于今日对话记录生成日记并保存。"""
+    """基于今日共同经历，让莲心在时间胶囊中留下她的书页。"""
     from datetime import datetime
     from config import get_diary_config
     from utils.diary import generate_diary_content, save_diary, has_diary_for_date
 
     today_str = datetime.now().strftime("%Y-%m-%d")
     if not force and has_diary_for_date(today_str):
-        return f"今天（{today_str}）已经有一篇日记了。如果你确实想重新生成，请明确告诉我'重新写日记'或'覆盖今天的日记'，我会帮你重写。"
+        return f"今天（{today_str}）的时间胶囊里已经有莲心留下的书页了。如果确实想重写，请明确告诉我。"
 
     cfg = get_diary_config()
     max_msgs = message_count or cfg.get("max_messages", 30)
@@ -135,7 +148,7 @@ def _write_diary(message_count: int = None, force: bool = False) -> str:
 
     data = generate_diary_content(msgs_for_diary)
     if not data:
-        return "日记生成失败，AI 返回的内容无法解析。可能网络不稳定，请稍后再试。"
+        return "莲心暂时没能写好她的书页，可能网络不稳定，请稍后再试。"
 
     try:
         save_diary(
@@ -146,16 +159,16 @@ def _write_diary(message_count: int = None, force: bool = False) -> str:
             echo_text=data.get("echo_text", ""),
         )
     except Exception as e:
-        return f"日记保存失败: {e}"
+        return f"时间胶囊保存失败: {e}"
 
     weather = data.get("weather", "⛅ 多云")
     is_red = data.get("is_red_line", False)
-    red_note = " 🔴红线日" if is_red else ""
+    red_note = " · 值得特别记住" if is_red else ""
     preview = data.get("content", "")[:200]
     return (
-        f"日记已写好！{today_str} {weather}{red_note}\n\n"
+        f"莲心已经在今天的时间胶囊里留下了她的书页。{today_str} {weather}{red_note}\n\n"
         f"{preview}…\n\n"
-        f"（完整日记已保存到日记本，可以说【指令】读日记来回顾）"
+        f"（完整内容已保存到时间胶囊，可以打开功能区的「时间胶囊」共同回顾）"
     )
 
 

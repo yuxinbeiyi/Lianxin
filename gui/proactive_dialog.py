@@ -794,8 +794,8 @@ class ProactiveDialog(QDialog):
 
         self._slack_cbs = {}
         slack_items = [
-            ("slack_supplement_diary", "📝 补充日记", "今天的日记已生成，莲心觉得还有话想说，主动补充一句感慨（每天最多2次）"),
-            ("slack_review_old_diary", "📓 翻旧日记感慨", "随机翻一篇过去某天的日记，和你分享回忆"),
+            ("slack_supplement_diary", "📝 留下后续笔迹", "今天的右侧书页已经写好后，莲心还可以主动补充一句感慨（每天最多2次）"),
+            ("slack_review_old_diary", "🌙 重温共同书页", "随机翻开时间胶囊里过去的一天，和你分享回忆"),
             ("slack_search_old_topic", "🔍 搜索旧话题", "从对话历史中找一个旧话题，突然问起你"),
             ("slack_remind_todo", "✅ 提醒未完成Todo", "检查待办列表，温柔提醒你未完成的事"),
             ("slack_random_question", "💭 随机提问", "基于你说过的话，问一个开放性问题"),
@@ -924,7 +924,7 @@ class ProactiveDialog(QDialog):
         debug_lbl.setStyleSheet("color: #5A5A8A; margin-top: 4px;")
         layout.addWidget(debug_lbl)
         debug_actions = [
-            ("supplement_diary", "📝 补充日记"), ("review_old_diary", "📓 翻旧日记"),
+            ("supplement_diary", "📝 后续笔迹"), ("review_old_diary", "🌙 重温书页"),
             ("search_old_topic", "🔍 搜索旧话题"), ("remind_todo", "✅ 提醒Todo"),
             ("random_question", "💭 随机提问"), ("weather_chitchat", "🌤️ 天气碎碎念"),
             ("read_local_files", "📄 读本地文件"),

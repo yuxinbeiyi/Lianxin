@@ -395,7 +395,7 @@ class CharacterWidget(QWidget):
         self._btn_proactive = self._create_button("💬  主动聊天", "#52B788")
         self._btn_qq_bridge = self._create_button("🐧  QQ 聊天", "#4B8FD1")
         self._btn_wechat_bridge = self._create_button("💬  微信聊天", "#36A66D")
-        self._btn_diary = self._create_button("📔  日记本", "#D98A45")
+        self._btn_diary = self._create_button("🌙  时间胶囊", "#D98A45")
         self._btn_voice_stt = self._create_button("🎙️  语音转录", "#52B788")
 
         scroll_area = QScrollArea(self._function_popup)

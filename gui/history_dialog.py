@@ -124,7 +124,7 @@ class HistoryDialog(QDialog):
         self._search_box.textChanged.connect(self._on_search_changed)
         left_layout.addWidget(self._search_box)
 
-        # ── 日期筛选 + 生成日记按钮 ─────────────────────────
+        # ── 日期筛选 + 为时间胶囊留下右页 ───────────────────
         date_row = QHBoxLayout()
         date_row.setSpacing(4)
         self._date_filter = QDateEdit()
@@ -174,8 +174,8 @@ class HistoryDialog(QDialog):
 
         date_row.addStretch()
 
-        self._btn_diary = QPushButton("📔 生成日记")
-        self._btn_diary.setFixedSize(110, 26)
+        self._btn_diary = QPushButton("🌙 留下书页")
+        self._btn_diary.setFixedSize(118, 26)
         self._btn_diary.setStyleSheet("""
             QPushButton { background:#6C7BFF; color:white; border-radius:6px; border:none; }
             QPushButton:hover   { background:#5A6AEE; }
@@ -828,7 +828,7 @@ class HistoryDialog(QDialog):
             self._select_all_cb.show()
             self._select_all_cb.setChecked(False)
             self._btn_diary.show()
-            self._btn_diary.setText("📔 生成日记")
+            self._btn_diary.setText("🌙 留下书页")
             self._btn_diary.setEnabled(False)
         else:
             self._load_sessions(keyword=self._search_box.text())
@@ -852,7 +852,7 @@ class HistoryDialog(QDialog):
             item = self._session_list.item(i)
             if item.flags() & Qt.ItemIsUserCheckable and item.checkState() == Qt.Checked:
                 count += 1
-        self._btn_diary.setText(f"📔 生成日记（{count}）")
+        self._btn_diary.setText(f"🌙 留下书页（{count}）")
         self._btn_diary.setEnabled(count > 0)
 
     def _on_generate_diary(self):
@@ -869,7 +869,7 @@ class HistoryDialog(QDialog):
 
         if has_diary_for_date(date_str):
             reply = QMessageBox.question(self, "覆盖确认",
-                f"{date_str} 已有日记，是否覆盖？",
+                f"{date_str} 已有莲心留下的书页，是否重写？",
                 QMessageBox.Yes | QMessageBox.No)
             if reply != QMessageBox.Yes:
                 return
@@ -883,17 +883,17 @@ class HistoryDialog(QDialog):
             return
 
         self._btn_diary.setEnabled(False)
-        self._btn_diary.setText("生成中…")
+        self._btn_diary.setText("正在写下…")
         self._diary_worker = DiaryWorker(date_str, all_msgs)
         self._diary_worker.finished.connect(self._on_diary_finished)
         self._diary_worker.start()
 
     def _on_diary_finished(self, success: bool, info: str):
         self._btn_diary.setEnabled(True)
-        self._btn_diary.setText("📔 生成日记")
+        self._btn_diary.setText("🌙 留下书页")
         self._update_diary_btn()
         if success:
-            QMessageBox.information(self, "日记已生成",
-                f"已生成 {info} 的日记，可在日记本中查看。")
+            QMessageBox.information(self, "书页已经留下",
+                f"莲心已经写下 {info} 的右侧书页，可以到时间胶囊中查看。")
         else:
             QMessageBox.warning(self, "生成失败", f"错误：{info}")

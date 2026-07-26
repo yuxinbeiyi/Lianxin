@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="time-capsule-version" content="2026.07.26.1">
+  <title>莲心 Time Capsule</title>
+  <link rel="stylesheet" href="styles.css?v=20260726-1">
+</head>
+<body>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></symbol>
+    <symbol id="i-bird" viewBox="0 0 24 24"><path d="M16 7h.01M3 18c3.5-1 5.5-3 6-6 2 2 4 3 7 3 2.5 0 4.5-1.2 5-3-1.8.2-3.3-.4-4.5-1.5C15 9 14 7 14 4c-3 1-5 3-5 6-2-.5-4-.3-6 1 1 1.5 2.5 2.5 4.5 3C6 16 4.5 17.3 3 18Z"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14Z"/><path d="M8 7h8M8 11h6"/></symbol>
+    <symbol id="i-leaf" viewBox="0 0 24 24"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 18 2 18 2c1 5.5-.5 14-7 18Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6.94C9 13.12 12 12 16 12"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8-6.2-3.2L5.8 21 7 14.2l-5-4.9 6.9-1L12 2Z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 22a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-flower" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 9c-1-5 4-7 5-3 1 3-2 5-5 6M15 12c5-1 7 4 3 5-3 1-5-2-6-5M12 15c1 5-4 7-5 3-1-3 2-5 5-6M9 12c-5 1-7-4-3-5 3-1 5 2 6 5"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="m12 19 7-7 3 3-7 7-4 1 1-4ZM18 13l-7-7M2 22l5-5"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4 20-7Z"/><path d="M22 2 11 13"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14.5 4 16 7h4a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h4l1.5-3h5Z"/><circle cx="12" cy="13" r="3"/></symbol>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13M9 9l12-2"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></symbol>
+    <symbol id="i-study" viewBox="0 0 24 24"><path d="m3 10 9-5 9 5-9 5-9-5Z"/><path d="M7 12v5c3 2 7 2 10 0v-5M21 10v6"/></symbol>
+    <symbol id="i-game" viewBox="0 0 24 24"><path d="M8 6h8l4 4v7a3 3 0 0 1-5.1 2.1L13 17h-2l-1.9 2.1A3 3 0 0 1 4 17v-7l4-4Z"/><path d="M8 12h4M10 10v4M16 12h.01M18 10h.01"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></symbol>
+    <symbol id="i-map" viewBox="0 0 24 24"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15M15 6v15"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8Z"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <header class="topbar">
+      <div><span class="topbar-kicker">SHARED MEMORY SPACE</span><strong id="topbar-title">今天</strong></div>
+      <div class="window-actions"><button id="open-settings" aria-label="设置"><svg><use href="#i-settings"/></svg></button><button id="minimize" aria-label="最小化">—</button><button id="fullscreen" aria-label="全屏">□</button><button id="close" aria-label="关闭">×</button></div>
+    </header>
+
+    <aside class="sidebar">
+      <div class="brand"><svg><use href="#i-moon"/></svg><h1>时间胶囊</h1><p>这里收藏着我们<br>一起度过的时间。</p></div>
+      <nav>
+        <button class="c-sidebar-item selected" data-page="today"><svg><use href="#i-bird"/></svg><span>今天</span></button>
+        <button class="c-sidebar-item" data-page="corridor"><svg><use href="#i-book"/></svg><span>时间长廊</span></button>
+        <button class="c-sidebar-item" data-page="tree"><svg><use href="#i-leaf"/></svg><span>树洞</span><i id="tree-badge" class="nav-badge hidden"></i></button>
+        <button class="c-sidebar-item" data-page="museum"><svg><use href="#i-star"/></svg><span>收藏馆</span></button>
+      </nav>
+      <div class="search-wrap"><svg><use href="#i-search"/></svg><input id="global-search" class="c-input" placeholder="搜索某一天、一句话或一段回忆"><div id="search-results" class="search-results hidden"></div></div>
+      <small class="version">TIME CAPSULE 2.0</small>
+    </aside>
+
+    <main class="main-content">
+      <section id="page-today" class="page active">
+        <div class="today-heading"><span id="today-date"></span><small id="today-weekday"></small><h2>今天，</h2><p>你们留下了一些新的故事。</p></div>
+        <div class="book-layout" id="book-layout">
+          <article class="book-page user-page">
+            <header><svg><use href="#i-user"/></svg><div><small>LEFT PAGE</small><strong id="user-page-name">主人</strong></div><span id="save-status">已经准备好纸张</span></header>
+            <div id="user-paper" class="paper-editor" contenteditable="true" spellcheck="false" data-placeholder="今天想留下什么？\n\n可以是一件小事、一段心情，或者一句不想忘记的话。"></div>
+          </article>
+          <div class="book-spine"><span class="bookmark"></span></div>
+          <article class="book-page lianxin-page">
+            <header><svg><use href="#i-flower"/></svg><div><small>RIGHT PAGE</small><strong>莲心</strong></div><span id="lianxin-weather"></span></header>
+            <div id="lianxin-paper" class="paper-reading empty-paper">今天还没有留下故事。<br><br>但书页已经准备好了。</div>
+          </article>
+        </div>
+
+        <section class="traces-section"><div class="section-heading"><div><span>后来留下的</span><h3>笔迹</h3></div><svg><use href="#i-pen"/></svg></div><div id="trace-list" class="trace-list"></div><div class="trace-compose"><textarea id="trace-input" class="c-input" rows="2" placeholder="在这一页旁边，再留下一点笔迹……"></textarea><button id="add-trace" class="c-icon-button"><svg><use href="#i-send"/></svg></button></div></section>
+
+        <section class="collection-section"><div class="section-heading"><div><span>今日共同收藏</span><h3>把故事之外的东西，也放进这一页</h3></div></div><div class="collection-actions" id="collection-actions"></div><div id="today-collections" class="collection-strip"></div></section>
+        <div class="seal-wrap"><button id="seal-day" class="c-button primary"><svg><use href="#i-archive"/></svg><span>封存今天</span></button><p id="seal-note">封存后仍然可以继续留下笔迹。</p></div>
+      </section>
+
+      <section id="page-corridor" class="page">
+        <div class="page-heading"><span>LOOK BACK</span><h2>时间长廊</h2><p>把一年放远一点看，才发现许多普通日子已经连成了光。</p></div>
+        <section class="c-glass-card rewind-card"><div class="section-heading"><div><span>最近一年</span><h3>回溯</h3></div></div><div id="contribution-grid" class="contribution-grid"></div><div class="rewind-stats"><div><strong id="active-days">0</strong><span>次完成</span></div><div><strong id="longest-streak">0</strong><span>最长连续</span></div><div><strong id="current-streak">0</strong><span>当前连续</span></div></div><div id="heat-tooltip" class="c-tooltip hidden"></div></section>
+        <section class="featured-section"><div class="section-heading"><div><span>最近七天</span><h3>共同收藏精选</h3></div></div><div id="featured-collections" class="collection-strip"></div></section>
+        <section class="timeline-section"><div class="section-heading"><div><span>TIME LINE</span><h3>一起走过的时间</h3></div></div><div id="timeline" class="timeline"></div></section>
+      </section>
+
+      <section id="page-tree" class="page tree-page">
+        <div class="tree-intro"><svg><use href="#i-leaf"/></svg><span>今晚，</span><h2>有什么不能告诉别人的吗？</h2><p>可以放进树洞。</p></div>
+        <div class="tree-compose c-glass-card"><textarea id="tree-input" rows="7" placeholder="不用标题，也不用解释。"></textarea><button id="send-tree" class="c-button primary"><svg><use href="#i-send"/></svg><span>放进树洞</span></button></div>
+        <div id="tree-notes" class="tree-notes"></div>
+      </section>
+
+      <section id="page-museum" class="page">
+        <div class="page-heading museum-heading"><div><span>MEMORY MUSEUM</span><h2>收藏馆</h2><p>今天想重温哪段回忆？</p></div><button id="invite-lianxin" class="c-button ghost"><svg><use href="#i-flower"/></svg><span>邀请莲心一起参观</span></button></div>
+        <div id="memory-grid" class="memory-grid"></div>
+      </section>
+    </main>
+
+    <footer class="statusbar"><span id="footer-status">书页已展开</span><div class="companion-mini"><svg><use href="#i-flower"/></svg><span id="companion-message">我会在这里陪你慢慢看。</span></div></footer>
+  </div>
+
+  <div id="detail-panel" class="detail-panel hidden"><div class="detail-backdrop"></div><article class="detail-paper"><button class="detail-close">×</button><span id="detail-date"></span><h2 id="detail-title"></h2><div id="detail-user" class="detail-content user-ink"></div><div id="detail-lianxin" class="detail-content lianxin-ink"></div><div id="detail-traces"></div><div id="detail-collections" class="collection-strip"></div></article></div>
+  <div id="companion-panel" class="companion-panel hidden"><button class="companion-close">×</button><svg><use href="#i-flower"/></svg><small>莲心的陪伴</small><p id="companion-reading"></p></div>
+  <div id="settings-panel" class="settings-panel hidden"><div class="settings-backdrop"></div><section class="settings-card"><button class="settings-close">×</button><span>TIME CAPSULE</span><h2>书页设置</h2><label class="setting-toggle"><input id="scheduled-enabled" type="checkbox"><span>每天让莲心自动留下她的书页</span></label><label><span>留下书页的时间</span><input id="scheduled-time" class="c-input" type="time"></label><label><span>参考最近多少条共同对话</span><input id="max-messages" class="c-input" type="number" min="1" max="200"></label><label><span>对话取样位置</span><select id="message-direction" class="c-input"><option value="latest">靠近一天结束的对话</option><option value="earliest">一天开始时的对话</option></select></label><p>这些设置只决定莲心何时写右侧书页，不会自动封存你的内容。</p><button id="save-settings" class="c-button primary"><span>保存设置</span></button></section></div>
+  <div id="toast" class="toast hidden"></div>
+  <div id="loading-state" class="loading-state"><svg><use href="#i-moon"/></svg><strong>正在展开共同的书页</strong><span>稍等一下，回忆正在从时间里醒来。</span></div>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="app.js?v=20260726-1"></script>
+</body>
+</html>
