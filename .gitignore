@@ -122,6 +122,9 @@ GPT-SoVITS-v2pro/
 # 测试工作区
 test_workspace/
 
+# 本地自动化测试代码不随发布仓库提交
+tests/
+
 # 阿里云语音 SDK（用户自行安装）
 alibabacloud-nls-python-sdk/
 
