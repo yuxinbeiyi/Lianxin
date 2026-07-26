@@ -299,25 +299,16 @@ def main():
         except Exception as e:
             print(f"[启动体检] 检测过程异常: {e}", flush=True)
 
-    window = MainWindow(autostart_mode=autostart_mode)
-
-    # ── 主线程预加载 torch（避免子线程 access violation + WinError 206）──
+    # ── 在创建任何后台模型线程前完成轻量 Torch 兼容初始化 ──
+    # MainWindow 不再在构造阶段加载 FunASR；这里的顺序保证首次按需
+    # 加载语音/RAG 模型时不会与 Torch 初始化竞态。
     try:
         from brain.memory_rag import _preload_torch
         _preload_torch()
     except Exception:
         pass
 
-    # ── 记忆 RAG 向量检索：后台预热 + 补建旧记忆的 embedding ──
-    try:
-        from brain.memory_rag import warmup, reindex_all_facts
-        print("[RAG] 后台预热 embedding 模型…", flush=True)
-        warmup()
-        reindex_all_facts()
-    except ImportError:
-        print("[RAG] 依赖未安装（sentence-transformers），RAG 已禁用", flush=True)
-    except Exception as e:
-        print(f"[RAG] 预热异常（不影响启动）: {e}", flush=True)
+    window = MainWindow(autostart_mode=autostart_mode)
 
     # ── 自动激活标记为 auto_activate 的技能 ────────────────────
     from brain.skill_manager import activate_all_skills

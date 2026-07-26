@@ -42,7 +42,7 @@ from brain.auto_task_executor import execute_auto_task
 from config import has_api_key
 from brain.decision import decide
 from workers.agent_worker      import AgentWorker
-from workers.voice_worker      import VoiceWorker, ModelLoader
+from workers.voice_worker      import VoiceWorker
 from workers.speaker_worker    import SpeakerWorker
 from workers.standby_worker    import StandbyWorker   # 不再需要 contains_end_phrase, strip_end_phrase
 from brain.voice_duplex        import VoiceDuplexManager
@@ -293,8 +293,9 @@ class MainWindow(QMainWindow):
         self._agent_watchdog.timeout.connect(self._on_agent_watchdog_timeout)
 
         self._show_greeting()
-        self._preload_whisper()   # 后台预载 Whisper 模型
-        self._preload_tts()       # 后台预热 TTS 引擎
+        # 模型不在启动阶段抢占 GUI 线程/GPU。语音和 TTS 均在首次使用时
+        # 按需加载，避免窗口刚出现时白屏、卡顿和 Qt 重绘延迟。
+        self._prepare_voice_input()
 
 
         # ── ReminderManager（供 DutyScheduler 和 reminder_dialog 使用）
@@ -1091,15 +1092,11 @@ class MainWindow(QMainWindow):
                 
         return False, 0
 
-    # ── Whisper 预加载 ───────────────────────────────────────
+    # ── 语音输入准备 ─────────────────────────────────────────
 
-    def _preload_whisper(self):
-        self._chat_widget.add_system_tip("正在后台加载语音识别模型，请稍候…")
-        loader = ModelLoader(self._listener, self)
-        loader.finished.connect(self._on_model_loaded)
-        loader.failed.connect(self._on_model_failed)
-        loader.start()
-        self._model_loader = loader
+    def _prepare_voice_input(self):
+        """只启用语音入口，语音模型在首次录音时由 VoiceWorker 按需加载。"""
+        self._input_panel.enable_voice_button()
 
     def _on_model_loaded(self):
         self._chat_widget.add_system_tip("语音识别模型已就绪，可点击 🎤 开始语音对话")

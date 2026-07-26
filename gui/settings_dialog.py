@@ -25,7 +25,8 @@ from config import get_quick_launch_apps, save_quick_launch_apps
 from brain.graph_memory import ALL_CATEGORIES, CATEGORY_DESCRIPTIONS
 from brain.graph_memory import list_all_facts, delete_facts
 from gui.quick_launch_dialog import QuickLaunchEditDialog
-from gui.avatar_widgets import ChatAvatarSettingsTab
+from gui.avatar_widgets import ChatAvatarSettingsTab, AvatarCropDialog
+from utils.paths import get_user_data_dir
 
 
 
@@ -351,7 +352,7 @@ class SettingsDialog(QDialog):
         self._avatar_path_edit.setEnabled(False)
         path_row.addWidget(self._avatar_path_edit)
 
-        browse_btn = QPushButton("浏览")
+        browse_btn = QPushButton("选择并裁剪")
         browse_btn.setFixedWidth(60)
         browse_btn.setFont(QFont("Microsoft YaHei UI", 9))
         browse_btn.setCursor(Qt.PointingHandCursor)
@@ -367,7 +368,7 @@ class SettingsDialog(QDialog):
 
         browse_btn.clicked.connect(self._browse_avatar_image)
 
-        tip = QLabel("💡 选择静态头像可避免动画卡顿，节省 CPU 资源。")
+        tip = QLabel("💡 选择静态头像后可以拖动图片调整构图、滚轮缩放；莲心会保存裁剪后的副本，原图不会被修改。")
         tip.setFont(QFont("Microsoft YaHei UI", 8))
         tip.setStyleSheet("background: #1E1E30; padding: 8px; border-radius: 6px;")
         tip.setWordWrap(True)
@@ -831,10 +832,12 @@ class SettingsDialog(QDialog):
         if mode == "static":
             self._avatar_radio_static.setChecked(True)
             path = avatar_cfg.get("static_image_path", "")
+            self._avatar_source_path = avatar_cfg.get("static_source_path", "") or path
             if path:
                 self._avatar_path_edit.setText(path)
         else:
             self._avatar_radio_animated.setChecked(True)
+            self._avatar_source_path = avatar_cfg.get("static_source_path", "")
 
         self._user_name_edit.setText(self._settings.user_name)
         self._load_background_controls()
@@ -908,13 +911,21 @@ class SettingsDialog(QDialog):
                 QMessageBox.warning(self, "提示", "请先选择一张图片作为静态头像。")
                 return
             from config import save_avatar_config
-            save_avatar_config({"mode": "static", "static_image_path": path})
+            save_avatar_config({
+                "mode": "static",
+                "static_image_path": path,
+                "static_source_path": getattr(self, "_avatar_source_path", path),
+            })
             char_widget._avatar_mode = "static"
             char_widget._static_image_path = path
             char_widget._apply_static_avatar(path)
         else:
             from config import save_avatar_config
-            save_avatar_config({"mode": "animated", "static_image_path": char_widget._static_image_path})
+            save_avatar_config({
+                "mode": "animated",
+                "static_image_path": char_widget._static_image_path,
+                "static_source_path": getattr(self, "_avatar_source_path", char_widget._static_image_path),
+            })
             char_widget._avatar_mode = "animated"
             char_widget._switch_to_animated()
 
@@ -974,5 +985,22 @@ class SettingsDialog(QDialog):
             self, "选择莲心头像", "",
             "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif)"
         )
-        if file_path:
-            self._avatar_path_edit.setText(file_path)
+        if not file_path:
+            return
+        crop_dialog = AvatarCropDialog(
+            file_path,
+            self,
+            crop_ratio=270 / 430,
+            output_size=(810, 1290),
+            title="调整静态头像构图",
+        )
+        if crop_dialog.exec_() != QDialog.Accepted:
+            return
+        output_dir = get_user_data_dir() / "avatars"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "character_static.png"
+        if not crop_dialog.cropped_pixmap().save(str(output_path), "PNG"):
+            QMessageBox.warning(self, "头像设置", "裁剪后的头像保存失败，请重试。")
+            return
+        self._avatar_source_path = file_path
+        self._avatar_path_edit.setText(str(output_path))

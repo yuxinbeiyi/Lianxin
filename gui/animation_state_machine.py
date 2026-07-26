@@ -25,7 +25,9 @@ class AnimationStateMachine(QObject):
         self._movie_cache = {}
         self._current_anim_file = ""  # 当前 label 上显示的动画文件路径
         if not skip_initial:
-            self._preload_all_movies()
+            # 只创建首个状态的 QMovie。旧实现会把所有模式的全部 GIF
+            # 一次性 CacheAll，启动时会触发大量解码和内存分配，导致
+            # Qt 主界面短暂白屏、鼠标事件堆积。
             self._goto_state(self.config["modes"][self.current_mode]["initial"])
 
     def _load_config(self):
@@ -35,16 +37,27 @@ class AnimationStateMachine(QObject):
             return json.load(f)
 
     def _preload_all_movies(self):
-        for mode_name, mode_data in self.config["modes"].items():
-            for state_name, state_data in mode_data["states"].items():
-                anim_file = state_data["animation"]
-                full_path = self.assets_dir / anim_file
-                if not full_path.exists():
-                    print(f"警告: 动画文件不存在 {full_path}")
-                    continue
-                movie = QMovie(str(full_path))
-                movie.setCacheMode(QMovie.CacheAll)
-                self._movie_cache[(mode_name, state_name)] = movie
+        """兼容旧调用名：仅加载当前初始状态，不再预加载全部 GIF。"""
+        initial = self.config["modes"][self.current_mode]["initial"]
+        self._ensure_movie(self.current_mode, initial)
+
+    def _ensure_movie(self, mode_name, state_name):
+        cache_key = (mode_name, state_name)
+        if cache_key in self._movie_cache:
+            return self._movie_cache[cache_key]
+        try:
+            anim_file = self.config["modes"][mode_name]["states"][state_name]["animation"]
+        except KeyError:
+            return None
+        full_path = self.assets_dir / anim_file
+        if not full_path.exists():
+            print(f"警告: 动画文件不存在 {full_path}")
+            return None
+        movie = QMovie(str(full_path))
+        # 当前动画按帧解码，避免一次性把数十个 GIF 的全部帧压入内存。
+        movie.setCacheMode(QMovie.CacheNone)
+        self._movie_cache[cache_key] = movie
+        return movie
 
 
     def set_mode(self, mode: str):
@@ -76,9 +89,9 @@ class AnimationStateMachine(QObject):
             print(f"可用状态: {list(self.config['modes'][self.current_mode]['states'].keys())}")
             return
         cache_key = (self.current_mode, state_name)
-        new_movie = self._movie_cache.get(cache_key)
+        new_movie = self._ensure_movie(self.current_mode, state_name)
         if new_movie is None:
-            print(f"错误: 未预加载动画 {self.current_mode}/{state_name}")
+            print(f"错误: 无法加载动画 {self.current_mode}/{state_name}")
             return
         self.current_state = state_name
         anim_file = state_def["animation"]

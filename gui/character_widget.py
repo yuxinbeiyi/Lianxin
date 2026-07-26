@@ -922,8 +922,26 @@ class CharacterWidget(QWidget):
             self, "选择莲心头像", "",
             "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif)"
         )
-        if file_path:
-            path_edit.setText(file_path)
+        if not file_path:
+            return
+        from gui.avatar_widgets import AvatarCropDialog
+        from utils.paths import get_user_data_dir
+        crop_dialog = AvatarCropDialog(
+            file_path,
+            self,
+            crop_ratio=270 / 430,
+            output_size=(810, 1290),
+            title="调整静态头像构图",
+        )
+        if crop_dialog.exec_() != QDialog.Accepted:
+            return
+        output_dir = get_user_data_dir() / "avatars"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "character_static.png"
+        if not crop_dialog.cropped_pixmap().save(str(output_path), "PNG"):
+            QMessageBox.warning(self, "头像设置", "裁剪后的头像保存失败，请重试。")
+            return
+        path_edit.setText(str(output_path))
 
     def _on_avatar_dialog_save(self, is_static: bool, image_path: str, dlg: QDialog):
         from config import save_avatar_config
@@ -935,10 +953,18 @@ class CharacterWidget(QWidget):
             self._avatar_mode = "static"
             self._static_image_path = image_path
             self._apply_static_avatar(image_path)
-            save_avatar_config({"mode": "static", "static_image_path": image_path})
+            save_avatar_config({
+                "mode": "static",
+                "static_image_path": image_path,
+                "static_source_path": image_path,
+            })
         else:
             self._avatar_mode = "animated"
             self._switch_to_animated()
-            save_avatar_config({"mode": "animated", "static_image_path": self._static_image_path})
+            save_avatar_config({
+                "mode": "animated",
+                "static_image_path": self._static_image_path,
+                "static_source_path": self._static_image_path,
+            })
 
         dlg.accept()

@@ -143,42 +143,129 @@ class CircularAvatar(QLabel):
 
 
 class _CropCanvas(QLabel):
-    def __init__(self, pixmap, parent=None):
-        super().__init__(parent); self.source = pixmap; self.zoom = 1.0; self.offset = QPoint(0, 0); self._drag = None
-        self.setMinimumSize(460, 400); self.setAlignment(Qt.AlignCenter); self.setMouseTracking(True)
+    """可拖动、可缩放的裁剪画布，支持正方形和竖版头像比例。"""
+
+    def __init__(self, pixmap, crop_ratio=1.0, parent=None):
+        super().__init__(parent)
+        self.source = pixmap
+        self.crop_ratio = max(0.1, float(crop_ratio))
+        self.zoom = 1.0
+        self.offset = QPoint(0, 0)
+        self._drag = None
+        self.setMinimumSize(460, 400)
+        self.setAlignment(Qt.AlignCenter)
+        self.setMouseTracking(True)
+
+    def _crop_rect(self):
+        margin = 36
+        available_width = max(80, self.width() - margin)
+        available_height = max(80, self.height() - margin)
+        crop_width = min(available_width, int(available_height * self.crop_ratio))
+        crop_height = min(available_height, int(crop_width / self.crop_ratio))
+        x = (self.width() - crop_width) // 2
+        y = (self.height() - crop_height) // 2
+        return x, y, crop_width, crop_height
+
+    def _image_geometry(self):
+        x, y, crop_width, crop_height = self._crop_rect()
+        base_scale = max(
+            crop_width / max(1, self.source.width()),
+            crop_height / max(1, self.source.height()),
+        )
+        scale = base_scale * self.zoom
+        image_width = max(1, int(self.source.width() * scale))
+        image_height = max(1, int(self.source.height() * scale))
+        left = (self.width() - image_width) // 2 + self.offset.x()
+        top = (self.height() - image_height) // 2 + self.offset.y()
+        return x, y, crop_width, crop_height, scale, image_width, image_height, left, top
+
+    def _clamp_offset(self):
+        x, y, crop_width, crop_height, _, image_width, image_height, _, _ = self._image_geometry()
+        max_x = max(0, (image_width - crop_width) // 2)
+        max_y = max(0, (image_height - crop_height) // 2)
+        self.offset.setX(max(-max_x, min(max_x, self.offset.x())))
+        self.offset.setY(max(-max_y, min(max_y, self.offset.y())))
+
     def paintEvent(self, event):
-        p = QPainter(self); p.fillRect(self.rect(), QColor("#141625")); p.setRenderHint(QPainter.SmoothPixmapTransform)
-        base = self.source.scaled(int(self.source.width()*self.zoom), int(self.source.height()*self.zoom), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        pos = QPoint((self.width()-base.width())//2 + self.offset.x(), (self.height()-base.height())//2 + self.offset.y()); p.drawPixmap(pos, base)
-        side = min(self.width(), self.height()) - 36; x=(self.width()-side)//2; y=(self.height()-side)//2
-        p.setPen(QColor("#FFFFFF")); p.drawRect(x, y, side, side)
-        p.end()
-    def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton: self._drag = e.pos()
-    def mouseMoveEvent(self, e):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor("#141625"))
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        _, _, _, _, _, image_width, image_height, left, top = self._image_geometry()
+        scaled = self.source.scaled(image_width, image_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        painter.drawPixmap(QPoint(left, top), scaled)
+        x, y, crop_width, crop_height = self._crop_rect()
+        painter.setPen(QColor("#FFFFFF"))
+        painter.drawRect(x, y, crop_width - 1, crop_height - 1)
+        painter.setPen(QColor(255, 255, 255, 80))
+        painter.drawLine(x + crop_width // 3, y, x + crop_width // 3, y + crop_height)
+        painter.drawLine(x + crop_width * 2 // 3, y, x + crop_width * 2 // 3, y + crop_height)
+        painter.drawLine(x, y + crop_height // 3, x + crop_width, y + crop_height // 3)
+        painter.drawLine(x, y + crop_height * 2 // 3, x + crop_width, y + crop_height * 2 // 3)
+        painter.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag = event.pos()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
         if self._drag is not None:
-            self.offset += e.pos() - self._drag; self._drag = e.pos(); self.update()
-    def mouseReleaseEvent(self, e): self._drag = None
-    def wheelEvent(self, e):
-        self.zoom = max(0.1, min(4.0, self.zoom * (1.1 if e.angleDelta().y() > 0 else 0.9))); self.update()
-    def cropped(self, size=512):
-        side=min(self.width(), self.height())-36; x=(self.width()-side)//2; y=(self.height()-side)//2
-        base_scale = max(side / max(1, self.source.width()), side / max(1, self.source.height()))
-        scale = max(base_scale, base_scale * self.zoom)
-        scaled=self.source.scaled(int(self.source.width()*scale), int(self.source.height()*scale), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        left=(self.width()-scaled.width())//2+self.offset.x(); top=(self.height()-scaled.height())//2+self.offset.y()
-        crop=scaled.copy(max(0,x-left), max(0,y-top), min(side,scaled.width()), min(side,scaled.height()))
-        return crop.scaled(size,size,Qt.IgnoreAspectRatio,Qt.SmoothTransformation)
+            self.offset += event.pos() - self._drag
+            self._drag = event.pos()
+            self._clamp_offset()
+            self.update()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag = None
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event):
+        factor = 1.1 if event.angleDelta().y() > 0 else 0.9
+        self.zoom = max(1.0, min(5.0, self.zoom * factor))
+        self._clamp_offset()
+        self.update()
+        event.accept()
+
+    def cropped(self, size=(512, 512)):
+        if isinstance(size, int):
+            size = (size, size)
+        target_width, target_height = int(size[0]), int(size[1])
+        x, y, crop_width, crop_height, scale, _, _, left, top = self._image_geometry()
+        source_x = max(0, int((x - left) / max(scale, 0.0001)))
+        source_y = max(0, int((y - top) / max(scale, 0.0001)))
+        source_width = min(self.source.width() - source_x, int(crop_width / max(scale, 0.0001)))
+        source_height = min(self.source.height() - source_y, int(crop_height / max(scale, 0.0001)))
+        crop = self.source.copy(source_x, source_y, max(1, source_width), max(1, source_height))
+        return crop.scaled(target_width, target_height, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
 
 
 class AvatarCropDialog(QDialog):
-    def __init__(self, path, parent=None):
-        super().__init__(parent); self.setWindowTitle("裁剪头像"); self.resize(680, 620)
-        pix=QPixmap(path)
-        layout=QVBoxLayout(self); self.canvas=_CropCanvas(pix); layout.addWidget(self.canvas)
-        tip=QLabel("拖动图片调整位置，滚轮缩放，白色方框为头像范围"); tip.setStyleSheet("color:#888;"); layout.addWidget(tip)
-        buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel); buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject); layout.addWidget(buttons)
-    def cropped_pixmap(self): return self.canvas.cropped()
+    def __init__(self, path, parent=None, crop_ratio=1.0, output_size=(512, 512), title="裁剪头像"):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(760, 680 if crop_ratio < 1 else 620)
+        pixmap = QPixmap(path)
+        layout = QVBoxLayout(self)
+        self.canvas = _CropCanvas(pixmap, crop_ratio=crop_ratio)
+        layout.addWidget(self.canvas)
+        ratio_text = "竖版头像区域" if crop_ratio < 0.9 else "头像区域"
+        tip = QLabel(f"拖动图片调整构图，滚轮缩放，白色框为{ratio_text}；原始图片不会被修改。")
+        tip.setStyleSheet("color:#888;")
+        tip.setWordWrap(True)
+        layout.addWidget(tip)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self._output_size = output_size
+
+    def cropped_pixmap(self):
+        return self.canvas.cropped(self._output_size)
 
 
 class ChatAvatarSettingsTab(QWidget):

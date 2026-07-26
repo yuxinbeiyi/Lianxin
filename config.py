@@ -742,6 +742,7 @@ def load_memories() -> list:
 _AVATAR_DEFAULTS = {
     "mode":              "animated",
     "static_image_path": "",
+    "static_source_path": "",
 }
 
 
