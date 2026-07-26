@@ -5,18 +5,20 @@ from datetime import datetime, timedelta
 from brain.graph_memory import _get_conn
 
 _lock = threading.RLock()
-_schema_ready = False
+_schema_ready_path = ""
 
 def _now(): return datetime.now().astimezone()
 def _iso(dt): return dt.isoformat(timespec="seconds")
 
 def _ensure():
-    global _schema_ready
+    global _schema_ready_path
     conn = _get_conn()
-    if _schema_ready:
+    db_row = conn.execute("PRAGMA database_list").fetchone()
+    db_path = str(db_row["file"] if db_row else "")
+    if _schema_ready_path == db_path:
         return conn
     with _lock:
-        if _schema_ready:
+        if _schema_ready_path == db_path:
             return conn
         conn.executescript("""
     CREATE TABLE IF NOT EXISTS memory_proactive_cues (
@@ -33,7 +35,7 @@ def _ensure():
       id INTEGER PRIMARY KEY AUTOINCREMENT, cue_id INTEGER, action TEXT NOT NULL,
       detail TEXT DEFAULT '', created_at TEXT NOT NULL
     );
-        """); conn.commit(); _schema_ready = True
+        """); conn.commit(); _schema_ready_path = db_path
     return conn
 
 def _fingerprint(kind, source_id, content):

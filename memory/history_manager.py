@@ -141,6 +141,11 @@ class HistoryManager:
     def __init__(self, db_path: Path | str | None = None):
         self._db_path = Path(db_path) if db_path else _DB_PATH
 
+    @property
+    def db_path(self) -> Path:
+        """Return the database path shared by history and memory pipelines."""
+        return self._db_path
+
     # ── 会话管理 ─────────────────────────────────────────────
 
     def _conn(self) -> sqlite3.Connection:
@@ -449,6 +454,14 @@ class HistoryManager:
             (session_id,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_latest_message_id(self, session_id: int) -> int:
+        """Return the newest persisted message id in a session, or zero."""
+        row = self._conn().execute(
+            "SELECT COALESCE(MAX(id), 0) AS latest_id FROM messages WHERE session_id=?",
+            (int(session_id),),
+        ).fetchone()
+        return int(row["latest_id"] if row else 0)
 
     def get_messages_by_ids(self, message_ids: list[int]) -> list[dict]:
         """Resolve provenance ids to their original message and channel."""

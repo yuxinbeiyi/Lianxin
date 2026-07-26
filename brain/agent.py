@@ -23,12 +23,6 @@ from config import (
 from brain.tools import TOOL_DEFINITIONS, execute_tool, set_cross_session_context
 from brain.skill_manager import get_active_tool_definitions, get_active_knowledge
 from brain.tool_router import filter_builtin_tools, build_tool_catalog, match_categories, detect_tool_request, CATEGORY_ORDER
-from brain.graph_memory import (
-    build_extraction_prompt,
-    ALL_CATEGORIES,
-)
-from brain.graph_memory import add_fact as _memory_add
-from brain.graph_memory import add_memory_fragment as _memory_add_fragment
 from memory.history_manager import HistoryManager
 from brain.context_compressor import (
     build_fallback_summary,
@@ -98,42 +92,6 @@ def _recent_assistant_repetition(history: list[dict], user_message: str) -> bool
         if item.get("role") == "assistant" and str(item.get("content", "")).strip()
     ]
     return len(recent) >= 2 and len(set(recent)) < len(recent)
-
-
-def _normalize_memory_provenance(memory: dict, source_rows: list[dict]) -> tuple[list[int], float, str]:
-    """Validate model-provided evidence against persisted user messages."""
-    allowed_user_ids = {
-        int(row["id"])
-        for row in source_rows
-        if row.get("role") == "user" and row.get("id") is not None
-    }
-    source_message_ids = []
-    raw_source_ids = memory.get("source_message_ids", [])
-    if not isinstance(raw_source_ids, list):
-        raw_source_ids = []
-    for value in raw_source_ids:
-        try:
-            message_id = int(value)
-        except (TypeError, ValueError):
-            continue
-        if message_id in allowed_user_ids and message_id not in source_message_ids:
-            source_message_ids.append(message_id)
-
-    try:
-        confidence = min(1.0, max(0.0, float(memory.get("confidence", 0.7))))
-    except (TypeError, ValueError):
-        confidence = 0.7
-    if not source_message_ids:
-        confidence = min(confidence, 0.5)
-
-    occurred_at = str(memory.get("occurred_at", "") or "").strip()
-    if not occurred_at and source_message_ids:
-        timestamp_by_id = {
-            int(row["id"]): row.get("timestamp", "")
-            for row in source_rows if row.get("id") is not None
-        }
-        occurred_at = timestamp_by_id.get(source_message_ids[-1], "")
-    return source_message_ids, confidence, occurred_at
 
 
 def _get_qq_session_ids() -> set:
@@ -264,6 +222,9 @@ class AgentCore:
                  owner_scope: bool = True):
         
         self._cancel_event = threading.Event()
+        self._active_workflow_run_id = 0
+        self._workflow_retry_of_run_id = 0
+        self._prepared_document_context = ""
 
         # 每次实例化都从文件读取最新配置，支持热重载
         cfg = get_api_config()
@@ -313,32 +274,15 @@ class AgentCore:
         self._last_reply_time = self._load_last_reply_time()
 
 
-        # ── 自动记忆提取跟踪（从配置读取） ──────────────────
-        self._extraction_counter = 0   # 对话轮次计数
-        self._last_extraction_idx = 0  # history 中已提取到哪条消息
-        self._extraction_inflight = False
-        self._extraction_lock = threading.Lock()
-        try:
-            mem_cfg = get_memory_config()
-            self._auto_extract = mem_cfg.get("auto_extract", True)
-            self._extract_interval = mem_cfg.get("extract_interval", 6)
-            self._extract_msg_count = mem_cfg.get("extract_message_count", 20)
-        except Exception:
-            self._auto_extract = True
-            self._extract_interval = 6
-            self._extract_msg_count = 20
-
         # ── 五元组图记忆配置 ──────────────────────────────────────
         try:
             graph_cfg = get_graph_config()
-            self._graph_enabled = graph_cfg.get("graph_enabled", True)
-            self._auto_extract_quintuples = graph_cfg.get("auto_extract_quintuples", True)
+            graph_enabled = graph_cfg.get("graph_enabled", True)
         except Exception:
-            self._graph_enabled = True
-            self._auto_extract_quintuples = True
+            graph_enabled = True
 
         # 初始化图记忆表（延迟导入，首次启动时建表）
-        if self._graph_enabled:
+        if graph_enabled:
             try:
                 from brain.graph_memory import _init_tables, _get_conn
                 _init_tables(_get_conn())
@@ -387,8 +331,18 @@ class AgentCore:
                     )
                     self._session_titled = False
 
-        # 已恢复的历史不应再次进入自动提取队列。
-        self._last_extraction_idx = len(self.history)
+        # 首次升级只建立当前位置基线；此后由 DutyScheduler 按持久游标恢复。
+        self._memory_extraction_store = None
+        try:
+            from brain.memory_extraction_pipeline import MemoryExtractionStore
+
+            self._memory_extraction_store = MemoryExtractionStore(self._history_mgr.db_path)
+            self._memory_extraction_store.bootstrap_session(
+                self._session_id,
+                self._history_mgr.get_latest_message_id(self._session_id),
+            )
+        except Exception as exc:
+            logger.warning("自动记忆提取状态初始化失败，将在触发时重试: %s", exc)
         self._session_memory_writes_blocked = self._derive_memory_write_policy()
         self._request_memory_writes_blocked = self._session_memory_writes_blocked
 
@@ -450,6 +404,26 @@ class AgentCore:
         # AgentCore 会在桌面端跨请求复用。中途插话的“停止”只应作用于
         # 当前请求，不能把取消事件带到下一轮对话。
         self._cancel_event.clear()
+        workflow_store = None
+        workflow_run_id = 0
+        self._prepared_document_context = ""
+        try:
+            from brain.workflow import get_workflow_store
+
+            workflow_store = get_workflow_store()
+            workflow_run = workflow_store.begin_run(
+                kind="conversation",
+                title=user_message.strip()[:120] or "对话任务",
+                session_id=getattr(self, "_session_id", None),
+                channel=getattr(self, "_source_channel", "desktop"),
+                metadata={"user_message": user_message, "source": "AgentCore.chat"},
+                retry_of_run_id=int(getattr(self, "_workflow_retry_of_run_id", 0) or 0) or None,
+            )
+            self._workflow_retry_of_run_id = 0
+            workflow_run_id = int(workflow_run["id"])
+            self._active_workflow_run_id = workflow_run_id
+        except Exception as exc:
+            logger.warning("Workflow 运行记录初始化失败，继续对话: %s", exc)
         # 清理旧版本写入的纯文本工具调用，避免它们污染本轮上下文。
         for _item in self.history:
             if _item.get("role") == "assistant" and isinstance(_item.get("content"), str):
@@ -496,6 +470,38 @@ class AgentCore:
         user_message_id = self._history_mgr.save_message(
             self._session_id, "user", user_message
         )
+
+        # 在首次模型调用之前，将用户明确引用的文档批量转换为 Markdown。
+        try:
+            from brain.document_preprocessor import extract_document_paths, prepare_documents
+
+            document_paths = extract_document_paths(user_message)
+            if document_paths:
+                step_id = workflow_store.start_step(
+                    workflow_run_id, step_key="document_preprocess", name="文档预处理",
+                    kind="preprocess", input_data={"paths": [str(path) for path in document_paths]},
+                ) if workflow_store and workflow_run_id else 0
+                preprocess_started = time.perf_counter()
+                context, prepared = prepare_documents(user_message)
+                self._prepared_document_context = context
+                if workflow_store and workflow_run_id:
+                    for item in prepared:
+                        workflow_store.add_artifact(
+                            workflow_run_id, step_id=step_id, artifact_type="markdown_document",
+                            name=item.source_path.name, uri=str(item.markdown_path),
+                            content_hash=item.digest,
+                            metadata={"source_path": str(item.source_path), "cache_hit": item.cache_hit},
+                        )
+                    workflow_store.finish_step(
+                        step_id, status="success",
+                        output_preview=f"已准备 {len(prepared)} 份 Markdown 文档",
+                        duration_ms=(time.perf_counter() - preprocess_started) * 1000,
+                        cached=bool(prepared and all(item.cache_hit for item in prepared)),
+                    )
+        except Exception as exc:
+            logger.warning("请求前文档预处理失败，将保留 read_file 降级路径: %s", exc)
+            if workflow_store and workflow_run_id and 'step_id' in locals() and step_id:
+                workflow_store.finish_step(step_id, status="failed", error=str(exc))
 
         # 明确的未来时间 + 行程/任务属于短期当前状态。提前写入，
         # 使本轮 prompt、后续会话和星图事件流都能看到同一份有来源的状态。
@@ -555,6 +561,8 @@ class AgentCore:
                                                           persona_snapshot=persona_snapshot,
                                                           persona_transition=persona_transition)
         except Exception as exc:
+            if workflow_store and workflow_run_id:
+                workflow_store.finish_run(workflow_run_id, status="failed", error=str(exc))
             if trace_id:
                 try:
                     from brain.memory_diagnostics import finish_memory_trace
@@ -563,6 +571,8 @@ class AgentCore:
                 except Exception:
                     pass
             self._active_memory_trace_id = ""
+            self._active_workflow_run_id = 0
+            self._prepared_document_context = ""
             raise
 
 
@@ -594,6 +604,10 @@ class AgentCore:
                     finish_memory_trace(trace_id, status="stale", duration_ms=(time.perf_counter()-trace_started)*1000)
                 except Exception: pass
             self._active_memory_trace_id = ""
+            if workflow_store and workflow_run_id:
+                workflow_store.finish_run(workflow_run_id, status="cancelled", result_summary="回复已过期")
+            self._active_workflow_run_id = 0
+            self._prepared_document_context = ""
             return ""
 
         # ── 情感系统：记录本轮协作结果 ─────────────────────────
@@ -619,15 +633,16 @@ class AgentCore:
         # 数据库存干净文本（供 GUI 展示和会话恢复时读取）
         self._history_mgr.save_message(self._session_id, "assistant", display_response)
 
-        # ── 自动记忆提取（后台执行，间隔由配置决定） ────────
+        # 被明确排除的轮次仍需推进持久游标，避免之后被后台职责回捞。
         if self._request_memory_writes_blocked:
-            # 防止用户稍后恢复写入后，自动提取器回头处理被明确排除的消息。
-            self._last_extraction_idx = len(self.history)
-        elif self._auto_extract:
-            self._extraction_counter += 1
-            if self._extraction_counter >= self._extract_interval:
-                self._extraction_counter = 0
-                self._trigger_auto_extraction()
+            try:
+                store = getattr(self, "_memory_extraction_store", None)
+                if store is not None:
+                    store.skip_through_latest(
+                        self._session_id, reason="request memory writes blocked"
+                    )
+            except Exception as exc:
+                logger.warning("推进记忆提取排除游标失败: %s", exc)
 
         # ── Checklist 提取（后台执行，对话结束后回顾待办）────
         if (getattr(self, "_owner_scope", True)
@@ -662,212 +677,20 @@ class AgentCore:
             except Exception:
                 pass
         self._active_memory_trace_id = ""
+        if workflow_store and workflow_run_id:
+            workflow_status = "success"
+            if workflow_store.is_cancel_requested(workflow_run_id) or "已被取消" in display_response:
+                workflow_status = "cancelled"
+            elif display_response.startswith(("（API 调用失败", "（莲心的网络", "（检测到异常")):
+                workflow_status = "failed"
+            workflow_store.finish_run(
+                workflow_run_id, status=workflow_status, result_summary=display_response,
+                error=display_response if workflow_status == "failed" else "",
+                input_tokens=int(getattr(self, "_last_input_tokens", 0) or 0),
+            )
+        self._active_workflow_run_id = 0
+        self._prepared_document_context = ""
         return display_response  # 返回干净文本，不含标签和 emoji
-
-
-    def _trigger_auto_extraction(self):
-        """在后台线程中自动提取记忆（不阻塞对话）。本地模型跳过（不擅长 JSON 格式化输出）。"""
-        if self._use_local or not getattr(self, "_owner_scope", True):
-            return
-        with self._extraction_lock:
-            if self._extraction_inflight:
-                return
-            start_idx = self._last_extraction_idx
-            end_idx = len(self.history)
-            recent = list(self.history[start_idx:end_idx])
-            if len(recent) < 3:
-                return
-            self._extraction_inflight = True
-
-        try:
-            from brain.persona.runtime import capture_persona_snapshot
-            persona_snapshot = capture_persona_snapshot()
-            extraction_persona_id = persona_snapshot.profile.id
-        except Exception:
-            extraction_persona_id = ""
-
-        def _do_extract():
-            # 构建对话文本（分类提取和五元组提取共用）
-            target = recent[-self._extract_msg_count:]
-            try:
-                source_rows = self._history_mgr.get_messages_with_ids(
-                    self._session_id, limit=self._extract_msg_count
-                )
-            except Exception:
-                source_rows = []
-            lines = [
-                f"[消息#{row['id']}][{'用户' if row['role'] == 'user' else '助手'}]"
-                f"[{row['timestamp']}]: {row['content']}"
-                for row in source_rows if row.get("content")
-            ]
-            if not lines:
-                for msg in target:
-                    role = "用户" if msg.get("role") == "user" else "助手"
-                    content = msg.get("content", "")
-                    if content:
-                        lines.append(f"[{role}]: {content}")
-            text = "\n".join(lines)
-            if len(text) < 30:
-                with self._extraction_lock:
-                    self._last_extraction_idx = max(self._last_extraction_idx, end_idx)
-                    self._extraction_inflight = False
-                return
-
-            classification_ok = False
-            graph_ok = False
-            # ── 分类记忆提取（独立 try，失败不影响五元组提取） ──
-            try:
-                prompt = build_extraction_prompt(text)
-                response = litellm.completion(
-                    model=self._model,
-                    messages=[
-                        {"role": "system",
-                         "content": "你是一个专业的记忆提取助手，从对话中提取值得长期记住的信息。"},
-                        {"role": "user", "content": prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.1,
-                    api_key=self._api_key,
-                    api_base=self._api_base,
-                    timeout=90,
-                )
-                raw = response.choices[0].message.content or "{}"
-                result = json.loads(raw)
-                memories = result.get("memories", [])
-
-                added = 0
-                pending_conflicts: dict[int, list[int]] = {}
-                for mem in memories:
-                    if not isinstance(mem, dict):
-                        continue
-                    cat = mem.get("category", "knowledge")
-                    content = mem.get("content", "").strip()
-                    if content and cat in ALL_CATEGORIES:
-                        source_message_ids, confidence, occurred_at = (
-                            _normalize_memory_provenance(mem, source_rows)
-                        )
-                        fact_id = _memory_add(
-                            content, cat, source="auto_extracted",
-                            source_session_id=self._session_id,
-                            source_channel=self._source_channel,
-                            occurred_at=occurred_at,
-                        )
-                        if fact_id:
-                            _memory_add_fragment(
-                                fact_id, content, cat,
-                                source="auto_extracted",
-                                source_session_id=self._session_id,
-                                source_channel=self._source_channel,
-                                source_message_ids=source_message_ids,
-                                persona_id=extraction_persona_id,
-                                confidence=confidence,
-                                extraction_model=self._model,
-                                occurred_at=occurred_at,
-                            )
-                            try:
-                                from brain.memory_conflicts import list_conflict_candidates
-                                for candidate in list_conflict_candidates(
-                                    status="pending", fact_id=fact_id, limit=3
-                                ):
-                                    pending_conflicts[int(candidate["id"])] = source_message_ids
-                            except Exception:
-                                pass
-                            added += 1
-                if pending_conflicts:
-                    try:
-                        from brain.memory_conflicts import (
-                            DECISIONS,
-                            get_conflict_candidate,
-                            resolve_conflict_candidate,
-                        )
-                        candidates = [
-                            get_conflict_candidate(candidate_id)
-                            for candidate_id in pending_conflicts
-                        ]
-                        candidates = [candidate for candidate in candidates if candidate]
-                        review_payload = [{
-                            "candidate_id": candidate["id"],
-                            "old_fact": candidate["existing_content"],
-                            "new_fact": candidate["new_content"],
-                            "category": candidate["category"],
-                        } for candidate in candidates]
-                        review_response = litellm.completion(
-                            model=self._model,
-                            messages=[{
-                                "role": "system",
-                                "content": (
-                                    "你是长期记忆语义裁决器。相似度只用于生成候选，不能作为结论。"
-                                    "逐对判断新事实相对于旧事实：duplicate=完全相同语义；"
-                                    "complements=可同时成立且互相补充；contradicts=互不相容但无法确定时间替代；"
-                                    "supersedes=新事实明确在时间上取代旧事实；unrelated=无关。"
-                                    "只有文本包含明确纠正、变化或时间先后时才能用 supersedes。"
-                                    "返回JSON：{\"reviews\":[{\"candidate_id\":整数,"
-                                    "\"decision\":枚举,\"confidence\":0到1,\"rationale\":理由}]}。"
-                                ),
-                            }, {
-                                "role": "user",
-                                "content": json.dumps(review_payload, ensure_ascii=False),
-                            }],
-                            response_format={"type": "json_object"},
-                            temperature=0.0,
-                            api_key=self._api_key,
-                            api_base=self._api_base,
-                            timeout=90,
-                        )
-                        review_raw = review_response.choices[0].message.content or "{}"
-                        reviews = json.loads(review_raw).get("reviews", [])
-                        allowed_ids = set(pending_conflicts)
-                        for review in reviews:
-                            if not isinstance(review, dict):
-                                continue
-                            try:
-                                candidate_id = int(review.get("candidate_id"))
-                            except (TypeError, ValueError):
-                                continue
-                            decision = str(review.get("decision", "")).lower()
-                            if candidate_id not in allowed_ids or decision not in DECISIONS:
-                                continue
-                            try:
-                                resolve_conflict_candidate(
-                                    candidate_id, decision,
-                                    confidence=review.get("confidence", 0.0),
-                                    rationale=review.get("rationale", ""),
-                                    review_model=self._model,
-                                    source_session_id=self._session_id,
-                                    source_channel=self._source_channel,
-                                    source_message_ids=pending_conflicts[candidate_id],
-                                    persona_id=extraction_persona_id,
-                                )
-                            except (TypeError, ValueError) as exc:
-                                logging.getLogger("MemoryConflict").warning(
-                                    "忽略无效或已失效的冲突裁决 candidate=%s: %s",
-                                    candidate_id, exc,
-                                )
-                    except Exception as exc:
-                        logging.getLogger("MemoryConflict").warning(
-                            "自动记忆冲突裁决失败，候选将保留待处理: %s", exc
-                        )
-                classification_ok = True
-            except Exception:
-                pass
-
-            # ── 五元组图记忆提取（独立 try，失败不影响分类提取） ──
-            if self._graph_enabled and self._auto_extract_quintuples:
-                try:
-                    from brain.quintuple_extractor import extract_and_store_with_config
-                    extract_and_store_with_config(text, self._model, self._api_key, self._api_base)
-                    graph_ok = True
-                except Exception as e:
-                    import logging
-                    logging.getLogger("Agent").warning(f"五元组提取失败: {e}")
-
-            with self._extraction_lock:
-                graph_required = self._graph_enabled and self._auto_extract_quintuples
-                if classification_ok and (not graph_required or graph_ok):
-                    self._last_extraction_idx = max(self._last_extraction_idx, end_idx)
-                self._extraction_inflight = False
-
-        threading.Thread(target=_do_extract, daemon=True).start()
 
     def _trigger_checklist_extraction(self):
         """对话结束后在后台提取待办事项（借鉴 NagaAgent DogTag）。"""
@@ -935,7 +758,12 @@ class AgentCore:
         self._summarized_history_idx = 0
         self._last_input_tokens = 0
         self._last_reply_time = None
-        self._last_extraction_idx = 0
+        try:
+            store = getattr(self, "_memory_extraction_store", None)
+            if store is not None:
+                store.bootstrap_session(self._session_id, 0)
+        except Exception as exc:
+            logger.warning("新会话记忆提取状态初始化失败: %s", exc)
         self._prev_session_summary = self._build_session_handoff(previous_session_id)
         self._last_persona_key = None
         self._persona_transition_remaining = 0
@@ -1543,7 +1371,13 @@ class AgentCore:
                 print(f"\n  [工具调用] {name}({json.dumps(args, ensure_ascii=False)})", flush=True)
                 if name == "run_shell":
                     args["cancel_event"] = self._cancel_event
-                result = _exec(name, args)
+                from brain.workflow import workflow_context
+
+                with workflow_context(
+                    getattr(self, "_active_workflow_run_id", 0),
+                    step_key=str(item["tc"].id or ""),
+                ):
+                    result = _exec(name, args)
 
                 preview = result[:200].replace("\n", " ") + ("..." if len(result) > 200 else "")
                 print(f"  [工具结果] {name} → {preview}\n", flush=True)
@@ -1961,6 +1795,8 @@ class AgentCore:
 
         # ── 注入实时时间信息（自适应精度：间隔>15分钟用分钟级，否则小时级） ──
         messages.append(self._build_realtime_message())
+        if getattr(self, "_prepared_document_context", ""):
+            messages.append({"role": "system", "content": self._prepared_document_context})
 
         current_user_turns = sum(1 for m in self.history if m.get("role") == "user")
         if self._prev_session_summary and current_user_turns <= 4:
@@ -2238,6 +2074,18 @@ class AgentCore:
         if disable_tools:
             for retry in range(2):
                 try:
+                    _plain_model_step = 0
+                    _plain_started = time.perf_counter()
+                    try:
+                        from brain.workflow import get_workflow_store
+                        if getattr(self, "_active_workflow_run_id", 0):
+                            _plain_model_step = get_workflow_store().start_step(
+                                self._active_workflow_run_id,
+                                step_key=f"model:text:{retry + 1}", name="纯文本模型回复",
+                                kind="model", input_data={"message_count": len(messages)},
+                            )
+                    except Exception:
+                        _plain_model_step = 0
                     stream = litellm.completion(
                         model=self._model,
                         max_tokens=self._max_tokens,
@@ -2249,6 +2097,12 @@ class AgentCore:
                         timeout=120,
                     )
                     content, reasoning, _, finish = self._collect_stream(stream)
+                    if _plain_model_step:
+                        get_workflow_store().finish_step(
+                            _plain_model_step, status="success",
+                            output_preview=f"finish={finish}, content_chars={len(content or '')}",
+                            duration_ms=(time.perf_counter() - _plain_started) * 1000,
+                        )
                     if finish == "error" and retry < 1:
                         import time as _time
                         _time.sleep(1.5)
@@ -2279,6 +2133,14 @@ class AgentCore:
                     self._last_reasoning = reasoning if reasoning else None
                     return content or "刚才的回复在生成时被截断了，请再发一次，我会继续处理。"
                 except Exception as e:
+                    if locals().get("_plain_model_step"):
+                        try:
+                            get_workflow_store().finish_step(
+                                _plain_model_step, status="failed", error=str(e),
+                                duration_ms=(time.perf_counter() - _plain_started) * 1000,
+                            )
+                        except Exception:
+                            pass
                     if retry < 1:
                         import time as _time
                         _time.sleep(1.5)
@@ -2422,6 +2284,18 @@ class AgentCore:
 
             try:
                 _api_start = time.time()
+                _workflow_model_step = 0
+                try:
+                    from brain.workflow import get_workflow_store
+                    if getattr(self, "_active_workflow_run_id", 0):
+                        _workflow_model_step = get_workflow_store().start_step(
+                            self._active_workflow_run_id,
+                            step_key=f"model:{iteration}", name=f"模型推理 第{iteration}轮",
+                            kind="model",
+                            input_data={"message_count": len(messages), "tool_count": len(all_tools)},
+                        )
+                except Exception:
+                    _workflow_model_step = 0
                 print("  [等待] 正在等待 API 响应...", flush=True)
                 stream = litellm.completion(
                     model=self._model,
@@ -2444,7 +2318,21 @@ class AgentCore:
                 _content_len = len(content) if content else 0
                 print(f"[诊断] 第{iteration}轮 API 完成: {_api_elapsed:.1f}s, "
                       f"回复{_content_len}字, finish={finish}", flush=True)
+                if _workflow_model_step:
+                    get_workflow_store().finish_step(
+                        _workflow_model_step, status="success",
+                        output_preview=f"finish={finish}, content_chars={_content_len}",
+                        duration_ms=_api_elapsed * 1000,
+                    )
             except Exception as e:
+                if locals().get("_workflow_model_step"):
+                    try:
+                        get_workflow_store().finish_step(
+                            _workflow_model_step, status="failed", error=str(e),
+                            duration_ms=(time.time() - _api_start) * 1000,
+                        )
+                    except Exception:
+                        pass
                 error_msg = str(e).lower()
                 is_retryable = any(kw in error_msg for kw in [
                     "timeout", "connection", "getaddrinfo", "name or service not known",

@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 from utils.settings import get_settings
 from utils.autostart import enable_autostart, disable_autostart, is_autostart_enabled
+from utils.platform_capabilities import get_platform_capabilities
 from utils.accompany_stats import AccompanyStats
 from config import get_heartbeat_config
 from config import get_quick_launch_apps, save_quick_launch_apps
@@ -33,6 +34,7 @@ class SettingsDialog(QDialog):
     font_size_changed = pyqtSignal(int)  # 字体大小变化信号
     background_changed = pyqtSignal(bool, str, float, str, str)
     avatars_changed = pyqtSignal()
+    window_settings_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -166,6 +168,47 @@ class SettingsDialog(QDialog):
         check_layout.addWidget(self._startup_check_cb)
         scroll_layout.addWidget(check_frame)
 
+        # 窗口形态、托盘与动效
+        window_frame = self._create_frame()
+        window_layout = QVBoxLayout(window_frame)
+        window_title = QLabel("🪟 窗口与桌面陪伴")
+        window_title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        window_layout.addWidget(window_title)
+        close_row = QHBoxLayout()
+        close_row.addWidget(QLabel("点击关闭按钮时："))
+        self._close_behavior_combo = QComboBox()
+        self._close_behavior_combo.addItem("每次询问", "ask")
+        self._close_behavior_combo.addItem("收进系统托盘", "tray")
+        self._close_behavior_combo.addItem("直接退出", "quit")
+        close_row.addWidget(self._close_behavior_combo)
+        close_row.addStretch()
+        window_layout.addLayout(close_row)
+        self._tray_enabled_cb = QCheckBox("启用系统托盘")
+        self._minimize_tray_cb = QCheckBox("最小化时收进系统托盘")
+        self._restore_window_cb = QCheckBox("启动时恢复上次窗口位置与大小")
+        self._always_top_cb = QCheckBox("主窗口始终置顶")
+        self._reduced_motion_cb = QCheckBox("减少角色动效（静态头像和低性能设备推荐）")
+        self._desktop_notifications_cb = QCheckBox("允许托盘桌面通知")
+        for checkbox in (
+            self._tray_enabled_cb, self._minimize_tray_cb, self._restore_window_cb,
+            self._always_top_cb, self._reduced_motion_cb, self._desktop_notifications_cb,
+        ):
+            window_layout.addWidget(checkbox)
+        try:
+            from utils.platform_capabilities import get_platform_capabilities
+            caps = get_platform_capabilities()
+            capability_text = (
+                f"当前平台：{caps.system} {caps.release}；"
+                f"全局热键：{'原生支持' if caps.native_global_hotkey else '窗口内快捷键降级'}。"
+            )
+        except Exception:
+            capability_text = "平台能力检测不可用，将使用 Qt 通用窗口能力。"
+        capability_label = QLabel(capability_text)
+        capability_label.setWordWrap(True)
+        capability_label.setStyleSheet("color:#888;font-size:11px;")
+        window_layout.addWidget(capability_label)
+        scroll_layout.addWidget(window_frame)
+
         # 字体大小
         font_frame = self._create_frame()
         font_layout = QVBoxLayout(font_frame)
@@ -230,6 +273,9 @@ class SettingsDialog(QDialog):
         self._autostart_cb = QCheckBox("开启开机自启动（下次开机时莲心自动启动）")
         self._autostart_cb.setFont(QFont("Microsoft YaHei UI", 9))
         self._autostart_cb.setCursor(Qt.PointingHandCursor)
+        if not get_platform_capabilities().registry_autostart:
+            self._autostart_cb.setEnabled(False)
+            self._autostart_cb.setText("开机自启动（当前平台暂不支持自动配置）")
         autostart_layout.addWidget(self._autostart_cb)
         autostart_tip = QLabel("启动后若检测到网络，莲心会自动发送一条问候消息（每天仅一次）")
         autostart_tip.setFont(QFont("Microsoft YaHei UI", 8))
@@ -742,6 +788,14 @@ class SettingsDialog(QDialog):
             self._chat_avatar_tab.load()
         self._exit_confirm_cb.setChecked(self._settings.show_exit_confirmation)
         self._startup_check_cb.setChecked(self._settings.startup_check_enabled)
+        self._tray_enabled_cb.setChecked(self._settings.tray_enabled)
+        self._minimize_tray_cb.setChecked(self._settings.minimize_to_tray)
+        self._restore_window_cb.setChecked(self._settings.restore_window_state)
+        self._always_top_cb.setChecked(self._settings.always_on_top)
+        self._reduced_motion_cb.setChecked(self._settings.reduced_motion)
+        self._desktop_notifications_cb.setChecked(self._settings.desktop_notifications)
+        close_index = self._close_behavior_combo.findData(self._settings.close_behavior)
+        self._close_behavior_combo.setCurrentIndex(max(0, close_index))
         self._autostart_cb.setChecked(is_autostart_enabled())
         font_size = self._settings.font_size
         self._font_slider.setValue(font_size)
@@ -791,6 +845,13 @@ class SettingsDialog(QDialog):
             self.avatars_changed.emit()
         self._settings.show_exit_confirmation = self._exit_confirm_cb.isChecked()
         self._settings.startup_check_enabled = self._startup_check_cb.isChecked()
+        self._settings.tray_enabled = self._tray_enabled_cb.isChecked()
+        self._settings.minimize_to_tray = self._minimize_tray_cb.isChecked()
+        self._settings.restore_window_state = self._restore_window_cb.isChecked()
+        self._settings.always_on_top = self._always_top_cb.isChecked()
+        self._settings.reduced_motion = self._reduced_motion_cb.isChecked()
+        self._settings.desktop_notifications = self._desktop_notifications_cb.isChecked()
+        self._settings.close_behavior = str(self._close_behavior_combo.currentData() or "ask")
         self._settings.font_size = self._font_slider.value()
         self.font_size_changed.emit(self._font_slider.value())
 
@@ -857,8 +918,7 @@ class SettingsDialog(QDialog):
             char_widget._avatar_mode = "animated"
             char_widget._switch_to_animated()
 
-        self.accept()
-
+        self.window_settings_changed.emit()
         self.accept()
 
     def _on_emotion_prob_changed(self, value: int):

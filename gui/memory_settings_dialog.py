@@ -147,18 +147,48 @@ class MemorySettingsDialog(QDialog):
         auto_vbox.addWidget(auto_desc)
         tab1_layout.addWidget(auto_frame)
 
-        # 提取间隔（对话轮数）
+        # 后台提取触发与失败保护
         interval_frame = self._create_frame()
         interval_vbox = QVBoxLayout(interval_frame)
         interval_vbox.setSpacing(8)
-        interval_title = QLabel("自动提取轮次间隔")
+        interval_title = QLabel("后台提取触发与失败保护")
         interval_title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
         interval_vbox.addWidget(interval_title)
-        self._memory_extract_interval_spin = QSpinBox()
-        self._memory_extract_interval_spin.setRange(1, 30)
-        self._memory_extract_interval_spin.setSuffix(" 轮对话")
-        interval_vbox.addWidget(self._memory_extract_interval_spin)
-        interval_desc = QLabel("每完成 N 轮对话后触发一次自动提取，间隔越小记忆越及时但也越占用Token。")
+
+        trigger_row = QHBoxLayout()
+        trigger_row.addWidget(QLabel("空闲触发"))
+        self._memory_extract_idle_spin = QSpinBox()
+        self._memory_extract_idle_spin.setRange(30, 1800)
+        self._memory_extract_idle_spin.setSuffix(" 秒")
+        trigger_row.addWidget(self._memory_extract_idle_spin)
+        trigger_row.addSpacing(16)
+        trigger_row.addWidget(QLabel("积压优先"))
+        self._memory_extract_backlog_spin = QSpinBox()
+        self._memory_extract_backlog_spin.setRange(3, 100)
+        self._memory_extract_backlog_spin.setSuffix(" 条")
+        trigger_row.addWidget(self._memory_extract_backlog_spin)
+        trigger_row.addStretch()
+        interval_vbox.addLayout(trigger_row)
+
+        failure_row = QHBoxLayout()
+        failure_row.addWidget(QLabel("首次重试"))
+        self._memory_extract_retry_spin = QSpinBox()
+        self._memory_extract_retry_spin.setRange(1, 60)
+        self._memory_extract_retry_spin.setSuffix(" 分钟")
+        failure_row.addWidget(self._memory_extract_retry_spin)
+        failure_row.addSpacing(16)
+        failure_row.addWidget(QLabel("连续失败暂停"))
+        self._memory_extract_pause_threshold_spin = QSpinBox()
+        self._memory_extract_pause_threshold_spin.setRange(2, 20)
+        self._memory_extract_pause_threshold_spin.setSuffix(" 次")
+        failure_row.addWidget(self._memory_extract_pause_threshold_spin)
+        failure_row.addStretch()
+        interval_vbox.addLayout(failure_row)
+
+        interval_desc = QLabel(
+            "对话安静后自动处理；消息积压较多时会优先处理。失败采用指数退避，"
+            "达到阈值后自动暂停，可在后台职责中心手动触发恢复。"
+        )
         interval_desc.setWordWrap(True)
         interval_desc.setStyleSheet("color: #888; font-size: 15px; padding: 4px 0;")
         interval_vbox.addWidget(interval_desc)
@@ -577,7 +607,18 @@ class MemorySettingsDialog(QDialog):
 
         # 记忆提取
         self._memory_auto_cb.setChecked(self._mem_cfg.get("auto_extract", True))
-        self._memory_extract_interval_spin.setValue(self._mem_cfg.get("extract_interval", 6))
+        self._memory_extract_idle_spin.setValue(
+            self._mem_cfg.get("extraction_idle_seconds", 120)
+        )
+        self._memory_extract_backlog_spin.setValue(
+            self._mem_cfg.get("extraction_backlog_messages", 20)
+        )
+        self._memory_extract_retry_spin.setValue(
+            self._mem_cfg.get("extraction_retry_base_minutes", 5)
+        )
+        self._memory_extract_pause_threshold_spin.setValue(
+            self._mem_cfg.get("extraction_failure_pause_threshold", 5)
+        )
         self._memory_extract_msgs_spin.setValue(self._mem_cfg.get("extract_message_count", 20))
         self._memory_max_items_spin.setValue(self._mem_cfg.get("max_items_per_category", 200))
         # 默认分类
@@ -613,8 +654,11 @@ class MemorySettingsDialog(QDialog):
         cfg = dict(self._mem_cfg)
         cfg.update({
             "auto_extract": self._memory_auto_cb.isChecked(),
-            "extract_interval": self._memory_extract_interval_spin.value(),
             "extract_message_count": self._memory_extract_msgs_spin.value(),
+            "extraction_idle_seconds": self._memory_extract_idle_spin.value(),
+            "extraction_backlog_messages": self._memory_extract_backlog_spin.value(),
+            "extraction_retry_base_minutes": self._memory_extract_retry_spin.value(),
+            "extraction_failure_pause_threshold": self._memory_extract_pause_threshold_spin.value(),
             "max_items_per_category": self._memory_max_items_spin.value(),
             "default_save_category": self._memory_default_cat_combo.currentData(),
             "context_window_size": self._context_window_spin.value(),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import csv
 import logging
 import threading
 import time
@@ -562,9 +563,8 @@ class EmotionManager:
         self._dynamics.advance(state)
         self._store.save_state(state)
 
-    @_synchronized
-    def simulate_scenario(self, scenario: str) -> dict:
-        """Apply a bounded, UI-only scenario and persist an auditable event."""
+    @staticmethod
+    def _scenario_delta(scenario: str) -> AffectDelta | None:
         scenarios = {
             "warm_reply": AffectDelta(
                 event_type="simulation_warm_reply", pride=-0.10, valence=0.12, arousal=-0.06,
@@ -580,8 +580,28 @@ class EmotionManager:
                 event_type="simulation_waiting", arousal=0.06, connection=0.10,
                 confidence=1.0, significance=0.25, summary="模拟：经过一段等待时间，没有新的回应",
             ),
+            "collaboration": AffectDelta(
+                event_type="simulation_collaboration", pride=-0.04, valence=0.10,
+                immersion=0.18, trust=0.025, intimacy=0.015, connection=-0.08,
+                confidence=1.0, significance=0.40, summary="模拟：与用户顺利协作完成了一项任务",
+            ),
+            "conflict": AffectDelta(
+                event_type="simulation_conflict", pride=0.16, guardedness=0.18,
+                valence=-0.16, arousal=0.18, rupture=0.14, trust=-0.04,
+                confidence=1.0, significance=0.65, summary="模拟：发生了明显的边界冲突",
+            ),
+            "repair": AffectDelta(
+                event_type="simulation_repair", pride=-0.12, guardedness=-0.12,
+                valence=0.10, arousal=-0.10, repair=0.24, trust=0.035,
+                confidence=1.0, significance=0.55, summary="模拟：用户认真解释并完成关系修复",
+            ),
         }
-        delta = scenarios.get(str(scenario))
+        return scenarios.get(str(scenario))
+
+    @_synchronized
+    def simulate_scenario(self, scenario: str) -> dict:
+        """Apply a bounded, UI-only scenario and persist an auditable event."""
+        delta = self._scenario_delta(scenario)
         if delta is None:
             return {"ok": False, "reason": "unknown_scenario"}
         state = self._get_state(*self._active_key)
@@ -596,6 +616,171 @@ class EmotionManager:
             state, delta, source_channel="ui_simulation", idempotency_key=""
         )
         return {"ok": True, "scenario": scenario, "state": state.to_dict()}
+
+    @_synchronized
+    def simulate_scenario_batch(
+        self, scenarios: list[str], *, name: str = "批量场景预演",
+        persist: bool = False,
+    ) -> dict:
+        """Run a deterministic scenario sequence; preview mode never changes live state."""
+        sequence = [str(item) for item in scenarios if self._scenario_delta(str(item))]
+        if not sequence:
+            return {"ok": False, "reason": "no_valid_scenarios"}
+        key = self._active_key
+        live_state = self._states.get(key)
+        if live_state is None:
+            live_state = self._store.load_state(*key)
+            self._states[key] = live_state
+        baseline = live_state.to_dict()
+        simulated = EmotionalStateV3.from_mapping(baseline)
+        timeline = []
+        workflow_store = None
+        workflow_run_id = 0
+        try:
+            from brain.workflow import get_workflow_store
+            workflow_store = get_workflow_store()
+            run = workflow_store.begin_run(
+                kind="emotion_simulation", title=name, channel="emotion_lab",
+                metadata={"scenarios": sequence, "persist": bool(persist),
+                          "persona_id": key[0], "subject_id": key[1]},
+            )
+            workflow_run_id = int(run["id"])
+        except Exception:
+            workflow_store = None
+        try:
+            for index, scenario in enumerate(sequence, 1):
+                delta = self._scenario_delta(scenario)
+                if scenario == "waiting":
+                    simulated.last_update -= 30 * 60
+                    self._dynamics.advance(
+                        simulated, bias=self._get_saga_bias(simulated.persona_id)
+                    )
+                simulated.apply(delta)
+                simulated.last_update = time.time()
+                timeline.append({
+                    "index": index, "scenario": scenario,
+                    "event": delta.to_dict(), "state": simulated.to_dict(),
+                })
+                if persist:
+                    self._store.save_state_with_event(
+                        simulated, delta, source_channel="ui_batch_simulation"
+                    )
+            if persist:
+                self._states[key] = simulated
+            final_state = simulated.to_dict()
+            axes = (
+                "valence", "arousal", "pride", "guardedness", "connection",
+                "immersion", "trust", "intimacy", "rupture", "repair",
+            )
+            changes = {
+                axis: round(float(final_state.get(axis, 0)) - float(baseline.get(axis, 0)), 4)
+                for axis in axes
+            }
+            result = {
+                "ok": True, "name": name, "persisted": bool(persist),
+                "scenarios": sequence, "baseline": baseline, "final_state": final_state,
+                "changes": changes, "timeline": timeline,
+            }
+            scenario_run_id = self._store.record_scenario_run(
+                *key, name=name, scenarios=sequence, baseline=baseline, result=result,
+                persisted=persist, workflow_run_id=workflow_run_id or None,
+            )
+            result["scenario_run_id"] = scenario_run_id
+            result["workflow_run_id"] = workflow_run_id or None
+            if workflow_store and workflow_run_id:
+                workflow_store.finish_run(
+                    workflow_run_id, status="success",
+                    result_summary=f"完成 {len(sequence)} 个场景；{'已应用' if persist else '仅预览'}",
+                )
+            return result
+        except Exception as exc:
+            if workflow_store and workflow_run_id:
+                workflow_store.finish_run(workflow_run_id, status="failed", error=str(exc))
+            raise
+
+    @_synchronized
+    def compare_scenario_batches(self, batches: dict[str, list[str]]) -> dict:
+        """Compare multiple non-destructive scenario packs against one live baseline."""
+        results = {}
+        for name, scenarios in batches.items():
+            results[str(name)] = self.simulate_scenario_batch(
+                list(scenarios), name=str(name), persist=False
+            )
+        return {"ok": True, "results": results}
+
+    @_synchronized
+    def export_trajectory(
+        self, output_path: Path | str, *, include_simulation: bool = False,
+        since: float | None = None, until: float | None = None,
+    ) -> dict:
+        """Export the active emotional trajectory to JSON or CSV with a Workflow artifact."""
+        path = Path(output_path).expanduser()
+        suffix = path.suffix.lower()
+        if suffix not in {".json", ".csv"}:
+            path = path.with_suffix(".json")
+            suffix = ".json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        key = self._active_key
+        events = self._store.query_events(
+            *key, since=since, until=until,
+            include_simulation=include_simulation, limit=100000,
+        )
+        workflow_store = None
+        workflow_run_id = 0
+        try:
+            from brain.workflow import get_workflow_store
+            workflow_store = get_workflow_store()
+            run = workflow_store.begin_run(
+                kind="emotion_export", title=f"导出情感轨迹：{path.name}",
+                channel="emotion_lab", metadata={"output_path": str(path),
+                    "include_simulation": include_simulation, "event_count": len(events)},
+            )
+            workflow_run_id = int(run["id"])
+            if suffix == ".json":
+                payload = {
+                    "schema_version": 1, "exported_at": time.time(),
+                    "persona_id": key[0], "subject_id": key[1],
+                    "current_state": self._get_state(*key).to_dict(), "events": events,
+                }
+                content = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+                path.write_text(content, encoding="utf-8")
+            else:
+                delta_fields = (
+                    "connection", "pride", "guardedness", "valence", "arousal",
+                    "immersion", "trust", "intimacy", "rupture", "repair",
+                )
+                with path.open("w", encoding="utf-8-sig", newline="") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=[
+                        "id", "created_at", "event_type", "source_channel",
+                        "source_session_id", "source_message_id", "confidence",
+                        "significance", "summary", *delta_fields,
+                    ])
+                    writer.writeheader()
+                    for event in events:
+                        try:
+                            delta = json.loads(event.get("delta_json", "{}"))
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            delta = {}
+                        writer.writerow({
+                            **{name: event.get(name, "") for name in writer.fieldnames},
+                            **{name: delta.get(name, 0) for name in delta_fields},
+                        })
+            if workflow_store and workflow_run_id:
+                workflow_store.add_artifact(
+                    workflow_run_id, artifact_type="emotion_trajectory",
+                    name=path.name, uri=str(path),
+                    metadata={"format": suffix[1:], "event_count": len(events)},
+                )
+                workflow_store.finish_run(
+                    workflow_run_id, status="success",
+                    result_summary=f"已导出 {len(events)} 条情感事件",
+                )
+            return {"ok": True, "path": str(path), "event_count": len(events),
+                    "workflow_run_id": workflow_run_id or None}
+        except Exception as exc:
+            if workflow_store and workflow_run_id:
+                workflow_store.finish_run(workflow_run_id, status="failed", error=str(exc))
+            raise
 
     @_synchronized
     def restore_simulation(self) -> dict:

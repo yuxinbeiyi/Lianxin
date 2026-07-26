@@ -5,6 +5,7 @@
 
 import sys
 import os
+import threading
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 os.environ['TQDM_DISABLE'] = '1'          # 抑制 modelscope/funasr tqdm 进度条
 
@@ -184,10 +185,10 @@ import qdarkstyle
 from gui.main_window import MainWindow
 
 
-# ── 第5条：多实例保护 ─────────────────────────────────────────
-# 使用 Windows 命名互斥量确保同一时刻只有一个莲心AI进程运行。
-# 句柄存为模块级变量，防止进程退出前被意外回收。
-_MUTEX_HANDLE = None
+# ── 第5条：跨平台多实例保护 ───────────────────────────────────
+from utils.platform_capabilities import SingleInstanceGuard
+
+_INSTANCE_GUARD = SingleInstanceGuard()
 
 
 def _acquire_single_instance_mutex() -> bool:
@@ -196,12 +197,7 @@ def _acquire_single_instance_mutex() -> bool:
     返回 True 表示当前进程获得唯一运行权；
     返回 False 表示已有另一个实例在运行。
     """
-    global _MUTEX_HANDLE
-    _MUTEX_HANDLE = ctypes.windll.kernel32.CreateMutexW(
-        None, False, "LianxinAI_SingleInstance_v1"
-    )
-    # GetLastError() == 183 (ERROR_ALREADY_EXISTS) 说明互斥量已存在
-    return ctypes.windll.kernel32.GetLastError() != 183
+    return _INSTANCE_GUARD.acquire()
 
 
 def _global_exception_handler(exc_type, exc_value, exc_tb):

@@ -489,11 +489,23 @@ class MemoryUniverseWindow(QMainWindow):
         fact_ids = []
         fragment_ids = []
         self._source_message_ids = []
+        record_type = "entity" if item.get("name") else ("saga" if item.get("episode_ids") else "episode")
+        try:
+            from brain.memory_narrative import trace_narrative_sources
+
+            traced = trace_narrative_sources(record_type, int(item["id"]))
+            fact_ids.extend(traced.get("facts", []))
+            fragment_ids.extend(traced.get("fragments", []))
+            self._source_message_ids.extend(traced.get("message_ids", []))
+        except Exception:
+            pass
         for key, target in (("source_fact_ids", fact_ids), ("fragment_ids", fragment_ids)):
             try:
                 target.extend(json.loads(item.get(key, "[]") or "[]"))
             except (TypeError, ValueError, json.JSONDecodeError):
                 pass
+        fact_ids = list(dict.fromkeys(int(value) for value in fact_ids if str(value).isdigit()))
+        fragment_ids = list(dict.fromkeys(int(value) for value in fragment_ids if str(value).isdigit()))
         # Saga nodes point to Episodes first; expand that chain before reading facts.
         if item.get("episode_ids") and not fact_ids:
             try:
@@ -571,10 +583,11 @@ class MemoryUniverseWindow(QMainWindow):
             return
         item = self._selected
         try:
-            from brain.graph_memory import _get_conn
-            table = "memory_entity_profiles" if item.get("name") else ("memory_sagas" if item.get("episode_ids") else "memory_episodes")
-            _get_conn().execute(f"UPDATE {table} SET status='needs_review',updated_at=datetime('now','localtime') WHERE id=?", (int(item["id"]),))
-            _get_conn().commit()
+            from brain.memory_narrative import transition_narrative_lifecycle
+
+            record_type = "entity" if item.get("name") else ("saga" if item.get("episode_ids") else "episode")
+            transition_narrative_lifecycle(record_type, int(item["id"]), "needs_review",
+                                           reason="用户在记忆宇宙中标记复核")
             self._detail.append("\n已标记为需要复核。")
         except Exception as exc:
             self._detail.append(f"\n标记失败：{exc}")

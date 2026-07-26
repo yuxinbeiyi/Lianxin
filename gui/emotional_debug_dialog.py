@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSlider, QComboBox, QFrame, QGroupBox,
     QTextEdit, QProgressBar, QWidget, QGridLayout, QTabWidget,
-    QSpinBox, QDoubleSpinBox, QCheckBox,
+    QSpinBox, QDoubleSpinBox, QCheckBox, QFileDialog, QMessageBox,
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
@@ -220,6 +220,17 @@ class EmotionalDebugDialog(QDialog):
             btn.clicked.connect(getattr(self, cb_name))
             scenarios.addWidget(btn)
         bv.addLayout(scenarios)
+        compare_row = QHBoxLayout()
+        preview_btn = QPushButton("对比三组典型场景（不改真实状态）")
+        preview_btn.clicked.connect(self._preview_scenario_batches)
+        compare_row.addWidget(preview_btn)
+        compare_row.addStretch()
+        bv.addLayout(compare_row)
+        self._scenario_result = QTextEdit()
+        self._scenario_result.setReadOnly(True)
+        self._scenario_result.setMaximumHeight(150)
+        self._scenario_result.setPlaceholderText("批量场景对比结果会显示在这里。")
+        bv.addWidget(self._scenario_result)
         layout.addWidget(batch_g)
 
         layout.addStretch()
@@ -288,6 +299,12 @@ class EmotionalDebugDialog(QDialog):
         clear_btn = QPushButton("清除日志")
         clear_btn.clicked.connect(self._clear_log)
         btn_row.addWidget(clear_btn)
+        export_json_btn = QPushButton("导出 JSON")
+        export_json_btn.clicked.connect(lambda: self._export_trajectory("json"))
+        btn_row.addWidget(export_json_btn)
+        export_csv_btn = QPushButton("导出 CSV")
+        export_csv_btn.clicked.connect(lambda: self._export_trajectory("csv"))
+        btn_row.addWidget(export_csv_btn)
         btn_row.addStretch()
         lv.addLayout(btn_row)
 
@@ -557,6 +574,47 @@ class EmotionalDebugDialog(QDialog):
             self._refresh_display()
         except Exception as e:
             self._log_view.append(f"[错误] {e}")
+
+    def _preview_scenario_batches(self):
+        try:
+            from brain.emotional import get_manager as _get_emotion_mgr
+            result = _get_emotion_mgr().compare_scenario_batches({
+                "稳定陪伴": ["warm_reply", "collaboration", "warm_reply"],
+                "冷淡等待": ["cold_reply", "waiting", "cold_reply"],
+                "冲突修复": ["conflict", "waiting", "repair"],
+            })
+            lines = ["以下结果均为沙盒预演，不会修改真实情感状态："]
+            for name, item in result.get("results", {}).items():
+                changes = item.get("changes", {})
+                lines.append(
+                    f"{name}：愉悦 {changes.get('valence', 0):+.3f}，"
+                    f"连接需求 {changes.get('connection', 0):+.3f}，"
+                    f"信任 {changes.get('trust', 0):+.3f}，"
+                    f"裂痕 {changes.get('rupture', 0):+.3f}"
+                )
+            self._scenario_result.setPlainText("\n".join(lines))
+            self._log_view.append("[场景实验] 三组场景对比完成，真实状态未改变")
+        except Exception as e:
+            self._scenario_result.setPlainText(f"场景对比失败：{e}")
+
+    def _export_trajectory(self, format_name: str):
+        suffix = ".csv" if format_name == "csv" else ".json"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出情感轨迹", f"莲心情感轨迹{suffix}",
+            "CSV 文件 (*.csv)" if suffix == ".csv" else "JSON 文件 (*.json)",
+        )
+        if not path:
+            return
+        try:
+            from brain.emotional import get_manager as _get_emotion_mgr
+            result = _get_emotion_mgr().export_trajectory(path, include_simulation=False)
+            QMessageBox.information(
+                self, "导出完成",
+                f"已导出 {result.get('event_count', 0)} 条真实情感事件：\n{result.get('path', path)}",
+            )
+            self._log_view.append(f"[导出] {result.get('path', path)}")
+        except Exception as e:
+            QMessageBox.warning(self, "导出失败", str(e))
 
     # ── 时间模拟 ────────────────────────────────────────
 

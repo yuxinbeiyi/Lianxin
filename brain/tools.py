@@ -5712,7 +5712,7 @@ def _bilibili_list_tags_tool() -> str:
     return "\n".join(lines)
 
 
-def execute_tool(name: str, tool_input: dict) -> str:
+def _execute_tool_impl(name: str, tool_input: dict) -> str:
     """根据工具名称调用对应的执行函数。调用前检查防御模式。
     支持错误恢复链：网络类工具失败后自动重试+降级。"""
     t0 = time.perf_counter()
@@ -5728,7 +5728,6 @@ def execute_tool(name: str, tool_input: dict) -> str:
                 return f"[拒绝] {_reason}"
         except Exception:
             pass
-
         # ── MCP 工具路由 ──────────────────────────────────────
         if name.startswith("mcp__"):
             try:
@@ -5781,6 +5780,90 @@ def execute_tool(name: str, tool_input: dict) -> str:
             record_tool_call(name, success, elapsed)
         except Exception:
             pass
+
+
+_WORKFLOW_CACHE_TTL = {
+    "web_search": 15 * 60,
+    "fetch_webpage": 60 * 60,
+    "fetch_webpage_via_api": 60 * 60,
+    "fetch_webpage_browser": 30 * 60,
+}
+
+
+def execute_tool(name: str, tool_input: dict) -> str:
+    """Execute one tool with persistent Workflow step audit and safe read cache."""
+    import uuid
+
+    run_id = 0
+    context_step_key = ""
+    store = None
+    step_id = 0
+    started = time.perf_counter()
+    try:
+        from brain.workflow import get_workflow_context, get_workflow_store
+
+        run_id, context_step_key = get_workflow_context()
+        if run_id:
+            store = get_workflow_store()
+            step_id = store.start_step(
+                run_id,
+                step_key=context_step_key or f"tool:{name}:{uuid.uuid4().hex}",
+                name=name,
+                kind="tool",
+                input_data=tool_input,
+            )
+            if store.is_cancel_requested(run_id):
+                result = "[CANCELLED] 工作流已取消"
+                store.finish_step(step_id, status="cancelled", output_preview=result)
+                return result
+
+        ttl = _WORKFLOW_CACHE_TTL.get(name, 0)
+        if ttl:
+            cache_store = store or get_workflow_store()
+            cached_result = cache_store.get_cache(name, tool_input)
+            if cached_result is not None:
+                if step_id:
+                    cache_store.finish_step(
+                        step_id, status="success", output_preview=cached_result,
+                        duration_ms=(time.perf_counter() - started) * 1000, cached=True,
+                    )
+                return cached_result
+
+        result_text = str(_execute_tool_impl(name, tool_input) or "")
+        is_error = (
+            result_text.startswith(("[ERROR]", "[拒绝]", "错误", "工具执行错误", "未知工具"))
+            or "失败" in result_text[:80]
+        )
+        if ttl and not is_error:
+            (store or get_workflow_store()).put_cache(name, tool_input, result_text, ttl_seconds=ttl)
+        if step_id and store:
+            store.finish_step(
+                step_id, status="failed" if is_error else "success",
+                output_preview=result_text, error=result_text if is_error else "",
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            for key in ("path", "file_path", "output_path"):
+                raw_path = tool_input.get(key)
+                if not raw_path:
+                    continue
+                try:
+                    artifact_path = Path(str(raw_path)).resolve()
+                    if artifact_path.is_file():
+                        store.add_artifact(
+                            run_id, step_id=step_id, artifact_type="file",
+                            name=artifact_path.name, uri=str(artifact_path),
+                            metadata={"tool": name, "argument": key},
+                        )
+                except Exception:
+                    pass
+        return result_text
+    except Exception as exc:
+        if step_id and store:
+            store.finish_step(
+                step_id, status="failed", error=str(exc),
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+        raise
 
 # ── 初始化工具注册中心（模块导入时自动注册所有工具）─────────
 try:

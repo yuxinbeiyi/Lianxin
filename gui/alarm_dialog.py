@@ -1185,12 +1185,16 @@ class AlarmDialog(QDialog):
         task_id = current.data(Qt.UserRole)
         task = self._auto_task_mgr.get_task(task_id)
         logs = self._auto_task_mgr.get_logs(task_id, limit=20)
+        workflow_runs = self._auto_task_mgr.get_workflow_runs(task_id)
 
-        if not logs:
+        if not logs and not workflow_runs:
             QMessageBox.information(self, "执行日志", "暂无执行记录")
             return
 
         lines = [f"📋 {task.name} 执行日志\n"]
+        if workflow_runs:
+            run_ids = "、".join(str(item["workflow_run_id"]) for item in workflow_runs[:10])
+            lines.append(f"🧭 关联 Workflow：{run_ids}\n")
         for log in logs:
             status = "✅" if log["success"] else "❌"
             lines.append(f"{status} [{log['timestamp']}] 步骤{log['step']}: {log['message'][:80]}")

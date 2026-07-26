@@ -38,6 +38,15 @@ _DEFAULT_SETTINGS = {
     "background_opacity": 0.22,
     "background_fit_mode": "cover",
     "chat_background_opacity": 0.75,
+    "tray_enabled": True,
+    "close_behavior": "ask",          # ask / tray / quit
+    "minimize_to_tray": False,
+    "window_mode": "normal",          # normal / compact / companion
+    "window_geometry": {},
+    "restore_window_state": True,
+    "always_on_top": False,
+    "reduced_motion": False,
+    "desktop_notifications": True,
 }
 
 
@@ -322,6 +331,91 @@ class SettingsManager:
     @chat_background_opacity.setter
     def chat_background_opacity(self, val: float):
         self._settings["chat_background_opacity"] = max(0.0, min(1.0, float(val)))
+        self.save()
+
+    # ========== 窗口、托盘与动效 ==========
+    @property
+    def tray_enabled(self) -> bool:
+        return bool(self._settings.get("tray_enabled", True))
+
+    @tray_enabled.setter
+    def tray_enabled(self, val: bool):
+        self._settings["tray_enabled"] = bool(val)
+        self.save()
+
+    @property
+    def close_behavior(self) -> str:
+        value = str(self._settings.get("close_behavior", "ask"))
+        return value if value in {"ask", "tray", "quit"} else "ask"
+
+    @close_behavior.setter
+    def close_behavior(self, val: str):
+        self._settings["close_behavior"] = val if val in {"ask", "tray", "quit"} else "ask"
+        self.save()
+
+    @property
+    def minimize_to_tray(self) -> bool:
+        return bool(self._settings.get("minimize_to_tray", False))
+
+    @minimize_to_tray.setter
+    def minimize_to_tray(self, val: bool):
+        self._settings["minimize_to_tray"] = bool(val)
+        self.save()
+
+    @property
+    def window_mode(self) -> str:
+        value = str(self._settings.get("window_mode", "normal"))
+        return value if value in {"normal", "compact", "companion"} else "normal"
+
+    @window_mode.setter
+    def window_mode(self, val: str):
+        self._settings["window_mode"] = val if val in {"normal", "compact", "companion"} else "normal"
+        self.save()
+
+    @property
+    def window_geometry(self) -> dict:
+        value = self._settings.get("window_geometry", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    @window_geometry.setter
+    def window_geometry(self, val: dict):
+        self._settings["window_geometry"] = dict(val or {})
+        self.save()
+
+    @property
+    def restore_window_state(self) -> bool:
+        return bool(self._settings.get("restore_window_state", True))
+
+    @restore_window_state.setter
+    def restore_window_state(self, val: bool):
+        self._settings["restore_window_state"] = bool(val)
+        self.save()
+
+    @property
+    def always_on_top(self) -> bool:
+        return bool(self._settings.get("always_on_top", False))
+
+    @always_on_top.setter
+    def always_on_top(self, val: bool):
+        self._settings["always_on_top"] = bool(val)
+        self.save()
+
+    @property
+    def reduced_motion(self) -> bool:
+        return bool(self._settings.get("reduced_motion", False))
+
+    @reduced_motion.setter
+    def reduced_motion(self, val: bool):
+        self._settings["reduced_motion"] = bool(val)
+        self.save()
+
+    @property
+    def desktop_notifications(self) -> bool:
+        return bool(self._settings.get("desktop_notifications", True))
+
+    @desktop_notifications.setter
+    def desktop_notifications(self, val: bool):
+        self._settings["desktop_notifications"] = bool(val)
         self.save()
 
 

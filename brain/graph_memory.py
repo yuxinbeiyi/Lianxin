@@ -191,7 +191,9 @@ def _get_or_create_entity(conn: sqlite3.Connection, name: str, entity_type: str)
 
 
 def store_quintuple(head: str, head_type: str, relation: str,
-                    tail: str, tail_type: str, source: str = "auto") -> bool:
+                    tail: str, tail_type: str, source: str = "auto",
+                    source_session_id: int | None = None,
+                    source_channel: str = "") -> bool:
     """写入一条五元组记忆。实体自动 merge，关系重复则 strength+1。返回是否新增。"""
     head = head.strip()
     tail = tail.strip()
@@ -208,12 +210,16 @@ def store_quintuple(head: str, head_type: str, relation: str,
     tid = _get_or_create_entity(conn, tail, tail_type)
 
     cur = conn.execute(
-        """INSERT INTO graph_edges(head_id, head_type, relation, tail_id, tail_type, source)
-           VALUES (?, ?, ?, ?, ?, ?)
+        """INSERT INTO graph_edges(head_id, head_type, relation, tail_id, tail_type,
+                                   source, source_session_id, source_channel)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(head_id, relation, tail_id) DO UPDATE SET
                strength = CASE WHEN excluded.source='auto' THEN strength ELSE strength + 1 END,
+               source_session_id=COALESCE(excluded.source_session_id, source_session_id),
+               source_channel=CASE WHEN excluded.source_channel<>'' THEN excluded.source_channel ELSE source_channel END,
                updated_at = datetime('now','localtime')""",
-        (hid, head_type, relation, tid, tail_type, source)
+        (hid, head_type, relation, tid, tail_type, source,
+         source_session_id, str(source_channel or ""))
     )
     conn.commit()
     return cur.lastrowid is not None and cur.rowcount > 0
@@ -1298,21 +1304,32 @@ def build_extraction_prompt(recent_conversation: str) -> str:
 7. confidence 表示事实可信度，范围 0~1；用户明确陈述通常为 0.9 以上
 8. occurred_at 填事件实际发生时间；无法判断时留空，不要猜测
 
-## 输出格式（JSON）
-{{{{
+## 五元组关系
+在同一次输出中提取值得长期保存的实体关系，格式为：
+`[主体, 主体类型, 关系, 客体, 客体类型]`。
+类型仅限：人物、地点、组织、物品、概念、时间、事件、活动、技术、文件。
+五元组必须来自用户明确表达的事实；没有时返回空数组。
+
+## 输出格式（JSON，契约版本 memory_extraction_v2）
+{{
+    "contract_version": "memory_extraction_v2",
     "memories": [
-        {{{{
+        {{
             "category": "profile|preferences|events|knowledge|behaviors|skills",
             "content": "完整的记忆文本",
             "reason": "为什么这条信息值得记住",
             "source_message_ids": [123, 124],
             "confidence": 0.95,
             "occurred_at": "YYYY-MM-DD HH:MM:SS 或空字符串"
-        }}}}
+        }}
+    ],
+    "quintuples": [
+        ["用户", "人物", "正在开发", "莲心AI", "技术"]
     ]
-}}}}
+}}
 
-如果没有值得记忆的内容，返回 {{{{ "memories": [] }}}}。
+如果没有值得记忆的内容，仍返回完整结构：
+{{ "contract_version": "memory_extraction_v2", "memories": [], "quintuples": [] }}。
 
 ## 最近的对话
 {recent_conversation}"""

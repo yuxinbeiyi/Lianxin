@@ -8,13 +8,14 @@ import ctypes
 from ctypes import wintypes
 from typing import Optional
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QDialog, QTextEdit, QMenu, QCheckBox
+    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
+    QMessageBox, QDialog, QTextEdit, QMenu, QCheckBox, QSizeGrip, QShortcut
 )
 from PyQt5.QtCore import (
     Qt, QTimer, QAbstractNativeEventFilter, QPoint, QObject,
     QThread, pyqtSignal, QTime,
 )
-from PyQt5.QtGui import QFont, QIcon, QPalette, QColor
+from PyQt5.QtGui import QFont, QIcon, QPalette, QColor, QKeySequence
 from pathlib import Path
 from brain.agent import AgentCore
 from utils.emotion_manager import parse_emotion_tag as _strip_emotion_tag
@@ -76,10 +77,14 @@ from gui.galgame.galgame_dialog import GalgameDialog
 from gui.galgame.expression_manager import ExpressionManager
 from gui.proactive_controller import ProactivePresentationController
 from gui.bridge_controller import BridgeController
+from gui.avatar_action_router import AvatarActionRouter
+from gui.window_experience import WindowExperienceController
+from utils.platform_capabilities import get_platform_capabilities
 # ── Win32 全局热键 ───────────────────────────────────────────
 WM_HOTKEY = 0x0312
 _HOTKEY_ID = 1
-user32 = ctypes.windll.user32
+_PLATFORM_CAPS = get_platform_capabilities()
+user32 = ctypes.windll.user32 if _PLATFORM_CAPS.is_windows else None
 
 
 class _WinHotkeyFilter(QAbstractNativeEventFilter):
@@ -130,6 +135,7 @@ class MainWindow(QMainWindow):
 
         # ── 全局设置 ──────────────────────────────────────────
         self._global_settings = get_settings()
+        self._force_quit = False
 
         # ── 工作线程句柄 ──────────────────────────────────────
         self._agent_worker:      AgentWorker      | None = None
@@ -213,6 +219,9 @@ class MainWindow(QMainWindow):
         self._standby_mode = "full_duplex"        # "full_duplex" / "legacy"
 
         self._build_ui()
+        self._resize_grip = QSizeGrip(self)
+        self._resize_grip.setFixedSize(18, 18)
+        self._resize_grip.setToolTip("")
         self._bridge_controller = BridgeController(
             chat_widget=self._chat_widget,
             qq_button=self._char_widget.get_qq_bridge_button(),
@@ -294,7 +303,8 @@ class MainWindow(QMainWindow):
         # ── 统一后台职责调度器（替代 3 个独立 QTimer）─────────
         from utils.duty_scheduler import (
             DutyScheduler, ProactiveDuty, HeartbeatDuty, SmartReminderDuty,
-            MemoryMaintenanceDuty, MemoryCueEvaluationDuty, MemoryNarrativeDuty, WorkingMemorySummaryDuty, register_duty,
+            MemoryExtractionDuty, MemoryMaintenanceDuty, MemoryCueEvaluationDuty,
+            MemoryNarrativeDuty, WorkingMemorySummaryDuty, register_duty,
         )
         self._duty_scheduler = DutyScheduler(self)
         self._duty_scheduler.setup(
@@ -314,6 +324,7 @@ class MainWindow(QMainWindow):
         register_duty(self._duty_scheduler, ProactiveDuty())
         register_duty(self._duty_scheduler, HeartbeatDuty())
         register_duty(self._duty_scheduler, SmartReminderDuty())
+        register_duty(self._duty_scheduler, MemoryExtractionDuty())
         register_duty(self._duty_scheduler, MemoryMaintenanceDuty())
         register_duty(self._duty_scheduler, MemoryCueEvaluationDuty())
         register_duty(self._duty_scheduler, MemoryNarrativeDuty())
@@ -375,12 +386,30 @@ class MainWindow(QMainWindow):
         import brain.tools as brain_tools
         brain_tools.set_expression_callback(self._on_galgame_expression)
 
-        # ── 全局热键过滤器 + 注册热键（启动即生效） ──────────
-        self._hotkey_filter = _WinHotkeyFilter(
-            lambda: QTimer.singleShot(0, self._toggle_galgame)
+        # ── 统一角色动作与窗口体验 ────────────────────────────
+        self._avatar_actions = AvatarActionRouter(
+            self._char_widget,
+            expression_callback=self._on_galgame_expression,
+            schedule=lambda ms, callback: QTimer.singleShot(ms, callback),
+            reduced_motion=self._global_settings.reduced_motion,
         )
-        from PyQt5.QtWidgets import QApplication
-        QApplication.instance().installNativeEventFilter(self._hotkey_filter)
+        self._window_experience = WindowExperienceController(
+            self, self._global_settings,
+            mode_callback=self._apply_window_mode,
+            companion_callback=self._set_companion_visible,
+            quit_callback=self._request_full_quit,
+            parent=self,
+        )
+        self._window_experience.apply_startup_state(autostart=self._autostart_mode)
+
+        # ── 全局热键过滤器 + 注册热键（启动即生效） ──────────
+        self._hotkey_filter = None
+        self._galgame_shortcut = None
+        if _PLATFORM_CAPS.native_global_hotkey:
+            self._hotkey_filter = _WinHotkeyFilter(
+                lambda: QTimer.singleShot(0, self._toggle_galgame)
+            )
+            QApplication.instance().installNativeEventFilter(self._hotkey_filter)
         self._setup_galgame_hotkey(register=True)
 
         # ── 首次运行：未配置 API Key 时自动弹出配置对话框 ───
@@ -546,6 +575,8 @@ class MainWindow(QMainWindow):
         if event.type() == event.WindowStateChange:
             if self.isMinimized():
                 self._is_minimized = True
+                if hasattr(self, "_window_experience"):
+                    QTimer.singleShot(0, self._window_experience.handle_minimize)
             else:
                 if self._is_minimized:
                     self._is_minimized = False
@@ -737,6 +768,13 @@ class MainWindow(QMainWindow):
         self._btn_duty.clicked.connect(self._show_duty_center)
         top_bar_layout.addWidget(self._btn_duty)
 
+        self._btn_window_mode = QPushButton("🪟")
+        self._btn_window_mode.setFixedSize(30, 24)
+        self._btn_window_mode.setCursor(Qt.PointingHandCursor)
+        self._btn_window_mode.setToolTip("")
+        self._btn_window_mode.clicked.connect(self._show_window_mode_menu)
+        top_bar_layout.addWidget(self._btn_window_mode)
+
         top_bar_layout.addStretch()
 
         # 窗口控制按钮（最右侧）
@@ -796,7 +834,7 @@ class MainWindow(QMainWindow):
             QPushButton:pressed { background-color: #35685C; border-color: #9AD8C8; }
         """
         for button in (self._btn_history, self._btn_new_chat, self._btn_note,
-                       self._galgame_btn, self._btn_standby):
+                       self._galgame_btn, self._btn_standby, self._btn_window_mode):
             button.setStyleSheet(top_action_style)
 
         main_layout.addWidget(top_bar)
@@ -822,6 +860,7 @@ class MainWindow(QMainWindow):
         self._char_widget.get_emotion_button().clicked.connect(self._show_ripple_constellation)
         self._char_widget.get_sound_button().clicked.connect(self._on_sound_settings)
         self._char_widget.get_memory_button().clicked.connect(self._on_memory_settings)
+        self._char_widget.get_workflow_button().clicked.connect(self._show_workflow_center)
         self._char_widget.get_network_button().clicked.connect(self._show_network_settings)
         self._char_widget.get_capability_button().clicked.connect(self._show_capability_center)
         self._char_widget.get_constellation_button().clicked.connect(self._show_constellation_system)
@@ -953,6 +992,71 @@ class MainWindow(QMainWindow):
     def _on_chat_background_opacity_changed(self, opacity: float):
         self._set_chat_background_opacity(opacity)
         self._global_settings.chat_background_opacity = opacity
+
+    # ── 窗口形态与桌面陪伴 ───────────────────────────────────
+
+    def _show_window_mode_menu(self):
+        menu = QMenu(self)
+        menu.addAction("标准窗口", lambda: self._window_experience.set_mode("normal"))
+        menu.addAction("紧凑聊天", lambda: self._window_experience.set_mode("compact"))
+        menu.addAction("桌面陪伴", lambda: self._window_experience.set_mode("companion"))
+        menu.addSeparator()
+        top_action = menu.addAction("始终置顶")
+        top_action.setCheckable(True)
+        top_action.setChecked(self._global_settings.always_on_top)
+        top_action.toggled.connect(self._window_experience.set_always_on_top)
+        menu.exec_(self._btn_window_mode.mapToGlobal(QPoint(0, self._btn_window_mode.height())))
+
+    def _apply_window_mode(self, mode: str):
+        if mode == "compact":
+            self._char_widget.hide()
+            self.setMinimumSize(620, 480)
+            if not self.isMaximized() and self.width() > 760:
+                self.resize(720, max(520, self.height()))
+            self._btn_window_mode.setText("▣")
+        elif mode == "companion":
+            self._btn_window_mode.setText("♡")
+        else:
+            self._char_widget.show()
+            self.setMinimumSize(820, 600)
+            if not self.isMaximized() and self.width() < 820:
+                self.resize(960, max(680, self.height()))
+            self._btn_window_mode.setText("🪟")
+
+    def _set_companion_visible(self, visible: bool):
+        if visible:
+            self._companion_owned_galgame = not self._galgame_visible
+            if not self._galgame_visible:
+                self._show_galgame()
+        elif getattr(self, "_companion_owned_galgame", False):
+            if self._galgame_visible:
+                self._hide_galgame()
+            self._companion_owned_galgame = False
+
+    def _request_full_quit(self):
+        self._force_quit = True
+        self.close()
+
+    def _apply_window_settings(self):
+        if hasattr(self, "_window_experience"):
+            self._window_experience.reload_settings()
+            self._window_experience.set_mode(self._global_settings.window_mode, persist=False)
+        if hasattr(self, "_avatar_actions"):
+            self._avatar_actions.set_reduced_motion(self._global_settings.reduced_motion)
+
+    def resizeEvent(self, event):
+        if hasattr(self, "_resize_grip"):
+            self._resize_grip.move(self.width() - self._resize_grip.width(),
+                                   self.height() - self._resize_grip.height())
+            self._resize_grip.raise_()
+        if hasattr(self, "_window_experience"):
+            self._window_experience.schedule_geometry_save()
+        super().resizeEvent(event)
+
+    def moveEvent(self, event):
+        if hasattr(self, "_window_experience"):
+            self._window_experience.schedule_geometry_save()
+        super().moveEvent(event)
 
     def _show_greeting(self):
         """启动时显示欢迎内容：有历史则回放最近30条，否则显示初次欢迎语。"""
@@ -1109,7 +1213,10 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_segment_sender') and self._segment_sender is not None:
             if self._segment_sender.is_running:
                 self._segment_sender.cancel()
-                self._char_widget.set_normal()
+                if hasattr(self, "_avatar_actions"):
+                    self._avatar_actions.request("idle", source="segment_cancelled", force=True)
+                else:
+                    self._char_widget.set_normal()
                 self._input_panel.set_mute_visible(False)
                 self._segment_sender = None
 
@@ -1315,7 +1422,7 @@ class MainWindow(QMainWindow):
                     self._char_widget.play_arms_cross(on_finished=deliver_once)
                 else:
                     deliver_once()
-            self._char_widget.stop_thinking(on_finished=after_thinking)
+            self._avatar_actions.finish_thinking(on_finished=after_thinking)
         else:
             # 待机模式下，直接触发说话动画（会等待当前倾听动画播放完）
             deliver_once()
@@ -1377,9 +1484,9 @@ class MainWindow(QMainWindow):
                     self._chat_widget.add_ai_image(img_path)
 
         # 说话状态
-        self._char_widget.set_talking()
+        self._avatar_actions.speaking_started("text_response")
         self._input_panel.set_mute_visible(True)
-        self._segment_sender.finished.connect(lambda: self._char_widget.set_normal())
+        self._segment_sender.finished.connect(self._avatar_actions.speaking_finished)
         self._segment_sender.finished.connect(lambda: self._input_panel.set_mute_visible(False))
 
         self._segment_sender.start()
@@ -1390,6 +1497,8 @@ class MainWindow(QMainWindow):
         self._pending_arms_cross = False   # 重置标志
         self._chat_widget.add_ai_message(f"（出错了：{error_msg}）")
         self._set_idle_state()
+        if hasattr(self, "_avatar_actions"):
+            self._avatar_actions.request("error", source="agent_error", force=True)
 
     # ── Galgame 模式 ──────────────────────────────────────────
 
@@ -1526,10 +1635,19 @@ class MainWindow(QMainWindow):
             self._tachie_win.start_breathing()
 
     def _setup_galgame_hotkey(self, register: bool = True):
-        """注册/注销全局热键 Ctrl+Alt+X（Win32 RegisterHotKey）。"""
+        """Windows 使用全局热键；其他平台降级为窗口内快捷键。"""
         MOD_CONTROL = 0x0002
         MOD_ALT     = 0x0001
         VK_X        = 0x58
+        if not _PLATFORM_CAPS.native_global_hotkey:
+            if register and self._galgame_shortcut is None:
+                self._galgame_shortcut = QShortcut(QKeySequence("Ctrl+Alt+X"), self)
+                self._galgame_shortcut.activated.connect(self._toggle_galgame)
+            elif not register and self._galgame_shortcut is not None:
+                self._galgame_shortcut.setEnabled(False)
+                self._galgame_shortcut.deleteLater()
+                self._galgame_shortcut = None
+            return
         try:
             if register:
                 user32.RegisterHotKey(None, _HOTKEY_ID, MOD_CONTROL | MOD_ALT, VK_X)
@@ -1598,14 +1716,16 @@ class MainWindow(QMainWindow):
         if self._global_settings.silent_mode:
             return
         self._speaker_worker = SpeakerWorker(self._speaker, text, self)
-        self._speaker_worker.speaking_started.connect(self._char_widget.set_talking)
+        self._speaker_worker.speaking_started.connect(
+            lambda: self._avatar_actions.speaking_started("tts")
+        )
         self._speaker_worker.speaking_started.connect(lambda: self._input_panel.set_mute_visible(True))
         self._speaker_worker.speaking_started.connect(self._on_galgame_speaking_start)
         # 全双工模式：TTS 播放时暂停 VAD，防止莲心声音被麦克风拾取→打断循环
         if self._voice_duplex:
             self._speaker_worker.speaking_started.connect(self._voice_duplex.pause_vad)
         self._speaker_worker.speaking_finished.connect(self._on_galgame_speaking_stop)
-        self._speaker_worker.speaking_finished.connect(self._char_widget.set_normal)
+        self._speaker_worker.speaking_finished.connect(self._avatar_actions.speaking_finished)
         self._speaker_worker.speaking_finished.connect(lambda: self._input_panel.set_mute_visible(False))
         if self._voice_duplex:
             self._speaker_worker.speaking_finished.connect(self._voice_duplex.resume_vad)
@@ -1633,13 +1753,16 @@ class MainWindow(QMainWindow):
             self._chat_widget.show_thinking()
         else:
             # 非待机模式：使用思考动画（拿起手机 -> 打字）
-            self._char_widget.start_thinking()
+            self._avatar_actions.request("thinking", source="conversation", force=True)
             self._chat_widget.show_thinking()
             self._input_panel.set_resend_visible(True)
 
 
     def _set_idle_state(self):
-        self._char_widget.set_normal()
+        if hasattr(self, "_avatar_actions"):
+            self._avatar_actions.request("idle", source="ui_idle", force=True)
+        else:
+            self._char_widget.set_normal()
         self._input_panel.set_enabled(True)
         self._input_panel.set_resend_visible(False)
         self._input_panel.set_mute_visible(False)
@@ -1802,7 +1925,7 @@ class MainWindow(QMainWindow):
     def _on_avatar_interaction_accepted(self, action: str, target: str, source: str):
         """有效互动才写入聊天事件流；冷却/忙碌请求不会留下假事件。"""
         try:
-            self._char_widget.start_thinking()
+            self._avatar_actions.request("affection", source=f"avatar_{action}", force=True)
         except Exception:
             pass
         if source == "assistant" and self.isMinimized():
@@ -2071,6 +2194,7 @@ class MainWindow(QMainWindow):
             self._settings_dialog.date_saved.connect(self._on_first_meet_date_saved)
             self._settings_dialog.background_changed.connect(self._on_background_changed)
             self._settings_dialog.avatars_changed.connect(self._chat_widget.refresh_avatars)
+            self._settings_dialog.window_settings_changed.connect(self._apply_window_settings)
         self._settings_dialog.show()
         self._settings_dialog.raise_()
         self._settings_dialog.activateWindow()
@@ -2109,6 +2233,8 @@ class MainWindow(QMainWindow):
         if task_name:
             text = f"📚 你完成了「{task_name}」的 {minutes} 分钟专注，辛苦啦。"
         self._chat_widget.add_system_tip(text)
+        if hasattr(self, "_avatar_actions"):
+            self._avatar_actions.request("celebrate", source="study_focus", force=True)
 
     def _on_study_room_closed(self):
         self._study_room_window = None
@@ -2208,6 +2334,10 @@ class MainWindow(QMainWindow):
             msg = f"🤖 自动化任务「{task.name}」执行完成"
             self._chat_widget.add_system_tip(msg)
             self._speak(f"已完成自动化任务：{task.name}")
+            if hasattr(self, "_avatar_actions"):
+                self._avatar_actions.request("celebrate", source="auto_task", force=True)
+            if hasattr(self, "_window_experience") and (self.isHidden() or self.isMinimized()):
+                self._window_experience.notify("自动化任务完成", task.name)
         else:
             # P2: 失败时发送醒目的 AI 消息 + 语音播报，而非仅在终端打印
             fail_msg = (
@@ -2217,6 +2347,10 @@ class MainWindow(QMainWindow):
             )
             self._chat_widget.add_ai_message(fail_msg)
             self._speak(f"主人，自动化任务「{task.name}」执行失败了，请查看详情")
+            if hasattr(self, "_avatar_actions"):
+                self._avatar_actions.request("concerned", source="auto_task_error", force=True)
+            if hasattr(self, "_window_experience") and (self.isHidden() or self.isMinimized()):
+                self._window_experience.notify("自动化任务执行失败", task.name)
     # ── 自动化任务自然语言解析 ──────────────────────────────
 
     def _detect_auto_task_intent(self, text: str) -> bool:
@@ -2249,7 +2383,10 @@ class MainWindow(QMainWindow):
         Thread(target=_parse, daemon=True).start()
 
     def _set_normal_state(self):
-        self._char_widget.set_normal()
+        if hasattr(self, "_avatar_actions"):
+            self._avatar_actions.request("idle", source="normal_state", force=True)
+        else:
+            self._char_widget.set_normal()
         self._input_panel.set_mute_visible(False)
         self._is_waiting_for_response = False
 
@@ -2498,6 +2635,12 @@ class MainWindow(QMainWindow):
     def _on_proactive_response(self, text: str):
         """主动聊天回复"""
         self._proactive_controller.handle_proactive_response(text)
+        if text and hasattr(self, "_avatar_actions"):
+            warm_markers = ("开心", "想你", "陪你", "抱抱", "喜欢", "真好")
+            action = "happy" if any(marker in text for marker in warm_markers) else "wave"
+            self._avatar_actions.request(action, source="proactive_chat")
+        if text and hasattr(self, "_window_experience") and (self.isHidden() or self.isMinimized()):
+            self._window_experience.notify("莲心来陪你啦", text[:80])
         # 主动聊天完成后，保留少量自然的头像陪伴互动概率。
         if text and getattr(self._proactive_scheduler, "desktop_enabled", False):
             if random.random() < 0.20 and hasattr(self, "_avatar_interaction"):
@@ -2674,6 +2817,45 @@ class MainWindow(QMainWindow):
         from gui.duty_center import DutyCenter
         dlg = DutyCenter(self._duty_scheduler, self)
         dlg.exec_()
+
+    def _show_workflow_center(self):
+        from gui.workflow_center import WorkflowCenter
+
+        WorkflowCenter(
+            self,
+            retry_callback=self._retry_workflow_run,
+            cancel_callback=self._cancel_workflow_run,
+        ).exec_()
+
+    def _cancel_workflow_run(self, run: dict):
+        if (run.get("kind") == "conversation"
+                and getattr(self, "_agent", None) is not None
+                and int(getattr(self._agent, "_active_workflow_run_id", 0) or 0) == int(run["id"])):
+            self._agent._cancel_event.set()
+
+    def _retry_workflow_run(self, run: dict):
+        metadata = run.get("metadata", {}) if isinstance(run.get("metadata"), dict) else {}
+        if run.get("kind") == "auto_task":
+            from brain.auto_task_executor import execute_auto_task
+            from brain.auto_task_manager import get_auto_task_manager
+
+            task = get_auto_task_manager().get_task(str(metadata.get("task_id", "")))
+            if task is None:
+                self._chat_widget.add_system_tip("原自动任务已不存在，无法重试。")
+                return False
+            task._workflow_retry_of_run_id = int(run["id"])
+            execute_auto_task(task)
+            return True
+        if run.get("kind") != "conversation":
+            self._chat_widget.add_system_tip("当前运行类型没有可用的重试执行器。")
+            return False
+        user_message = str(metadata.get("user_message", "") or "").strip()
+        if not user_message:
+            self._chat_widget.add_system_tip("这条运行记录缺少原始请求，无法自动重试。")
+            return False
+        self._agent._workflow_retry_of_run_id = int(run["id"])
+        QTimer.singleShot(0, lambda: self._on_user_message(user_message, []))
+        return True
 
     def _show_voice_chat_menu(self, pos):
         """右击语音聊天按钮 → 弹出菜单"""
@@ -2908,7 +3090,9 @@ class MainWindow(QMainWindow):
             self._segment_sender.cancel()
             self._segment_sender = None
         # 恢复角色动画
-        if self._char_widget:
+        if hasattr(self, "_avatar_actions"):
+            self._avatar_actions.request("listening", source="voice_interrupt", force=True)
+        elif self._char_widget:
             self._char_widget.set_normal()
         self._chat_widget.add_system_tip("🗣️ 莲心被打断了，你说吧~")
 
@@ -3172,8 +3356,14 @@ class MainWindow(QMainWindow):
     # ── 窗口关闭 ─────────────────────────────────────────────
 
     def closeEvent(self, event):
+        if (not self._force_quit and hasattr(self, "_window_experience")
+                and self._window_experience.should_close_to_tray()):
+            if self._window_experience.hide_to_tray():
+                event.ignore()
+                return
         # 检查是否启用退出确认
-        if self._global_settings.show_exit_confirmation:
+        if (not self._force_quit and self._global_settings.close_behavior == "ask"
+                and self._global_settings.show_exit_confirmation):
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("退出")
             msg_box.setText("诶！？不打算继续陪我一会儿了吗？(´ﾟдﾟ`)！")
@@ -3229,6 +3419,9 @@ class MainWindow(QMainWindow):
         self._speaker.stop()
 
         self._bridge_controller.shutdown()
+
+        if hasattr(self, "_window_experience"):
+            self._window_experience.shutdown()
 
         # ── 关闭 Galgame 窗口 ──────────────────────────────
         self._setup_galgame_hotkey(register=False)

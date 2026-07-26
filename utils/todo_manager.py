@@ -1,21 +1,15 @@
 """
 TodoManager：待办清单管理模块
-支持添加、完成、删除、查询待办事项，持久化存储到用户目录/.lianxin/todo.json
+支持添加、完成、删除、查询待办事项，持久化存储到用户目录/.lianxin/tasks.db
 提供自然语言辅助解析（时间、优先级）
 """
 
-import json
 import uuid
 import re
 from datetime import datetime
-from pathlib import Path
 from typing import List, Dict, Optional, Callable
 
-from utils.paths import get_user_data_dir
-
-# 数据文件路径
-_DATA_DIR = get_user_data_dir()
-_TODO_FILE = _DATA_DIR / "todo.json"
+from brain.task_store import TaskStore, get_task_store
 
 # 优先级映射和显示
 PRIORITY_VALUES = ["high", "medium", "low"]
@@ -78,7 +72,9 @@ class TodoItem:
 
 
 class TodoManager:
-    def __init__(self):
+    def __init__(self, store: TaskStore | None = None, *, workflow_audit: bool = True):
+        self._store = store or get_task_store()
+        self._workflow_audit = bool(workflow_audit)
         self._todos: List[TodoItem] = []
         self._observers: List[Callable] = []  # 观察者回调列表
         self._load()
@@ -86,31 +82,31 @@ class TodoManager:
     # ── 持久化 ─────────────────────────────────────────────
 
     def _load(self):
-        """从文件加载待办事项"""
-        if _TODO_FILE.exists():
-            try:
-                with open(_TODO_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self._todos = [TodoItem.from_dict(item) for item in data.get("todos", [])]
-                print(f"[待办] 加载成功，共 {len(self._todos)} 条待办")
-            except Exception as e:
-                print(f"[待办] 加载失败: {e}")
-                self._todos = []
-        else:
+        """从统一任务数据库加载待办事项。"""
+        try:
+            self._todos = [TodoItem.from_dict(item) for item in self._store.list_todos()]
+            print(f"[待办] SQLite 加载成功，共 {len(self._todos)} 条待办")
+        except Exception as e:
+            print(f"[待办] SQLite 加载失败: {e}")
             self._todos = []
 
     def _save(self):
-        """保存待办事项到文件"""
-        _DATA_DIR.mkdir(parents=True, exist_ok=True)
-        data = {"todos": [t.to_dict() for t in self._todos]}
+        """原子保存待办事项到统一任务数据库。"""
         try:
-            with open(_TODO_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"[待办] 保存成功，共 {len(self._todos)} 条待办")
+            self._store.replace_todos(t.to_dict() for t in self._todos)
+            print(f"[待办] SQLite 保存成功，共 {len(self._todos)} 条待办")
             # 保存成功后通知所有观察者
             self._notify_observers()
         except Exception as e:
-            print(f"[待办] 保存失败: {e}")
+            print(f"[待办] SQLite 保存失败: {e}")
+
+    def get_workflow_runs(self, todo_id: str) -> List[dict]:
+        """返回与某条待办正式关联的 Workflow 运行。"""
+        return self._store.list_workflows("todo", todo_id)
+
+    def link_auto_task(self, todo_id: str, task_id: str, relation: str = "automates") -> None:
+        """建立待办与自动化任务的可追溯关系。"""
+        self._store.link_tasks("todo", todo_id, "auto_task", task_id, relation)
 
     def _notify_observers(self):
         """通知所有注册的观察者数据已变化"""
@@ -119,6 +115,24 @@ class TodoManager:
                 cb()
             except Exception as e:
                 print(f"[待办] 通知观察者失败: {e}")
+
+    def _record_workflow(self, todo: TodoItem, action: str) -> None:
+        if not self._workflow_audit:
+            return
+        try:
+            from brain.workflow import get_workflow_store
+            workflow_store = get_workflow_store()
+            run = workflow_store.begin_run(
+                kind="todo", title=f"待办{action}：{todo.title}", channel="task_center",
+                metadata={"todo_id": todo.id, "action": action,
+                          "title": todo.title, "due_time": todo.due_time},
+            )
+            run_id = int(run["id"])
+            workflow_store.finish_run(run_id, status="success", result_summary=f"待办已{action}")
+            self._store.bind_workflow("todo", todo.id, run_id, action)
+        except Exception:
+            # Workflow 审计不可阻断待办的核心 CRUD。
+            pass
 
     # ── 观察者管理 ─────────────────────────────────────────
 
@@ -147,6 +161,7 @@ class TodoManager:
         )
         self._todos.append(todo)
         self._save()
+        self._record_workflow(todo, "创建")
         return todo
 
     def get_todos(self, completed: bool = False) -> List[TodoItem]:
@@ -171,6 +186,7 @@ class TodoManager:
         if todo and not todo.completed:
             todo.completed = True
             self._save()
+            self._record_workflow(todo, "完成")
             return True
         return False
 
@@ -180,6 +196,7 @@ class TodoManager:
         if todo:
             todo.completed = not todo.completed
             self._save()
+            self._record_workflow(todo, "完成" if todo.completed else "恢复")
             return True
         return False
 
@@ -189,6 +206,7 @@ class TodoManager:
             if t.id == todo_id:
                 del self._todos[i]
                 self._save()
+                self._record_workflow(t, "删除")
                 return True
         return False
 
@@ -203,6 +221,7 @@ class TodoManager:
         if "priority" in kwargs and kwargs["priority"] not in PRIORITY_VALUES:
             todo.priority = "medium"
         self._save()
+        self._record_workflow(todo, "更新")
         return True
 
     def get_overdue_todos(self) -> List[TodoItem]:

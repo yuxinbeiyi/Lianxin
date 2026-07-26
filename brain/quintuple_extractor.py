@@ -1,7 +1,7 @@
 """
 五元组知识图谱提取器 — 从对话中提取 (主体, 主体类型, 关系, 客体, 客体类型)。
 
-在 _trigger_auto_extraction 的 daemon 线程中调用，与分类记忆提取并行。
+由持久化 MemoryExtractionPipeline 的后台职责调用。
 使用 litellm 调用远端 LLM（DeepSeek），失败静默跳过。
 """
 
@@ -112,26 +112,19 @@ def extract_quintuples(conversation_text: str) -> list[tuple]:
         return []
 
 
-def extract_and_store(conversation_text: str) -> int:
-    """提取五元组并写入图数据库。返回写入条数。"""
-    quintuples = extract_quintuples(conversation_text)
-    count = 0
-    for head, head_type, relation, tail, tail_type in quintuples:
-        if store_quintuple(head, head_type, relation, tail, tail_type, source="auto"):
-            count += 1
-    if count > 0:
-        logger.info(f"图记忆: 存储 {count} 条五元组")
-    return count
-
 def extract_and_store_with_config(conversation_text: str, model: str,
-                                   api_key: str, api_base: str) -> int:
-    """用指定 API 配置提取五元组并写入图数据库。返回写入条数。"""
+                                   api_key: str, api_base: str,
+                                   raise_on_error: bool = False,
+                                   return_details: bool = False,
+                                   source_session_id: int | None = None,
+                                   source_channel: str = "") -> int | dict:
+    """Fallback used only when the combined v2 response lacks valid graph data."""
     cfg = get_graph_config()
     if not cfg.get("graph_enabled", True):
-        return 0
+        return {"count": 0, "input_tokens": 0, "output_tokens": 0} if return_details else 0
 
     if not conversation_text or len(conversation_text) < 30:
-        return 0
+        return {"count": 0, "input_tokens": 0, "output_tokens": 0} if return_details else 0
 
     try:
         import litellm
@@ -158,31 +151,34 @@ def extract_and_store_with_config(conversation_text: str, model: str,
         for q in quintuples:
             if isinstance(q, list) and len(q) == 5:
                 head, head_type, relation, tail, tail_type = q
-                if store_quintuple(head, head_type, relation, tail, tail_type, source="auto"):
+                if store_quintuple(
+                    head, head_type, relation, tail, tail_type,
+                    source="auto_fallback", source_session_id=source_session_id,
+                    source_channel=source_channel,
+                ):
                     count += 1
         if count > 0:
             logger.info(f"图记忆: 存储 {count} 条五元组")
-        return count
+        usage = getattr(response, "usage", None)
+
+        def _token(name: str, fallback: str) -> int:
+            raw = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+            if raw is None:
+                raw = usage.get(fallback) if isinstance(usage, dict) else getattr(usage, fallback, 0)
+            try:
+                return int(raw or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        details = {
+            "count": count,
+            "input_tokens": _token("prompt_tokens", "input_tokens"),
+            "output_tokens": _token("completion_tokens", "output_tokens"),
+        }
+        return details if return_details else count
 
     except Exception as e:
         logger.warning(f"五元组提取失败: {e}")
-        return 0
-
-
-def build_quintuple_extraction_prompt(conversation_text: str) -> str:
-    """构建五元组提取的完整 prompt（供 agent.py 直接调用 LLM 时使用）。"""
-    return f"""从以下中文对话中抽取有价值的五元组关系，以 JSON 数组格式返回。
-
-提取规则：
-- 只提取事实性信息：具体行为、实体关系、状态属性、用户需求偏好
-- 过滤：比喻、假设、纯情感、赞美讽刺等主观内容
-- 类型限定：人物/地点/组织/物品/概念/时间/事件/活动/技术/文件
-
-示例：
-输入：小明在公园踢足球。
-输出：{{"quintuples": [["小明","人物","踢","足球","物品"], ["小明","人物","在","公园","地点"]]}}
-
-对话内容：
-{conversation_text[:4000]}
-
-只输出JSON："""
+        if raise_on_error:
+            raise
+        return {"count": 0, "input_tokens": 0, "output_tokens": 0} if return_details else 0

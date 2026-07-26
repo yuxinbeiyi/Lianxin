@@ -8,6 +8,7 @@ DutyScheduler：统一后台职责调度器
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional, Callable
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
@@ -29,6 +30,11 @@ class DutyStatus:
     run_count: int = 0
     success_count: int = 0
     fail_count: int = 0
+    user_paused: bool = False
+    pending_count: int = 0
+    next_retry_at: float = 0.0
+    paused_until: float = 0.0
+    detail_text: str = ""
 
 
 @dataclass
@@ -72,7 +78,7 @@ class Duty(ABC):
 
     def on_tick(self, state: SchedulerState) -> bool:
         """主定时器回调。返回 True 表示本次有触发。"""
-        self.status.enabled = self._check_enabled(state)
+        self.status.enabled = self._check_enabled(state) and not self.status.user_paused
         if not self.status.enabled:
             return False
         if state.paused:
@@ -119,9 +125,17 @@ class Duty(ABC):
                 return
             self.status.is_running = True
             self.status.run_count += 1
-            self.status.last_fire_time = state.now
+            self.status.last_fire_time = time.time()
             self._worker = worker
             self._wire_worker(worker)
+            scheduler = getattr(self, "_scheduler", None)
+            if scheduler is not None:
+                scheduler._begin_duty_workflow(self, state, kwargs)
+                try:
+                    worker.finished.connect(lambda n=self.name: scheduler._finish_duty_workflow(n))
+                except Exception:
+                    pass
+                scheduler.duty_started.emit(self.name)
             worker.start()
         except Exception:
             self.status.is_running = False
@@ -174,10 +188,13 @@ class DutyScheduler(QObject):
         self._agent_busy = False
         self._last_user_message_time = 0.0
         self._last_emotion_gate_notice = 0.0
+        self._workflow_duty_runs: dict[str, int] = {}
 
         self._master_timer = QTimer(self)
         self._master_timer.timeout.connect(self._tick)
         self._master_timer.setInterval(60_000)  # 60s
+        self.duty_completed.connect(self._on_duty_workflow_completed)
+        self.duty_failed.connect(self._on_duty_workflow_failed)
 
         # 状态引用（由 setup() 设置）
         self._proactive_scheduler = None
@@ -214,6 +231,7 @@ class DutyScheduler(QObject):
         self._proactive_dialog = proactive_dialog
 
     def register(self, duty: Duty):
+        duty._scheduler = self
         self._duties[duty.name] = duty
 
     def start(self):
@@ -250,11 +268,60 @@ class DutyScheduler(QObject):
     def get_all_statuses(self) -> list[DutyStatus]:
         return [d.status for d in self._duties.values()]
 
+    def set_duty_paused(self, name: str, paused: bool):
+        duty = self._duties.get(name)
+        if duty:
+            duty.status.user_paused = bool(paused)
+            try:
+                configured = duty._check_enabled(self._build_state())
+            except Exception:
+                configured = True
+            duty.status.enabled = bool(configured) and not duty.status.user_paused
+
     def manual_trigger(self, name: str, **kwargs):
         duty = self._duties.get(name)
         if duty:
             state = self._build_state()
             duty.manual_trigger(state, **kwargs)
+
+    def _begin_duty_workflow(self, duty: Duty, state: SchedulerState, kwargs: dict):
+        try:
+            from brain.workflow import get_workflow_store
+
+            run = get_workflow_store().begin_run(
+                kind="duty", title=duty.display_name, session_id=state.session_id or None,
+                channel="background", metadata={"duty_name": duty.name, "arguments": kwargs},
+            )
+            self._workflow_duty_runs[duty.name] = int(run["id"])
+        except Exception:
+            pass
+
+    def _finish_duty_workflow(self, name: str, *, status: str = "success", detail: str = ""):
+        run_id = self._workflow_duty_runs.pop(name, 0)
+        if not run_id:
+            return
+        duty = self._duties.get(name)
+        if status == "success" and duty is not None and duty.status.last_result == "failed":
+            status = "failed"
+            detail = detail or duty.status.last_result_text
+        elif not detail and duty is not None:
+            detail = duty.status.last_result_text
+        try:
+            from brain.workflow import get_workflow_store
+
+            get_workflow_store().finish_run(
+                run_id, status=status,
+                result_summary=detail if status == "success" else "",
+                error=detail if status != "success" else "",
+            )
+        except Exception:
+            pass
+
+    def _on_duty_workflow_completed(self, name: str, detail: str):
+        self._finish_duty_workflow(name, status="success", detail=detail)
+
+    def _on_duty_workflow_failed(self, name: str, error: str):
+        self._finish_duty_workflow(name, status="failed", detail=error)
 
     # ── 内部 ──
 
@@ -272,7 +339,7 @@ class DutyScheduler(QObject):
             history_manager=self._history_manager_func() if self._history_manager_func else None,
             qq_bridge=self._qq_bridge_func() if self._qq_bridge_func else None,
             todo_manager=self._todo_manager,
-            agent=self._agent,
+            agent=self._agent() if callable(self._agent) else self._agent,
             chat_widget=self._chat_widget,
             speak_func=self._speak_func,
             is_shoulder_available=self._is_shoulder_available,
@@ -1122,6 +1189,264 @@ class SlackDuty(Duty):
     @_scheduler.setter
     def _scheduler(self, s):
         self.__scheduler = s
+
+
+# ═══════════════════════════════════════════════════════════════
+# MemoryExtractionDuty
+# ═══════════════════════════════════════════════════════════════
+
+class MemoryExtractionDuty(Duty):
+    """Extract persisted owner-session messages when idle or backlogged."""
+
+    def __init__(self):
+        super().__init__("memory_extraction", "记忆自动提取", tick_interval_seconds=60)
+        self._candidate: dict | None = None
+        self._active_store = None
+        self._active_session_id = 0
+
+    @staticmethod
+    def _config() -> dict:
+        try:
+            from config import get_memory_config
+            return get_memory_config()
+        except Exception:
+            return {
+                "auto_extract": True,
+                "extract_message_count": 20,
+                "extraction_min_messages": 3,
+                "extraction_idle_seconds": 120,
+                "extraction_backlog_messages": 20,
+                "extraction_backlog_quiet_seconds": 15,
+                "extraction_retry_base_minutes": 5,
+                "extraction_retry_max_minutes": 60,
+                "extraction_failure_pause_threshold": 5,
+                "extraction_pause_minutes": 360,
+            }
+
+    @staticmethod
+    def _message_age_seconds(value: str) -> float:
+        text = str(value or "").strip()
+        if not text:
+            return 0.0
+        try:
+            parsed = datetime.fromisoformat(text)
+            if parsed.tzinfo is None:
+                return max(0.0, time.time() - parsed.timestamp())
+            return max(0.0, time.time() - parsed.timestamp())
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _store(state: SchedulerState):
+        if not state.history_manager:
+            return None
+        from brain.memory_extraction_pipeline import MemoryExtractionStore
+
+        return MemoryExtractionStore(state.history_manager.db_path)
+
+    def _check_enabled(self, state: SchedulerState) -> bool:
+        return bool(self._config().get("auto_extract", True))
+
+    def _should_fire(self, state: SchedulerState) -> bool:
+        self._candidate = None
+        if state.agent_busy or not state.history_manager or not state.agent:
+            return False
+        if getattr(state.agent, "_use_local", False):
+            self.status.detail_text = "本地模型模式下暂停自动提取"
+            return False
+        try:
+            store = self._store(state)
+            candidates = store.list_pending_sessions(owner_only=True)
+        except Exception as exc:
+            self.status.detail_text = f"状态读取失败：{exc}"
+            return False
+
+        self.status.pending_count = sum(int(item.get("pending_count", 0)) for item in candidates)
+        self.status.next_retry_at = 0.0
+        self.status.paused_until = 0.0
+        if not candidates:
+            self.status.detail_text = "暂无待提取消息"
+            return False
+
+        cfg = self._config()
+        minimum = max(1, int(cfg.get("extraction_min_messages", 3)))
+        idle_seconds = max(30, int(cfg.get("extraction_idle_seconds", 120)))
+        backlog = max(minimum, int(cfg.get("extraction_backlog_messages", 20)))
+        quiet_seconds = max(0, int(cfg.get("extraction_backlog_quiet_seconds", 15)))
+        now_epoch = time.time()
+        waiting_reason = ""
+
+        for candidate in candidates:
+            count = int(candidate.get("pending_count", 0))
+            if count < minimum:
+                continue
+            paused_until = float(candidate.get("paused_until", 0) or 0)
+            next_retry_at = float(candidate.get("next_retry_at", 0) or 0)
+            lease_expires_at = float(candidate.get("lease_expires_at", 0) or 0)
+            if candidate.get("active_run_id") and lease_expires_at > now_epoch:
+                waiting_reason = "已有提取任务正在运行"
+                continue
+            if paused_until > now_epoch:
+                self.status.paused_until = max(self.status.paused_until, paused_until)
+                waiting_reason = candidate.get("pause_reason") or "连续失败后自动暂停"
+                continue
+            if next_retry_at > now_epoch:
+                self.status.next_retry_at = max(self.status.next_retry_at, next_retry_at)
+                waiting_reason = "失败后退避等待"
+                continue
+
+            age = self._message_age_seconds(candidate.get("last_message_at", ""))
+            if count >= backlog and age >= quiet_seconds:
+                self._candidate = candidate
+                self._candidate["trigger_reason"] = "backlog"
+                self.status.detail_text = f"积压 {count} 条，准备优先提取"
+                return True
+            if age >= idle_seconds:
+                self._candidate = candidate
+                self._candidate["trigger_reason"] = "idle"
+                self.status.detail_text = f"已空闲 {int(age)} 秒，准备提取 {count} 条"
+                return True
+
+        if self.status.paused_until > now_epoch:
+            self.status.detail_text = waiting_reason or "自动提取已暂停"
+        elif self.status.next_retry_at > now_epoch:
+            self.status.detail_text = waiting_reason or "等待失败重试"
+        else:
+            self.status.detail_text = waiting_reason or f"积压 {self.status.pending_count} 条，等待空闲"
+        return False
+
+    def manual_trigger(self, state: SchedulerState, **kwargs):
+        kwargs.setdefault("trigger", "manual")
+        kwargs.setdefault("force", True)
+        kwargs.setdefault("session_id", state.session_id)
+        self._execute(state, **kwargs)
+
+    def _create_worker(self, state: SchedulerState, **kwargs):
+        from brain.memory_extraction_pipeline import (
+            LLMExtractionProcessor,
+            MemoryExtractionPipeline,
+        )
+        from workers.memory_extraction_worker import MemoryExtractionWorker
+
+        agent = state.agent
+        if not agent or getattr(agent, "_use_local", False) or not state.history_manager:
+            self.status.detail_text = "当前没有可用的云端记忆提取模型"
+            return None
+
+        force = bool(kwargs.get("force", False))
+        session_id = int(
+            kwargs.get("session_id")
+            or (self._candidate or {}).get("session_id")
+            or state.session_id
+        )
+        if session_id <= 0:
+            self.status.detail_text = "当前没有可提取的会话"
+            return None
+
+        store = self._store(state)
+        summary = store.get_pending_summary(session_id)
+        source_channel = str(
+            summary.get("channel") or getattr(agent, "_source_channel", "desktop") or "desktop"
+        )
+        try:
+            from brain.persona.runtime import capture_persona_snapshot
+
+            persona_id = capture_persona_snapshot().profile.id
+        except Exception:
+            persona_id = ""
+        try:
+            from config import get_graph_config
+
+            graph_cfg = get_graph_config()
+        except Exception:
+            graph_cfg = {"graph_enabled": True, "auto_extract_quintuples": True}
+
+        cfg = self._config()
+        processor = LLMExtractionProcessor(
+            model=agent._model,
+            api_key=agent._api_key,
+            api_base=agent._api_base,
+            source_channel=source_channel,
+            persona_id=persona_id,
+            graph_enabled=graph_cfg.get("graph_enabled", True),
+            extract_quintuples=graph_cfg.get("auto_extract_quintuples", True),
+        )
+        pipeline = MemoryExtractionPipeline(
+            store=store,
+            processor=processor,
+            max_messages=int(cfg.get("extract_message_count", 20)),
+            min_messages=1 if force else int(cfg.get("extraction_min_messages", 3)),
+            retry_base_seconds=int(cfg.get("extraction_retry_base_minutes", 5)) * 60,
+            retry_max_seconds=int(cfg.get("extraction_retry_max_minutes", 60)) * 60,
+            pause_threshold=int(cfg.get("extraction_failure_pause_threshold", 5)),
+            pause_seconds=int(cfg.get("extraction_pause_minutes", 360)) * 60,
+        )
+        self._active_store = store
+        self._active_session_id = session_id
+        trigger = str(
+            kwargs.get("trigger")
+            or (self._candidate or {}).get("trigger_reason")
+            or "scheduled"
+        )
+        return MemoryExtractionWorker(
+            pipeline=pipeline,
+            session_id=session_id,
+            trigger=trigger,
+            force=force,
+        )
+
+    def _wire_worker(self, worker):
+        worker.completed.connect(self._on_completed)
+        worker.failed.connect(self._on_failed)
+
+    def _sync_gate_status(self):
+        if not self._active_store or not self._active_session_id:
+            return {}
+        summary = self._active_store.get_pending_summary(self._active_session_id)
+        self.status.pending_count = int(summary.get("pending_count", 0) or 0)
+        self.status.next_retry_at = float(summary.get("next_retry_at", 0) or 0)
+        self.status.paused_until = float(summary.get("paused_until", 0) or 0)
+        return summary
+
+    def _on_completed(self, result: dict):
+        self.status.is_running = False
+        status = result.get("status", "success")
+        self.status.last_result = status
+        if status == "success":
+            self.status.success_count += 1
+            run = result.get("run", {})
+            self.status.last_result_text = (
+                f"消息 #{run.get('from_message_id', 0)}–#{run.get('to_message_id', 0)} "
+                f"共 {run.get('message_count', 0)} 条，写入 {run.get('fragments_created', 0)} 条，"
+                f"Token {int(run.get('input_tokens', 0)) + int(run.get('output_tokens', 0))}，"
+                f"耗时 {float(run.get('duration_ms', 0)) / 1000:.1f} 秒"
+            )
+        else:
+            self.status.last_result_text = "当前会话暂无可提取消息"
+        self._sync_gate_status()
+        self.status.detail_text = self.status.last_result_text
+        self._scheduler.duty_completed.emit(self.name, self.status.last_result_text)
+
+    def _on_failed(self, result: dict):
+        self.status.is_running = False
+        self.status.last_result = "failed"
+        self.status.fail_count += 1
+        summary = self._sync_gate_status()
+        error = str(result.get("error", "未知提取错误"))
+        if float(summary.get("paused_until", 0) or 0) > time.time():
+            self.status.last_result_text = f"{error}；已自动暂停"
+        else:
+            self.status.last_result_text = f"{error}；将按退避策略重试"
+        self.status.detail_text = self.status.last_result_text
+        self._scheduler.duty_failed.emit(self.name, self.status.last_result_text)
+
+    @property
+    def _scheduler(self):
+        return self.__scheduler
+
+    @_scheduler.setter
+    def _scheduler(self, scheduler):
+        self.__scheduler = scheduler
 
 
 # ═══════════════════════════════════════════════════════════════

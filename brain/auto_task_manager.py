@@ -1,28 +1,23 @@
 # -*- coding: utf-8 -*-
 """
 AutoTaskManager — 自动化任务核心管理器
-负责 CRUD、持久化、调度计算、执行日志。
+负责 CRUD、SQLite 持久化、调度计算、执行日志。
 """
 
-import json
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import Optional, Callable
 
-from utils.paths import get_user_data_dir
 from utils.auto_task_data import AutoTask, ActionStep
+from brain.task_store import TaskStore, get_task_store
 
 logger = logging.getLogger("AutoTaskManager")
-
-_AUTO_TASKS_PATH = get_user_data_dir() / "auto_tasks.json"
-_AUTO_TASK_LOGS_PATH = get_user_data_dir() / "auto_task_logs.json"
-
 
 class AutoTaskManager:
     """自动化任务管理器（单例）"""
 
-    def __init__(self):
+    def __init__(self, store: TaskStore | None = None):
+        self._store = store or get_task_store()
         self._tasks: list[AutoTask] = []
         self._execution_logs: list[dict] = []
         self._observers: list[Callable[[], None]] = []
@@ -32,47 +27,28 @@ class AutoTaskManager:
 
     def _load(self):
         try:
-            if _AUTO_TASKS_PATH.exists():
-                raw = json.loads(_AUTO_TASKS_PATH.read_text(encoding="utf-8"))
-                self._tasks = [AutoTask.from_dict(d) for d in raw.get("tasks", [])]
-                print(f"[AutoTaskManager] 已加载 {len(self._tasks)} 个自动化任务")
-            else:
-                self._tasks = []
-                print(f"[AutoTaskManager] 无已有任务，从零开始")
+            self._tasks = [AutoTask.from_dict(d) for d in self._store.list_auto_tasks()]
+            print(f"[AutoTaskManager] SQLite 已加载 {len(self._tasks)} 个自动化任务")
         except Exception as e:
-            logger.warning(f"加载 auto_tasks.json 失败: {e}")
-            print(f"[AutoTaskManager] 加载任务文件失败: {e}")
+            logger.warning(f"加载 tasks.db 自动任务失败: {e}")
+            print(f"[AutoTaskManager] 加载任务数据库失败: {e}")
             self._tasks = []
 
         try:
-            if _AUTO_TASK_LOGS_PATH.exists():
-                raw = json.loads(_AUTO_TASK_LOGS_PATH.read_text(encoding="utf-8"))
-                self._execution_logs = raw.get("logs", [])
-                print(f"[AutoTaskManager] 已加载 {len(self._execution_logs)} 条执行日志")
-            else:
-                self._execution_logs = []
+            self._execution_logs = self._store.list_auto_task_logs(limit=500)
+            print(f"[AutoTaskManager] SQLite 已加载 {len(self._execution_logs)} 条执行日志")
         except Exception:
             self._execution_logs = []
 
     def save(self):
-        _AUTO_TASKS_PATH.parent.mkdir(parents=True, exist_ok=True)
         try:
-            _AUTO_TASKS_PATH.write_text(
-                json.dumps({"tasks": [t.to_dict() for t in self._tasks]},
-                           ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            self._store.replace_auto_tasks(t.to_dict() for t in self._tasks)
         except Exception as e:
-            logger.error(f"保存 auto_tasks.json 失败: {e}")
+            logger.error(f"保存 tasks.db 自动任务失败: {e}")
 
     def _save_logs(self):
-        _AUTO_TASK_LOGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         try:
-            _AUTO_TASK_LOGS_PATH.write_text(
-                json.dumps({"logs": self._execution_logs[-200:]},
-                           ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            self._store.replace_auto_task_logs(self._execution_logs[-500:])
         except Exception:
             pass
 
@@ -289,6 +265,16 @@ class AutoTaskManager:
         if task_id:
             return [l for l in self._execution_logs if l["task_id"] == task_id][-limit:]
         return self._execution_logs[-limit:]
+
+    def get_workflow_runs(self, task_id: str) -> list[dict]:
+        return self._store.list_workflows("auto_task", task_id)
+
+    def bind_workflow(self, task_id: str, workflow_run_id: int,
+                      relation: str = "execution") -> None:
+        self._store.bind_workflow("auto_task", task_id, workflow_run_id, relation)
+
+    def link_todo(self, task_id: str, todo_id: str, relation: str = "automates") -> None:
+        self._store.link_tasks("todo", todo_id, "auto_task", task_id, relation)
 
     # ── 观察者 ──
 

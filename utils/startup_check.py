@@ -379,11 +379,32 @@ def _check_hardware() -> CheckResult:
     return _ok("; ".join(parts)) if parts else _skip()
 
 
+def _check_runtime_foundation() -> CheckResult:
+    """Initialize durable stores and report the platform-specific desktop baseline."""
+    try:
+        from brain.task_store import TaskStore
+        from brain.workflow import WorkflowStore
+        from utils.platform_capabilities import get_platform_capabilities
+
+        caps = get_platform_capabilities()
+        task_store = TaskStore()
+        workflow_store = WorkflowStore()
+        detail = (
+            f"{caps.system} {caps.release}; "
+            f"tasks={task_store.db_path.name}; workflows={workflow_store.db_path.name}; "
+            f"global_hotkey={'native' if caps.native_global_hotkey else 'window-local'}"
+        )
+        return _ok("运行底座与持久化迁移正常", detail)
+    except Exception as exc:
+        return _err("运行底座初始化失败", str(exc))
+
+
 # ══════════════════════════════════════════════════════════
 # Main API
 # ══════════════════════════════════════════════════════════
 
 _CHECKS = [
+    ("运行底座",        _check_runtime_foundation),
     ("AI API",        _check_ai_api),
     ("Ollama 本地模型", _check_ollama),
     ("视觉 API",       _check_vision_api),

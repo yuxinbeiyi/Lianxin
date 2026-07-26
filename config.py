@@ -762,8 +762,15 @@ def save_avatar_config(config: dict):
 # ── 记忆系统配置默认值 ────────────────────────────────────
 _MEMORY_DEFAULTS = {
     "auto_extract": True,               # 是否启用自动记忆提取
-    "extract_interval": 6,              # 每几轮对话提取一次
     "extract_message_count": 20,        # 每次提取分析最近几条消息
+    "extraction_min_messages": 3,       # 自动提取至少需要的持久消息数
+    "extraction_idle_seconds": 120,     # 会话安静多久后提取
+    "extraction_backlog_messages": 20,  # 积压达到多少条时优先提取
+    "extraction_backlog_quiet_seconds": 15,  # 积压触发前的最短安静时间
+    "extraction_retry_base_minutes": 5,      # 首次失败后的退避时间
+    "extraction_retry_max_minutes": 60,      # 指数退避上限
+    "extraction_failure_pause_threshold": 5, # 连续失败多少次后自动暂停
+    "extraction_pause_minutes": 360,         # 自动暂停时长
     "max_items_per_category": 200,      # 每类最多保留多少条
     "default_save_category": "knowledge",  # 默认保存分类
     "context_window_size": 20,          # 滑动窗口：保留最近 N 条完整消息

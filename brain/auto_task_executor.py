@@ -355,6 +355,24 @@ def _execute_sync(task: AutoTask,
 
     manager = get_auto_task_manager()
     start_time = time.time()
+    workflow_store = None
+    workflow_run_id = 0
+    try:
+        from brain.workflow import get_workflow_store
+
+        workflow_store = get_workflow_store()
+        workflow_run = workflow_store.begin_run(
+            kind="auto_task", title=task.name, channel="scheduler",
+            metadata={"task_id": task_id, "description": task.description,
+                      "schedule_type": task.schedule_type},
+            retry_of_run_id=int(getattr(task, "_workflow_retry_of_run_id", 0) or 0) or None,
+        )
+        task._workflow_retry_of_run_id = 0
+        workflow_run_id = int(workflow_run["id"])
+        manager = get_auto_task_manager()
+        manager.bind_workflow(task_id, workflow_run_id, "execution")
+    except Exception as exc:
+        logger.warning("自动任务 Workflow 初始化失败: %s", exc)
 
     print(f"\n{'='*60}")
     print(f"[AutoTaskExecutor] 开始执行任务「{task.name}」(ID:{task_id}) [ReAct模式]")
@@ -366,12 +384,17 @@ def _execute_sync(task: AutoTask,
         with _lock:
             if _cancel_flags.get(task_id, False):
                 return True
+        if workflow_store and workflow_run_id and workflow_store.is_cancel_requested(workflow_run_id):
+            return True
         if time.time() - start_time > _EXECUTION_TIMEOUT:
             return True
         return False
 
     try:
-        result = _run_react_agent(task, on_step, cancel_check)
+        from brain.workflow import workflow_context
+
+        with workflow_context(workflow_run_id):
+            result = _run_react_agent(task, on_step, cancel_check)
 
         # 判断成功/失败
         if result.startswith("[CANCELLED]"):
@@ -391,12 +414,23 @@ def _execute_sync(task: AutoTask,
             final_message = result
 
         manager.mark_executed(task_id, all_success, final_message[:500])
+        if workflow_store and workflow_run_id:
+            workflow_store.finish_run(
+                workflow_run_id,
+                status="success" if all_success else (
+                    "cancelled" if final_message.startswith("[CANCELLED]") else "failed"
+                ),
+                result_summary=final_message if all_success else "",
+                error="" if all_success else final_message,
+            )
 
     except Exception as e:
         all_success = False
         final_message = str(e)
         manager.add_log(task_id, -1, False, f"执行异常: {e}")
         manager.mark_executed(task_id, False, final_message[:500])
+        if workflow_store and workflow_run_id:
+            workflow_store.finish_run(workflow_run_id, status="failed", error=final_message)
         print(f"[AutoTaskExecutor] 执行异常: {e}")
 
     finally:

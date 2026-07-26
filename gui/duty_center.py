@@ -17,6 +17,11 @@ _DUTY_ICONS = {
     "slack":           "🐟",
     "heartbeat":       "💓",
     "smart_reminder":  "⏰",
+    "memory_extraction": "🧠",
+    "memory_maintenance": "🧹",
+    "memory_narrative": "📚",
+    "working_memory_summary": "📝",
+    "memory_cue_evaluation": "✨",
 }
 
 _DUTY_TIPS = {
@@ -24,6 +29,11 @@ _DUTY_TIPS = {
     "slack":           "摸鱼消息：空闲时自己找事做（翻日记/看天气/提醒喝水…）",
     "heartbeat":       "心跳自检：对话结束后回顾是否有遗漏事项",
     "smart_reminder":  "智能提醒：定时检查到期提醒并通知你",
+    "memory_extraction": "记忆提取：空闲或积压时，把新对话整理为可追溯的长期记忆",
+    "memory_maintenance": "记忆维护：清理无效来源、更新质量与过期状态",
+    "memory_narrative": "叙事整合：低频整理事件、实体和长期故事线",
+    "working_memory_summary": "工作记忆：整理当前会话正在推进的话题",
+    "memory_cue_evaluation": "记忆联动：评估哪些旧记忆适合主动提起",
 }
 
 
@@ -163,6 +173,12 @@ class DutyCenter(QDialog):
         row2.addStretch()
         layout.addLayout(row2)
 
+        detail_lbl = QLabel()
+        detail_lbl.setFont(QFont("Microsoft YaHei UI", 8))
+        detail_lbl.setStyleSheet("color: #9298B7;")
+        detail_lbl.setWordWrap(True)
+        layout.addWidget(detail_lbl)
+
         # 第3行：提示 + 按钮
         row3 = QHBoxLayout()
         tip = QLabel(_DUTY_TIPS.get(s.name, ""))
@@ -176,6 +192,13 @@ class DutyCenter(QDialog):
         pause_btn.setFixedSize(48, 22)
         pause_btn.clicked.connect(lambda checked, n=s.name: self._toggle_pause(n))
         row3.addWidget(pause_btn)
+
+        if s.name == "memory_extraction":
+            history_btn = QPushButton("历史")
+            history_btn.setFont(QFont("Microsoft YaHei UI", 8))
+            history_btn.setFixedSize(48, 22)
+            history_btn.clicked.connect(self._open_extraction_history)
+            row3.addWidget(history_btn)
 
         trigger_btn = QPushButton("触发")
         trigger_btn.setFont(QFont("Microsoft YaHei UI", 8))
@@ -191,7 +214,8 @@ class DutyCenter(QDialog):
         self._card_layout.insertWidget(self._card_layout.count() - 1, card)
         self._cards[s.name] = {
             "card": card, "status": status_lbl, "count": count_lbl,
-            "last": last_lbl, "result": result_lbl, "pause": pause_btn,
+            "last": last_lbl, "result": result_lbl, "detail": detail_lbl,
+            "pause": pause_btn,
         }
 
     def _update_card(self, s):
@@ -200,9 +224,16 @@ class DutyCenter(QDialog):
             return
 
         # 状态
+        now = datetime.now().timestamp()
         if s.is_running:
             w["status"].setText("● 运行中")
             w["status"].setStyleSheet("color: #FFD700;")
+        elif getattr(s, "paused_until", 0) > now:
+            w["status"].setText("● 自动暂停")
+            w["status"].setStyleSheet("color: #E67E22;")
+        elif getattr(s, "next_retry_at", 0) > now:
+            w["status"].setText("● 退避中")
+            w["status"].setStyleSheet("color: #F1C40F;")
         elif s.enabled:
             w["status"].setText("● 活跃")
             w["status"].setStyleSheet("color: #27AE60;")
@@ -211,7 +242,9 @@ class DutyCenter(QDialog):
             w["status"].setStyleSheet("color: #888;")
 
         # 次数
-        w["count"].setText(f"运行 {s.run_count} 次")
+        pending = int(getattr(s, "pending_count", 0) or 0)
+        pending_text = f" · 待处理 {pending}" if pending else ""
+        w["count"].setText(f"运行 {s.run_count} 次{pending_text}")
 
         # 上次
         if s.last_fire_time > 0:
@@ -230,8 +263,18 @@ class DutyCenter(QDialog):
             w["result"].setText("")
             w["result"].setStyleSheet("")
 
+        detail = str(getattr(s, "detail_text", "") or s.last_result_text or "")
+        if getattr(s, "paused_until", 0) > now:
+            until = datetime.fromtimestamp(s.paused_until).strftime("%m-%d %H:%M")
+            detail = f"{detail}（暂停至 {until}）" if detail else f"暂停至 {until}"
+        elif getattr(s, "next_retry_at", 0) > now:
+            retry = datetime.fromtimestamp(s.next_retry_at).strftime("%H:%M:%S")
+            detail = f"{detail}（预计 {retry} 重试）" if detail else f"预计 {retry} 重试"
+        w["detail"].setText(detail)
+        w["detail"].setVisible(bool(detail))
+
         # 暂停按钮
-        if s.enabled:
+        if not getattr(s, "user_paused", False):
             w["pause"].setText("暂停")
             w["pause"].setStyleSheet("""
                 QPushButton { background: #3D3D5A; color: #E67E22; border-radius: 4px; border: none; }
@@ -253,13 +296,23 @@ class DutyCenter(QDialog):
         duty = self._scheduler._duties.get(name)
         if not duty:
             return
-        duty.status.enabled = not duty.status.enabled
+        self._scheduler.set_duty_paused(name, not duty.status.user_paused)
 
     def _manual_trigger(self, name: str):
         try:
             self._scheduler.manual_trigger(name)
         except Exception:
             pass
+
+    def _open_extraction_history(self):
+        try:
+            from gui.memory_extraction_history_dialog import MemoryExtractionHistoryDialog
+
+            MemoryExtractionHistoryDialog(self._scheduler, self).exec_()
+        except Exception as exc:
+            from PyQt5.QtWidgets import QMessageBox
+
+            QMessageBox.warning(self, "无法打开运行历史", str(exc))
 
     def closeEvent(self, event):
         self._timer.stop()

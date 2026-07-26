@@ -102,6 +102,20 @@ class EmotionStore:
                     value TEXT NOT NULL,
                     updated_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS emotion_v3_scenario_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    persona_id TEXT NOT NULL,
+                    subject_id TEXT NOT NULL,
+                    name TEXT NOT NULL DEFAULT '',
+                    scenarios_json TEXT NOT NULL,
+                    baseline_json TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    persisted INTEGER NOT NULL DEFAULT 0,
+                    workflow_run_id INTEGER,
+                    created_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_emotion_scenario_scope
+                    ON emotion_v3_scenario_runs(persona_id,subject_id,created_at DESC);
             """)
             columns = {row[1] for row in conn.execute("PRAGMA table_info(emotion_v3_events)").fetchall()}
             if "resulting_state_json" not in columns:
@@ -266,6 +280,73 @@ class EmotionStore:
                 (str(persona_id), str(subject_id), max(1, min(int(limit), 200))),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def query_events(
+        self, persona_id: str, subject_id: str, *, since: float | None = None,
+        until: float | None = None, include_simulation: bool = True,
+        limit: int = 10000,
+    ) -> list[dict[str, Any]]:
+        clauses = ["persona_id=?", "subject_id=?"]
+        params: list[Any] = [str(persona_id), str(subject_id)]
+        if since is not None:
+            clauses.append("created_at>=?")
+            params.append(float(since))
+        if until is not None:
+            clauses.append("created_at<=?")
+            params.append(float(until))
+        if not include_simulation:
+            clauses.append("source_channel NOT IN ('ui_simulation','ui_batch_simulation')")
+        params.append(max(1, min(int(limit), 100000)))
+        with self._lock:
+            rows = self._connect().execute(
+                f"SELECT * FROM emotion_v3_events WHERE {' AND '.join(clauses)} "
+                "ORDER BY created_at,id LIMIT ?",
+                tuple(params),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_scenario_run(
+        self, persona_id: str, subject_id: str, *, name: str, scenarios: list[str],
+        baseline: dict, result: dict, persisted: bool = False,
+        workflow_run_id: int | None = None,
+    ) -> int:
+        with self._lock:
+            conn = self._connect()
+            cur = conn.execute(
+                """INSERT INTO emotion_v3_scenario_runs
+                   (persona_id,subject_id,name,scenarios_json,baseline_json,result_json,
+                    persisted,workflow_run_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    str(persona_id), str(subject_id), str(name or "")[:160],
+                    json.dumps(scenarios, ensure_ascii=False),
+                    json.dumps(baseline, ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+                    int(bool(persisted)), workflow_run_id, time.time(),
+                ),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+
+    def list_scenario_runs(self, persona_id: str, subject_id: str, *, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._connect().execute(
+                """SELECT * FROM emotion_v3_scenario_runs
+                   WHERE persona_id=? AND subject_id=? ORDER BY id DESC LIMIT ?""",
+                (str(persona_id), str(subject_id), max(1, min(int(limit), 500))),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            for source, target in (("scenarios_json", "scenarios"),
+                                   ("baseline_json", "baseline"),
+                                   ("result_json", "result")):
+                try:
+                    item[target] = json.loads(item.pop(source, "{}"))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    item[target] = [] if target == "scenarios" else {}
+            item["persisted"] = bool(item.get("persisted"))
+            result.append(item)
+        return result
 
     def event_stats(self, persona_id: str, subject_id: str, *, significant: float = 0.82) -> dict:
         with self._lock:

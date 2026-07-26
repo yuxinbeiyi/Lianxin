@@ -104,11 +104,50 @@ def _ensure_tables():
         details_json TEXT DEFAULT '{}',
         created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS memory_narrative_relations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_type TEXT NOT NULL,
+        source_id INTEGER NOT NULL,
+        relation TEXT NOT NULL,
+        target_type TEXT NOT NULL,
+        target_id INTEGER NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0.5,
+        source_kind TEXT NOT NULL DEFAULT 'derived',
+        source_run_id INTEGER,
+        status TEXT NOT NULL DEFAULT 'active',
+        valid_from TEXT DEFAULT '',
+        valid_to TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        fingerprint TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE IF NOT EXISTS memory_narrative_sources (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        narrative_type TEXT NOT NULL,
+        narrative_id INTEGER NOT NULL,
+        source_type TEXT NOT NULL,
+        source_id INTEGER NOT NULL,
+        source_role TEXT NOT NULL DEFAULT 'evidence',
+        confidence REAL NOT NULL DEFAULT 0.5,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        fingerprint TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE IF NOT EXISTS memory_narrative_schema_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS idx_entity_profiles_status ON memory_entity_profiles(status);
     CREATE INDEX IF NOT EXISTS idx_episodes_status ON memory_episodes(status);
     CREATE INDEX IF NOT EXISTS idx_episodes_updated ON memory_episodes(updated_at);
     CREATE INDEX IF NOT EXISTS idx_sagas_status ON memory_sagas(status);
     CREATE INDEX IF NOT EXISTS idx_narrative_events_created ON memory_narrative_events(created_at);
+    CREATE INDEX IF NOT EXISTS idx_narrative_relations_source ON memory_narrative_relations(source_type,source_id,status);
+    CREATE INDEX IF NOT EXISTS idx_narrative_relations_target ON memory_narrative_relations(target_type,target_id,status);
+    CREATE INDEX IF NOT EXISTS idx_narrative_sources_owner ON memory_narrative_sources(narrative_type,narrative_id,status);
+    CREATE INDEX IF NOT EXISTS idx_narrative_sources_source ON memory_narrative_sources(source_type,source_id,status);
     """)
     for sql in (
         "ALTER TABLE memory_entity_profiles ADD COLUMN graph_entity_id INTEGER",
@@ -122,11 +161,27 @@ def _ensure_tables():
         "ALTER TABLE memory_sagas ADD COLUMN emotional_immersion REAL NOT NULL DEFAULT 0",
         "ALTER TABLE memory_sagas ADD COLUMN emotional_weight REAL NOT NULL DEFAULT 0",
         "ALTER TABLE memory_sagas ADD COLUMN persona_id TEXT DEFAULT ''",
+        "ALTER TABLE memory_entity_profiles ADD COLUMN lifecycle_stage TEXT NOT NULL DEFAULT 'active'",
+        "ALTER TABLE memory_entity_profiles ADD COLUMN valid_from TEXT DEFAULT ''",
+        "ALTER TABLE memory_entity_profiles ADD COLUMN valid_to TEXT DEFAULT ''",
+        "ALTER TABLE memory_entity_profiles ADD COLUMN superseded_by_id INTEGER",
+        "ALTER TABLE memory_entity_profiles ADD COLUMN archived_reason TEXT DEFAULT ''",
+        "ALTER TABLE memory_episodes ADD COLUMN lifecycle_stage TEXT NOT NULL DEFAULT 'active'",
+        "ALTER TABLE memory_episodes ADD COLUMN valid_from TEXT DEFAULT ''",
+        "ALTER TABLE memory_episodes ADD COLUMN valid_to TEXT DEFAULT ''",
+        "ALTER TABLE memory_episodes ADD COLUMN superseded_by_id INTEGER",
+        "ALTER TABLE memory_episodes ADD COLUMN archived_reason TEXT DEFAULT ''",
+        "ALTER TABLE memory_sagas ADD COLUMN lifecycle_stage TEXT NOT NULL DEFAULT 'active'",
+        "ALTER TABLE memory_sagas ADD COLUMN valid_from TEXT DEFAULT ''",
+        "ALTER TABLE memory_sagas ADD COLUMN valid_to TEXT DEFAULT ''",
+        "ALTER TABLE memory_sagas ADD COLUMN superseded_by_id INTEGER",
+        "ALTER TABLE memory_sagas ADD COLUMN archived_reason TEXT DEFAULT ''",
     ):
         try:
             conn.execute(sql)
         except Exception:
             pass
+    _migrate_normalized_links(conn)
     conn.commit()
     return conn
 
@@ -134,6 +189,214 @@ def _ensure_tables():
 def _episode_fingerprint(title: str, fragment_ids: list[int]) -> str:
     raw = f"{title.strip().lower()}:{','.join(map(str, sorted(set(fragment_ids))))}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _relation_fingerprint(source_type: str, source_id: int, relation: str,
+                          target_type: str, target_id: int) -> str:
+    raw = f"{source_type}:{int(source_id)}:{relation}:{target_type}:{int(target_id)}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _source_fingerprint(narrative_type: str, narrative_id: int, source_type: str,
+                        source_id: int, source_role: str) -> str:
+    raw = f"{narrative_type}:{int(narrative_id)}:{source_type}:{int(source_id)}:{source_role}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _upsert_relation(conn, source_type: str, source_id: int, relation: str,
+                     target_type: str, target_id: int, *, confidence: float = 0.5,
+                     source_kind: str = "derived", source_run_id: int | None = None) -> None:
+    timestamp = _now()
+    fingerprint = _relation_fingerprint(source_type, source_id, relation, target_type, target_id)
+    conn.execute(
+        """INSERT INTO memory_narrative_relations
+           (source_type,source_id,relation,target_type,target_id,confidence,source_kind,
+            source_run_id,status,valid_from,created_at,updated_at,fingerprint)
+           VALUES (?,?,?,?,?,?,?,?, 'active',?,?,?,?)
+           ON CONFLICT(fingerprint) DO UPDATE SET
+             confidence=MAX(confidence,excluded.confidence),source_kind=excluded.source_kind,
+             source_run_id=COALESCE(excluded.source_run_id,source_run_id),status='active',
+             valid_to='',updated_at=excluded.updated_at""",
+        (source_type, int(source_id), relation, target_type, int(target_id),
+         min(1.0, max(0.0, float(confidence))), source_kind, source_run_id,
+         timestamp, timestamp, timestamp, fingerprint),
+    )
+
+
+def _link_source(conn, narrative_type: str, narrative_id: int, source_type: str,
+                 source_id: int, *, source_role: str = "evidence", confidence: float = 0.5) -> None:
+    timestamp = _now()
+    fingerprint = _source_fingerprint(narrative_type, narrative_id, source_type, source_id, source_role)
+    conn.execute(
+        """INSERT INTO memory_narrative_sources
+           (narrative_type,narrative_id,source_type,source_id,source_role,confidence,
+            status,created_at,updated_at,fingerprint)
+           VALUES (?,?,?,?,?,?,'active',?,?,?)
+           ON CONFLICT(fingerprint) DO UPDATE SET
+             confidence=MAX(confidence,excluded.confidence),status='active',updated_at=excluded.updated_at""",
+        (narrative_type, int(narrative_id), source_type, int(source_id), source_role,
+         min(1.0, max(0.0, float(confidence))), timestamp, timestamp, fingerprint),
+    )
+
+
+def _migrate_normalized_links(conn) -> dict:
+    """Idempotently mirror legacy JSON links without modifying legacy columns."""
+    marker = conn.execute(
+        "SELECT value FROM memory_narrative_schema_meta WHERE key='normalized_links_v1'"
+    ).fetchone()
+    if marker:
+        return {"migrated": False}
+    counts = {"relations": 0, "sources": 0}
+    for row in conn.execute("SELECT id,source_fact_ids,related_entity_ids FROM memory_entity_profiles"):
+        for fact_id in _json(row["source_fact_ids"], []):
+            if str(fact_id).isdigit():
+                _link_source(conn, "entity", row["id"], "fact", int(fact_id))
+                counts["sources"] += 1
+        for target_id in _json(row["related_entity_ids"], []):
+            if str(target_id).isdigit() and int(target_id) != int(row["id"]):
+                _upsert_relation(conn, "entity", row["id"], "related_to", "entity", int(target_id))
+                counts["relations"] += 1
+    for row in conn.execute("SELECT id,entity_ids,fragment_ids,source_fact_ids FROM memory_episodes"):
+        for entity_id in _json(row["entity_ids"], []):
+            if str(entity_id).isdigit():
+                _upsert_relation(conn, "episode", row["id"], "mentions", "entity", int(entity_id))
+                counts["relations"] += 1
+        for source_type, values in (("fragment", _json(row["fragment_ids"], [])),
+                                    ("fact", _json(row["source_fact_ids"], []))):
+            for source_id in values:
+                if str(source_id).isdigit():
+                    _link_source(conn, "episode", row["id"], source_type, int(source_id))
+                    counts["sources"] += 1
+    for row in conn.execute("SELECT id,episode_ids,entity_ids FROM memory_sagas"):
+        for episode_id in _json(row["episode_ids"], []):
+            if str(episode_id).isdigit():
+                _upsert_relation(conn, "saga", row["id"], "contains", "episode", int(episode_id))
+                counts["relations"] += 1
+        for entity_id in _json(row["entity_ids"], []):
+            if str(entity_id).isdigit():
+                _upsert_relation(conn, "saga", row["id"], "mentions", "entity", int(entity_id))
+                counts["relations"] += 1
+    conn.execute(
+        "INSERT OR REPLACE INTO memory_narrative_schema_meta(key,value,updated_at) VALUES('normalized_links_v1',?,?)",
+        (json.dumps(counts, ensure_ascii=False), _now()),
+    )
+    return {"migrated": True, **counts}
+
+
+def migrate_narrative_relations(*, force: bool = False) -> dict:
+    conn = _ensure_tables()
+    if force:
+        conn.execute("DELETE FROM memory_narrative_schema_meta WHERE key='normalized_links_v1'")
+    result = _migrate_normalized_links(conn)
+    conn.commit()
+    return result
+
+
+def list_narrative_relations(record_type: str, record_id: int,
+                             *, include_inactive: bool = False) -> list[dict]:
+    conn = _ensure_tables()
+    status_sql = "" if include_inactive else " AND status='active'"
+    rows = conn.execute(
+        f"""SELECT * FROM memory_narrative_relations
+            WHERE ((source_type=? AND source_id=?) OR (target_type=? AND target_id=?)){status_sql}
+            ORDER BY id""",
+        (record_type, int(record_id), record_type, int(record_id)),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def trace_narrative_sources(record_type: str, record_id: int,
+                            *, include_inactive: bool = False) -> dict:
+    """Resolve normalized evidence links through fragments to original messages."""
+    conn = _ensure_tables()
+    pending = [(str(record_type), int(record_id))]
+    seen_records = set()
+    source_pairs: set[tuple[str, int]] = set()
+    while pending:
+        current_type, current_id = pending.pop()
+        if (current_type, current_id) in seen_records:
+            continue
+        seen_records.add((current_type, current_id))
+        status_sql = "" if include_inactive else " AND status='active'"
+        for row in conn.execute(
+            f"""SELECT source_type,source_id FROM memory_narrative_sources
+               WHERE narrative_type=? AND narrative_id=?{status_sql}""",
+            (current_type, current_id),
+        ):
+            source_pairs.add((row["source_type"], int(row["source_id"])))
+        for row in conn.execute(
+            f"""SELECT target_type,target_id FROM memory_narrative_relations
+               WHERE source_type=? AND source_id=?{status_sql}""",
+            (current_type, current_id),
+        ):
+            if row["target_type"] in {"entity", "episode", "saga"}:
+                pending.append((row["target_type"], int(row["target_id"])))
+
+    fact_ids = sorted(source_id for source_type, source_id in source_pairs if source_type == "fact")
+    fragment_ids = {source_id for source_type, source_id in source_pairs if source_type == "fragment"}
+    message_ids = {source_id for source_type, source_id in source_pairs if source_type == "message"}
+    if fact_ids:
+        placeholders = ",".join("?" for _ in fact_ids)
+        for row in conn.execute(
+            f"SELECT id,source_message_ids FROM memory_fragments WHERE fact_id IN ({placeholders})",
+            tuple(fact_ids),
+        ):
+            fragment_ids.add(int(row["id"]))
+            message_ids.update(int(value) for value in _json(row["source_message_ids"], []) if str(value).isdigit())
+    if fragment_ids:
+        placeholders = ",".join("?" for _ in fragment_ids)
+        for row in conn.execute(
+            f"SELECT source_message_ids FROM memory_fragments WHERE id IN ({placeholders})",
+            tuple(sorted(fragment_ids)),
+        ):
+            message_ids.update(int(value) for value in _json(row["source_message_ids"], []) if str(value).isdigit())
+    messages = []
+    if message_ids:
+        placeholders = ",".join("?" for _ in message_ids)
+        messages = [dict(row) for row in conn.execute(
+            f"SELECT id,session_id,role,content,timestamp FROM messages WHERE id IN ({placeholders}) ORDER BY timestamp,id",
+            tuple(sorted(message_ids)),
+        ).fetchall()]
+    return {"facts": fact_ids, "fragments": sorted(fragment_ids),
+            "message_ids": sorted(message_ids), "messages": messages}
+
+
+def transition_narrative_lifecycle(record_type: str, record_id: int, action: str,
+                                   *, reason: str = "", replacement_id: int | None = None) -> dict:
+    """Archive, restore, review or supersede derived records without deleting evidence."""
+    tables = {"entity": "memory_entity_profiles", "episode": "memory_episodes", "saga": "memory_sagas"}
+    if record_type not in tables or action not in {"archive", "restore", "needs_review", "supersede"}:
+        raise ValueError("unsupported narrative lifecycle transition")
+    if action == "supersede" and not replacement_id:
+        raise ValueError("supersede requires replacement_id")
+    conn = _ensure_tables()
+    timestamp = _now()
+    status = {"archive": "archived", "restore": "active", "needs_review": "needs_review", "supersede": "superseded"}[action]
+    valid_to = "" if action == "restore" else timestamp
+    conn.execute(
+        f"""UPDATE {tables[record_type]} SET status=?,lifecycle_stage=?,valid_to=?,
+            superseded_by_id=?,archived_reason=?,updated_at=? WHERE id=?""",
+        (status, status, valid_to, int(replacement_id) if replacement_id else None,
+         str(reason or "")[:500], timestamp, int(record_id)),
+    )
+    if action == "supersede" and replacement_id:
+        _upsert_relation(conn, record_type, int(record_id), "superseded_by",
+                         record_type, int(replacement_id), confidence=1.0,
+                         source_kind="lifecycle")
+    link_status = "active" if action == "restore" else "inactive"
+    conn.execute(
+        "UPDATE memory_narrative_relations SET status=?,valid_to=?,updated_at=? WHERE source_type=? AND source_id=?",
+        (link_status, valid_to, timestamp, record_type, int(record_id)),
+    )
+    conn.execute(
+        "UPDATE memory_narrative_sources SET status=?,updated_at=? WHERE narrative_type=? AND narrative_id=?",
+        (link_status, timestamp, record_type, int(record_id)),
+    )
+    _record_event(conn, f"{record_type}_{action}", record_type, int(record_id),
+                  {"reason": reason, "replacement_id": replacement_id})
+    conn.commit()
+    row = conn.execute(f"SELECT * FROM {tables[record_type]} WHERE id=?", (int(record_id),)).fetchone()
+    return dict(row) if row else {}
 
 
 def collect_narrative_candidates(limit: int = 36) -> list[dict]:
@@ -221,6 +484,9 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
             entity_id = _upsert_entity(conn, entity, all_fact_ids, timestamp) if isinstance(entity, dict) else None
             if entity_id:
                 entities += 1
+                for fact_id in all_fact_ids:
+                    _link_source(conn, "entity", entity_id, "fact", fact_id,
+                                 confidence=float(entity.get("confidence", 0.5) or 0.5))
                 _record_event(conn, "entity_updated", "entity", entity_id, {"source_fact_ids": all_fact_ids})
         for episode in result.get("episodes", []) if isinstance(result, dict) else []:
             if not isinstance(episode, dict):
@@ -277,11 +543,20 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
                 )
                 created_episode_ids.append(requested_id)
                 updated += 1
+                for entity_id in entity_ids:
+                    _upsert_relation(conn, "episode", requested_id, "mentions", "entity", entity_id,
+                                     confidence=confidence, source_kind="model")
+                for fragment_id in fragment_ids:
+                    _link_source(conn, "episode", requested_id, "fragment", fragment_id, confidence=confidence)
+                for fact_id in source_fact_ids:
+                    _link_source(conn, "episode", requested_id, "fact", fact_id, confidence=confidence)
                 _record_event(conn, "episode_updated", "episode", requested_id, {"fragment_ids": fragment_ids})
                 continue
             existing = conn.execute("SELECT id FROM memory_episodes WHERE fingerprint=?", (fingerprint,)).fetchone()
             if existing:
                 created_episode_ids.append(int(existing["id"]))
+                for fragment_id in fragment_ids:
+                    _link_source(conn, "episode", int(existing["id"]), "fragment", fragment_id, confidence=confidence)
                 continue
             if len(entity_ids) > 1:
                 profile_rows = conn.execute(
@@ -291,6 +566,9 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
                 for profile in profile_rows:
                     related = list(dict.fromkeys(_json(profile["related_entity_ids"], []) + [value for value in entity_ids if value != int(profile["id"])]))
                     conn.execute("UPDATE memory_entity_profiles SET related_entity_ids=?,updated_at=? WHERE id=?", (json.dumps(related), timestamp, int(profile["id"])))
+                    for target_id in related:
+                        _upsert_relation(conn, "entity", int(profile["id"]), "related_to", "entity", int(target_id),
+                                         confidence=confidence, source_kind="episode_cooccurrence")
                 # Connect co-occurring entities in the existing graph with a weak,
                 # auditable narrative edge.  It is not treated as a user fact.
                 for left in profile_rows:
@@ -316,8 +594,16 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
                  str(episode.get("occurred_to", "") or "")[:40], timestamp, timestamp, fingerprint),
             )
             created_episode_ids.append(int(cur.lastrowid))
+            episode_id = int(cur.lastrowid)
+            for entity_id in entity_ids:
+                _upsert_relation(conn, "episode", episode_id, "mentions", "entity", entity_id,
+                                 confidence=confidence, source_kind="model")
+            for fragment_id in fragment_ids:
+                _link_source(conn, "episode", episode_id, "fragment", fragment_id, confidence=confidence)
+            for fact_id in source_fact_ids:
+                _link_source(conn, "episode", episode_id, "fact", fact_id, confidence=confidence)
             created += 1
-            _record_event(conn, "episode_created", "episode", int(cur.lastrowid), {"fragment_ids": fragment_ids})
+            _record_event(conn, "episode_created", "episode", episode_id, {"fragment_ids": fragment_ids})
 
         for saga in result.get("sagas", []) if isinstance(result, dict) else []:
             if not isinstance(saga, dict):
@@ -348,6 +634,15 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
                 continue
             fingerprint = hashlib.sha256(f"{title}:{','.join(map(str, episode_ids))}".encode("utf-8")).hexdigest()
             saga_confidence = min(1.0, max(0.0, float(saga.get("confidence", 0.6) or 0.6)))
+            saga_entity_ids: list[int] = []
+            placeholders = ",".join("?" for _ in episode_ids)
+            for episode_row in conn.execute(
+                f"SELECT entity_ids FROM memory_episodes WHERE id IN ({placeholders})", tuple(episode_ids)
+            ):
+                saga_entity_ids.extend(
+                    int(value) for value in _json(episode_row["entity_ids"], []) if str(value).isdigit()
+                )
+            saga_entity_ids = list(dict.fromkeys(saga_entity_ids))
             emotional = saga.get("emotion", {}) if isinstance(saga.get("emotion", {}), dict) else {}
             def emotion_value(name):
                 try:
@@ -366,27 +661,35 @@ def apply_narrative_result(result: dict, candidates: list[dict]) -> dict:
             existing_saga = conn.execute("SELECT id FROM memory_sagas WHERE fingerprint=?", (fingerprint,)).fetchone()
             if existing_saga:
                 conn.execute(
-                    """UPDATE memory_sagas SET title=?,summary=?,episode_ids=?,confidence=MAX(confidence,?),
+                    """UPDATE memory_sagas SET title=?,summary=?,episode_ids=?,entity_ids=?,confidence=MAX(confidence,?),
                        emotional_valence=?,emotional_arousal=?,emotional_pride=?,emotional_guardedness=?,emotional_connection=?,emotional_immersion=?,
                        emotional_weight=?,updated_at=? WHERE id=?""",
-                    (title, summary, json.dumps(episode_ids), saga_confidence,
+                    (title, summary, json.dumps(episode_ids), json.dumps(saga_entity_ids), saga_confidence,
                      emotional_values["emotional_valence"], emotional_values["emotional_arousal"], emotional_values["emotional_pride"],
                      emotional_values["emotional_guardedness"], emotional_values["emotional_connection"], emotional_values["emotional_immersion"],
                      emotional_values["emotional_weight"], timestamp, int(existing_saga["id"])),
                 )
-                _record_event(conn, "saga_updated", "saga", int(existing_saga["id"]), {"episode_ids": episode_ids})
+                saga_id = int(existing_saga["id"])
+                _record_event(conn, "saga_updated", "saga", saga_id, {"episode_ids": episode_ids})
             else:
                 cur = conn.execute(
                     """INSERT INTO memory_sagas
-                       (title,summary,episode_ids,confidence,emotional_valence,emotional_arousal,
+                       (title,summary,episode_ids,entity_ids,confidence,emotional_valence,emotional_arousal,
                         emotional_pride,emotional_guardedness,emotional_connection,emotional_immersion,emotional_weight,created_at,updated_at,fingerprint)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (title, summary, json.dumps(episode_ids), saga_confidence,
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (title, summary, json.dumps(episode_ids), json.dumps(saga_entity_ids), saga_confidence,
                      emotional_values["emotional_valence"], emotional_values["emotional_arousal"], emotional_values["emotional_pride"],
                      emotional_values["emotional_guardedness"], emotional_values["emotional_connection"], emotional_values["emotional_immersion"],
                      emotional_values["emotional_weight"], timestamp, timestamp, fingerprint),
                 )
-                _record_event(conn, "saga_created", "saga", int(cur.lastrowid), {"episode_ids": episode_ids})
+                saga_id = int(cur.lastrowid)
+                _record_event(conn, "saga_created", "saga", saga_id, {"episode_ids": episode_ids})
+            for episode_id in episode_ids:
+                _upsert_relation(conn, "saga", saga_id, "contains", "episode", episode_id,
+                                 confidence=saga_confidence, source_kind="model")
+            for entity_id in saga_entity_ids:
+                _upsert_relation(conn, "saga", saga_id, "mentions", "entity", entity_id,
+                                 confidence=saga_confidence, source_kind="derived")
         conn.commit()
     return {"episodes_created": created, "episodes_updated": updated,
             "entities_updated": entities, "episode_ids": created_episode_ids}
@@ -644,7 +947,30 @@ def merge_narrative_duplicates(limit: int = 100) -> dict:
                 (summary, json.dumps(entities), json.dumps(fragments), json.dumps(facts),
                  float(duplicate.get("confidence", 0.5) or 0.5), _now(), int(survivor["id"])),
             )
-            conn.execute("UPDATE memory_episodes SET status='merged',updated_at=? WHERE id=?", (_now(), int(duplicate["id"])))
+            timestamp = _now()
+            conn.execute(
+                """UPDATE memory_episodes SET status='merged',lifecycle_stage='merged',
+                   valid_to=?,superseded_by_id=?,archived_reason='deduplicated',updated_at=? WHERE id=?""",
+                (timestamp, int(survivor["id"]), timestamp, int(duplicate["id"])),
+            )
+            _upsert_relation(conn, "episode", int(duplicate["id"]), "merged_into",
+                             "episode", int(survivor["id"]), confidence=1.0,
+                             source_kind="lifecycle")
+            for entity_id in entities:
+                _upsert_relation(conn, "episode", int(survivor["id"]), "mentions", "entity", int(entity_id),
+                                 confidence=float(survivor.get("confidence", 0.5) or 0.5), source_kind="merge")
+            for fragment_id in fragments:
+                _link_source(conn, "episode", int(survivor["id"]), "fragment", int(fragment_id))
+            for fact_id in facts:
+                _link_source(conn, "episode", int(survivor["id"]), "fact", int(fact_id))
+            conn.execute(
+                "UPDATE memory_narrative_relations SET status='inactive',valid_to=?,updated_at=? WHERE source_type='episode' AND source_id=?",
+                (timestamp, timestamp, int(duplicate["id"])),
+            )
+            conn.execute(
+                "UPDATE memory_narrative_sources SET status='inactive',updated_at=? WHERE narrative_type='episode' AND narrative_id=?",
+                (timestamp, int(duplicate["id"])),
+            )
             _record_event(conn, "episode_merged", "episode", int(survivor["id"]), {"merged_id": int(duplicate["id"])})
             for saga_row in conn.execute("SELECT id,episode_ids FROM memory_sagas WHERE status='active'").fetchall():
                 saga_episode_ids = _json(saga_row["episode_ids"], [])
@@ -657,6 +983,13 @@ def merge_narrative_duplicates(limit: int = 100) -> dict:
                 conn.execute(
                     "UPDATE memory_sagas SET episode_ids=?,updated_at=? WHERE id=?",
                     (json.dumps(list(dict.fromkeys(saga_episode_ids))), _now(), int(saga_row["id"])),
+                )
+                _upsert_relation(conn, "saga", int(saga_row["id"]), "contains", "episode", int(survivor["id"]),
+                                 source_kind="merge")
+                duplicate_link = _relation_fingerprint("saga", int(saga_row["id"]), "contains", "episode", int(duplicate["id"]))
+                conn.execute(
+                    "UPDATE memory_narrative_relations SET status='inactive',valid_to=?,updated_at=? WHERE fingerprint=?",
+                    (timestamp, timestamp, duplicate_link),
                 )
             survivor_fragments, survivor_facts, survivor_entities = fragments, facts, entities
             duplicate["status"] = "merged"
@@ -674,7 +1007,26 @@ def merge_narrative_duplicates(limit: int = 100) -> dict:
             if duplicate.get("summary") and duplicate["summary"] not in summary:
                 summary = (summary + "\n" + duplicate["summary"])[:2000]
             conn.execute("UPDATE memory_sagas SET summary=?,episode_ids=?,updated_at=? WHERE id=?", (summary, json.dumps(episode_ids), _now(), int(survivor["id"])))
-            conn.execute("UPDATE memory_sagas SET status='merged',updated_at=? WHERE id=?", (_now(), int(duplicate["id"])))
+            timestamp = _now()
+            conn.execute(
+                """UPDATE memory_sagas SET status='merged',lifecycle_stage='merged',valid_to=?,
+                   superseded_by_id=?,archived_reason='deduplicated',updated_at=? WHERE id=?""",
+                (timestamp, int(survivor["id"]), timestamp, int(duplicate["id"])),
+            )
+            _upsert_relation(conn, "saga", int(duplicate["id"]), "merged_into",
+                             "saga", int(survivor["id"]), confidence=1.0,
+                             source_kind="lifecycle")
+            for episode_id in episode_ids:
+                _upsert_relation(conn, "saga", int(survivor["id"]), "contains", "episode", int(episode_id),
+                                 confidence=float(survivor.get("confidence", 0.5) or 0.5), source_kind="merge")
+            conn.execute(
+                "UPDATE memory_narrative_relations SET status='inactive',valid_to=?,updated_at=? WHERE source_type='saga' AND source_id=?",
+                (timestamp, timestamp, int(duplicate["id"])),
+            )
+            conn.execute(
+                "UPDATE memory_narrative_sources SET status='inactive',updated_at=? WHERE narrative_type='saga' AND narrative_id=?",
+                (timestamp, int(duplicate["id"])),
+            )
             _record_event(conn, "saga_merged", "saga", int(survivor["id"]), {"merged_id": int(duplicate["id"])})
             duplicate["status"] = "merged"
             merged_sagas += 1
