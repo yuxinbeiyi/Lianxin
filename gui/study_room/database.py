@@ -271,6 +271,42 @@ class StudyDatabase:
             result.append(item)
         return result
 
+    def focus_sessions_between(self, start: datetime, end: datetime) -> list[dict]:
+        """返回指定左闭右开区间内的专注记录，供报告层做可解释聚合。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT task_id, task_name, started_at, ended_at, duration_seconds, completed
+                   FROM focus_sessions
+                   WHERE started_at >= ? AND started_at < ?
+                   ORDER BY started_at ASC, id ASC""",
+                (start.isoformat(sep=" "), end.isoformat(sep=" ")),
+            ).fetchall()
+        return [{**dict(row), "completed": bool(row["completed"])} for row in rows]
+
+    def events_between(self, start: datetime, end: datetime) -> list[dict]:
+        """返回报告周期内的自习室事件；删除的任务也能保留其历史足迹。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM study_events
+                   WHERE occurred_at >= ? AND occurred_at < ?
+                   ORDER BY occurred_at ASC, id ASC""",
+                (start.isoformat(sep=" "), end.isoformat(sep=" ")),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["details"] = json.loads(item.pop("details_json") or "{}")
+            except json.JSONDecodeError:
+                item["details"] = {}
+            result.append(item)
+        return result
+
+    def room_seconds_between(self, start: datetime, end: datetime) -> int:
+        """返回去重后的自习室打开时长。"""
+        with self._connect() as conn:
+            return self._room_seconds(conn, start, end)
+
     @staticmethod
     def _room_seconds(conn, start: datetime, end: datetime) -> int:
         """合并访问区间后计算时长，旧异常记录不会造成重叠重复计时。"""

@@ -9,6 +9,7 @@ from PyQt5.QtCore import QObject, QSettings, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import QFileDialog
 
 from .database import StudyDatabase
+from .report_service import StudyReportService
 from .timer import FocusTimer
 from utils.sound import play_sound
 from utils.resource_path import get_asset_path
@@ -37,6 +38,7 @@ class StudyRoomBridge(QObject):
     def __init__(self, parent=None, db_path=None):
         super().__init__(parent)
         self.db = StudyDatabase(db_path)
+        self.reports = StudyReportService(self.db)
         self.visit_id = self.db.open_visit()
         self.timer = FocusTimer(self)
         self.timer.tick.connect(self._on_tick)
@@ -214,6 +216,11 @@ class StudyRoomBridge(QObject):
         data["time_rewind"] = self.db.time_rewind()
         data["recent_focus"] = self.db.recent_focus_sessions()
         return self._json(data)
+
+    @pyqtSlot(str, str, result=str)
+    def get_report(self, period="week", anchor=""):
+        """提供周报/月报的本地聚合结果，不触发模型调用。"""
+        return self._json(self.reports.build(str(period), str(anchor or "")))
 
     @pyqtSlot(int, int, int)
     def start_focus(self, focus_minutes, break_minutes, task_id=-1):

@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="study-room-version" content="2026.07.25.15">
+  <meta name="study-room-version" content="2026.07.26.16">
   <title>莲心自习室</title>
-  <link rel="stylesheet" href="styles.css?v=20260725-15">
+  <link rel="stylesheet" href="styles.css?v=20260726-16">
 </head>
 <body>
   <div class="room-shell">
@@ -25,16 +25,16 @@
         <span id="sidebar-weekday">星期</span>
         <span id="sidebar-lunar">农历日期</span>
       </div>
-      <span class="ui-version" id="ui-version">界面版本 2026.07.25.15</span>
+      <span class="ui-version" id="ui-version">界面版本 2026.07.26.16</span>
     </aside>
 
     <main class="main-content">
       <header class="topbar">
         <span id="page-kicker">开始专注</span>
         <div class="window-actions" aria-label="窗口控制">
-          <button id="minimize" title="最小化" aria-label="最小化">—</button>
-          <button id="fullscreen" title="切换全屏" aria-label="切换全屏">□</button>
-          <button id="close" title="关闭" aria-label="关闭">×</button>
+          <button id="minimize" aria-label="最小化">—</button>
+          <button id="fullscreen" aria-label="切换全屏">□</button>
+          <button id="close" aria-label="关闭">×</button>
         </div>
       </header>
 
@@ -95,9 +95,9 @@
 
       <section class="view focus-view" id="view-focus" aria-label="沉浸专注模式">
         <div class="focus-window-actions window-actions">
-          <button id="focus-minimize" title="最小化" aria-label="最小化">—</button>
-          <button id="focus-fullscreen" title="切换全屏" aria-label="切换全屏">□</button>
-          <button id="focus-close" title="关闭" aria-label="关闭">×</button>
+          <button id="focus-minimize" aria-label="最小化">—</button>
+          <button id="focus-fullscreen" aria-label="切换全屏">□</button>
+          <button id="focus-close" aria-label="关闭">×</button>
         </div>
         <div class="focus-full-stage">
           <span class="focus-badge" id="focus-badge">莲心陪伴中</span>
@@ -151,6 +151,12 @@
 
       <section class="view" id="view-stats">
         <div class="section-heading"><div><span class="eyebrow">慢慢积累</span><h2>成长记录</h2></div><p>稳定，比一次做很多更重要。</p></div>
+        <div class="report-mode-tabs" aria-label="成长记录视图">
+          <button class="report-mode-tab active" data-report-mode="overview">数据概览</button>
+          <button class="report-mode-tab" data-report-mode="week">周报</button>
+          <button class="report-mode-tab" data-report-mode="month">月报</button>
+        </div>
+        <div id="stats-overview">
         <div class="range-tabs" aria-label="统计时间范围">
           <button class="range-tab active" data-range="today">今天</button>
           <button class="range-tab" data-range="week">本周</button>
@@ -205,6 +211,31 @@
           <div class="rewind-tooltip hidden" id="rewind-tooltip" role="tooltip"></div>
         </div>
         <div class="growth-note" id="growth-note">莲心记录：先从一个 25 分钟的小目标开始吧。</div>
+        </div>
+        <div class="report-panel hidden" id="report-panel" aria-live="polite">
+          <div class="report-toolbar">
+            <button id="report-previous" class="secondary-action" aria-label="查看上一周期">← 上一周期</button>
+            <div><span class="eyebrow" id="report-type-label">周报</span><strong id="report-period-label">正在整理这一段时间</strong><small id="report-period-status"></small></div>
+            <button id="report-next" class="secondary-action" aria-label="查看下一周期">下一周期 →</button>
+          </div>
+          <article class="report-hero">
+            <span id="report-hero-kicker">莲心的回顾</span>
+            <h3 id="report-title">从一小段开始就很好</h3>
+            <p id="report-body">正在读取这段时间留下的专注记录。</p>
+            <div class="report-compare" id="report-compare"></div>
+          </article>
+          <div class="report-metrics">
+            <div><span>专注时长</span><strong id="report-focus">0分钟</strong><small id="report-focus-detail">包含中断记录</small></div>
+            <div><span>专注日</span><strong id="report-active-days">0天</strong><small id="report-streak">最长连续 0 天</small></div>
+            <div><span>完成专注</span><strong id="report-completed">0次</strong><small id="report-completion-rate">完成率 0%</small></div>
+            <div><span>完成任务</span><strong id="report-tasks">0项</strong><small id="report-room">自习室 0分钟</small></div>
+          </div>
+          <div class="report-grid">
+            <article class="report-card"><div class="report-card-head"><strong id="report-trend-title">本周节奏</strong><small>每一天留下的专注时间</small></div><div class="report-bars" id="report-bars"></div></article>
+            <article class="report-card"><div class="report-card-head"><strong>这段时间的足迹</strong><small id="report-highlights"></small></div><div class="report-task-list" id="report-tasks-list"></div></article>
+          </div>
+          <article class="report-suggestion"><span>下一步只做一件小事</span><p id="report-suggestion"></p></article>
+        </div>
       </section>
 
       <section class="view" id="view-space">
@@ -239,6 +270,6 @@
   </div>
   <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-  <script src="app.js?v=20260725-15"></script>
+  <script src="app.js?v=20260726-16"></script>
 </body>
 </html>

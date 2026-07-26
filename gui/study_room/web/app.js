@@ -1,4 +1,4 @@
-const STUDY_ROOM_UI_VERSION = '2026.07.25.15';
+const STUDY_ROOM_UI_VERSION = '2026.07.26.16';
 const RING_LENGTH = 860.8;
 const q = (selector) => document.querySelector(selector);
 const qa = (selector) => [...document.querySelectorAll(selector)];
@@ -7,6 +7,9 @@ let bridge = null;
 let allTasks = [];
 let taskFilter = 'all';
 let selectedRange = 'today';
+let statsMode = 'overview';
+let reportAnchor = '';
+let currentReport = null;
 let currentView = 'home';
 let editingTaskId = null;
 let completionTaskId = null;
@@ -560,10 +563,102 @@ function leaveFocusView() {
 
 function refreshStats() {
   if (!bridge || currentView !== 'stats') return;
+  if (statsMode !== 'overview') return refreshReport();
   const requestedRange = selectedRange;
   bridge.get_statistics(requestedRange, payload => {
     if (currentView === 'stats' && selectedRange === requestedRange) renderStats(JSON.parse(payload));
   });
+}
+
+function reportDateLabel(value, compact = false) {
+  if (!value) return '';
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return compact ? `${parsed.getMonth() + 1}/${parsed.getDate()}` : `${parsed.getMonth() + 1}月${parsed.getDate()}日`;
+}
+
+function renderReport(report) {
+  currentReport = report;
+  const metrics = report.metrics || {};
+  const narrative = report.narrative || {};
+  q('#report-type-label').textContent = report.type === 'month' ? '月报' : '周报';
+  q('#report-period-label').textContent = report.label || '';
+  q('#report-period-status').textContent = report.is_current ? `进行中 · 已记录 ${report.elapsed_days || 0} 天` : '本周期已结束';
+  q('#report-title').textContent = narrative.title || '这一段时间的回顾';
+  q('#report-body').textContent = narrative.body || '';
+  q('#report-suggestion').textContent = narrative.suggestion || '';
+  q('#report-focus').textContent = formatDuration(metrics.focus_seconds || 0);
+  q('#report-focus-detail').textContent = `完整专注 ${formatDuration(metrics.completed_focus_seconds || 0)}`;
+  q('#report-active-days').textContent = `${metrics.active_days || 0}天`;
+  q('#report-streak').textContent = `最长连续 ${metrics.longest_streak || 0} 天`;
+  q('#report-completed').textContent = `${metrics.completed_sessions || 0}次`;
+  q('#report-completion-rate').textContent = `完成率 ${metrics.completion_rate || 0}%`;
+  q('#report-tasks').textContent = `${metrics.completed_tasks || 0}项`;
+  q('#report-room').textContent = `自习室 ${formatDuration(metrics.room_seconds || 0)}`;
+  const comparison = report.comparison || {};
+  const delta = Number(comparison.focus_delta_seconds || 0);
+  q('#report-compare').textContent = comparison.has_previous_data
+    ? `相比${comparison.previous_label || '上一周期'}，专注时长${delta >= 0 ? '多' : '少'} ${formatDuration(Math.abs(delta))}`
+    : '暂无可比较的上一周期记录，先把这一段时间好好留住。';
+  q('#report-next').disabled = Boolean(report.is_current);
+
+  const trend = report.type === 'month' ? (report.weekly_trend || []) : (report.daily_trend || []);
+  const bars = q('#report-bars');
+  bars.innerHTML = '';
+  bars.style.gridTemplateColumns = `repeat(${Math.max(1, trend.length)}, minmax(0, 1fr))`;
+  const peak = Math.max(0, ...trend.map(item => Number(item.focus_seconds || 0)));
+  trend.forEach(item => {
+    const seconds = Number(item.focus_seconds || 0);
+    const column = document.createElement('div');
+    const bar = document.createElement('div');
+    const label = document.createElement('small');
+    column.className = 'report-bar-column';
+    bar.className = 'report-bar';
+    bar.style.height = `${peak ? Math.max(seconds ? 4 : 0, seconds / peak * 100) : 0}%`;
+    bar.setAttribute('aria-label', `专注 ${formatDuration(seconds)}`);
+    const date = item.week_start || item.date || '';
+    label.textContent = report.type === 'month' ? `周${reportDateLabel(date, true)}` : reportDateLabel(date, true);
+    column.append(bar, label);
+    bars.appendChild(column);
+  });
+  q('#report-trend-title').textContent = report.type === 'month' ? '本月每周节奏' : '本周每天节奏';
+  const highlights = report.highlights || {};
+  q('#report-highlights').textContent = highlights.most_common_time_band
+    ? `最常开始专注：${highlights.most_common_time_band}` : '记录会慢慢显出你的节奏';
+  const taskList = q('#report-tasks-list');
+  taskList.innerHTML = '';
+  const tasks = report.top_tasks || [];
+  if (!tasks.length) {
+    taskList.innerHTML = '<div class="report-empty">完成第一段专注后，这里会留下任务足迹。</div>';
+  } else {
+    tasks.forEach(task => {
+      const row = document.createElement('div');
+      row.className = 'report-task-row';
+      row.innerHTML = `<div><strong></strong><small>${task.sessions || 0} 次专注 · 完成 ${task.completed_sessions || 0} 次</small></div><span>${formatDuration(task.seconds || 0)}</span>`;
+      row.querySelector('strong').textContent = task.task_name || '未绑定任务';
+      taskList.appendChild(row);
+    });
+  }
+}
+
+function refreshReport() {
+  if (!bridge || currentView !== 'stats' || statsMode === 'overview') return;
+  const requestedMode = statsMode;
+  const requestedAnchor = reportAnchor;
+  bridge.get_report(requestedMode, requestedAnchor, payload => {
+    if (currentView === 'stats' && statsMode === requestedMode && reportAnchor === requestedAnchor) renderReport(JSON.parse(payload));
+  });
+}
+
+function moveReportPeriod(direction) {
+  const type = statsMode;
+  const anchor = currentReport?.anchor || reportAnchor || new Date().toISOString().slice(0, 10);
+  const parsed = new Date(`${anchor}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return;
+  if (type === 'month') parsed.setMonth(parsed.getMonth() + direction);
+  else parsed.setDate(parsed.getDate() + direction * 7);
+  reportAnchor = parsed.toISOString().slice(0, 10);
+  refreshReport();
 }
 
 function previewSelectedTask() {
@@ -693,7 +788,8 @@ function connectBridge() {
       // 在成长记录时又发起一次异步请求而短暂显示旧的 0 数据。
       if (currentView !== 'stats') return;
       const latest = JSON.parse(payload);
-      if (selectedRange === 'today') renderStats(latest);
+      if (statsMode !== 'overview') refreshReport();
+      else if (selectedRange === 'today') renderStats(latest);
       else refreshStats();
     });
     bridge.companion_message.connect(setCompanion);
@@ -787,6 +883,17 @@ function bindEvents() {
     qa('.range-tab').forEach(item => item.classList.toggle('active', item === button));
     refreshStats();
   });
+  qa('.report-mode-tab').forEach(button => button.onclick = () => {
+    statsMode = button.dataset.reportMode || 'overview';
+    reportAnchor = '';
+    currentReport = null;
+    qa('.report-mode-tab').forEach(item => item.classList.toggle('active', item === button));
+    q('#stats-overview').classList.toggle('hidden', statsMode !== 'overview');
+    q('#report-panel').classList.toggle('hidden', statsMode === 'overview');
+    refreshStats();
+  });
+  q('#report-previous').onclick = () => moveReportPeriod(-1);
+  q('#report-next').onclick = () => { if (!currentReport?.is_current) moveReportPeriod(1); };
   q('#save-settings').onclick = saveSettings;
   q('#reset-settings').onclick = resetSettings;
   ['#minimize', '#focus-minimize'].forEach(selector => { q(selector).onclick = () => bridge?.minimize_window(); });
