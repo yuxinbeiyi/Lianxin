@@ -15,7 +15,7 @@ from typing import Optional
 
 CATEGORIES = {
     "📁 文件操作": [
-        "read_file", "read_file_chunk", "read_file_lines",
+        "read_file", "read_file_chunk", "read_file_lines", "clear_document_cache",
         "write_file", "edit_file", "list_directory",
         "glob_files", "grep_file", "search_code",
         "diff_files", "code_structure", "goto_definition",

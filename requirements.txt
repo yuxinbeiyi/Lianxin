@@ -87,6 +87,7 @@ llvmlite==0.48.0
 loguru==0.7.3
 lxml==6.1.0
 Markdown==3.10.2
+markitdown[docx,pdf]==0.1.6
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3
 marshmallow==3.26.2

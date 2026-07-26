@@ -33,6 +33,7 @@ _SUBAGENT_ALLOWED_TOOLS = {
 logger = logging.getLogger("brain.tools")
 
 from utils.paths import get_user_data_dir
+from brain.document_cache import MarkdownDocumentCache
 
 # 记忆系统（统一使用 SQLite 后端）
 from brain.graph_memory import (
@@ -67,6 +68,8 @@ from brain.current_state import (
 )
 # 每块最大字符数（read_file 默认读第0块，read_file_chunk 可读任意块）
 _CHUNK_SIZE = 15000
+_document_cache: MarkdownDocumentCache | None = None
+_document_cache_lock = threading.Lock()
 
 # QQ 桥接 worker 引用（由 main_window 启动时注册）
 _qq_bridge_worker = None
@@ -1134,6 +1137,23 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "clear_document_cache",
+            "description": "清理莲心为 DOCX/PDF 生成的 Markdown 缓存。仅当用户明确要求清理文档缓存时使用；不会删除或修改任何原始文件。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "仅在用户已明确确认清理时传 true"
+                    }
+                },
+                "required": ["confirm"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "update_current_state",
             "description": (
                 "维护用户有时效的当前状态，而不是永久记忆。适用于生病、情绪低落、"
@@ -2140,17 +2160,94 @@ def _extract_full_text(p: Path) -> tuple[str, str]:
     ext = p.suffix.lower()
     try:
         if ext == ".docx":
-            return _extract_docx(p), ""
+            return _extract_docx_markdown(p), ""
         elif ext == ".doc":
             return _extract_doc(p), ""
         elif ext == ".pdf":
-            return _extract_pdf(p), ""
+            return _extract_pdf_markdown(p), ""
         elif ext in (".xlsx", ".xls"):
             return _extract_xlsx(p), ""
         else:
             return _extract_text(p), ""
     except Exception as e:
         return "", str(e)
+
+
+def _convert_with_markitdown(p: Path) -> str:
+    """Use MarkItDown to preserve document structure as Markdown."""
+    try:
+        from markitdown import MarkItDown
+    except ImportError as exc:
+        raise RuntimeError(
+            "未安装 MarkItDown，请执行：pip install 'markitdown[docx,pdf]==0.1.6'"
+        ) from exc
+
+    result = MarkItDown().convert(str(p))
+    content = (getattr(result, "text_content", "") or "").strip()
+    if not content:
+        raise RuntimeError("MarkItDown 未提取到有效文本")
+    return content
+
+
+def _get_document_markdown_cache() -> MarkdownDocumentCache:
+    """Create the process-local cache lazily so startup has no cache I/O."""
+    global _document_cache
+    if _document_cache is None:
+        with _document_cache_lock:
+            if _document_cache is None:
+                _document_cache = MarkdownDocumentCache()
+    return _document_cache
+
+
+def _convert_with_markitdown_cached(p: Path) -> str:
+    """Convert once per file content and reuse private Markdown cache entries."""
+    return _get_document_markdown_cache().get_or_create(
+        p, _convert_with_markitdown
+    ).content
+
+
+def clear_document_cache(confirm: bool = False) -> str:
+    """Clear only generated Markdown cache entries after explicit confirmation."""
+    if not confirm:
+        return "请在确认要清理莲心的文档 Markdown 缓存后再执行。原始 DOCX/PDF 不会被删除。"
+    cache = _get_document_markdown_cache()
+    entries, total_bytes = cache.stats()
+    cache.clear()
+    return f"已清理 {entries} 份文档 Markdown 缓存（{total_bytes} 字节）。原始文件未被修改。"
+
+
+def _extract_docx_markdown(p: Path) -> str:
+    """Convert DOCX to Markdown, falling back to the legacy extractor."""
+    try:
+        return _convert_with_markitdown_cached(p)
+    except Exception as markitdown_error:
+        logger.warning("MarkItDown DOCX conversion failed for %s: %s", p, markitdown_error)
+        try:
+            content = _extract_docx(p)
+        except Exception as legacy_error:
+            raise RuntimeError(
+                f"DOCX 转换失败（MarkItDown: {markitdown_error}; 旧转换器: {legacy_error}）"
+            ) from markitdown_error
+        if content.strip():
+            return content
+        raise RuntimeError(f"DOCX 转换失败：{markitdown_error}") from markitdown_error
+
+
+def _extract_pdf_markdown(p: Path) -> str:
+    """Convert PDF to Markdown, falling back to the legacy extractor."""
+    try:
+        return _convert_with_markitdown_cached(p)
+    except Exception as markitdown_error:
+        logger.warning("MarkItDown PDF conversion failed for %s: %s", p, markitdown_error)
+        try:
+            content = _extract_pdf(p)
+        except Exception as legacy_error:
+            raise RuntimeError(
+                f"PDF 转换失败（MarkItDown: {markitdown_error}; 旧转换器: {legacy_error}）"
+            ) from markitdown_error
+        if content.strip():
+            return content
+        raise RuntimeError(f"PDF 转换失败：{markitdown_error}") from markitdown_error
 
 
 def _extract_text(p: Path) -> str:
@@ -5378,6 +5475,7 @@ def _track_tasks_exec(todos: list) -> str:
 TOOL_EXECUTORS = {
     "read_file":       lambda inp: read_file(inp["path"]),
     "read_file_chunk": lambda inp: read_file_chunk(inp["path"], int(inp["chunk_index"])),
+    "clear_document_cache": lambda inp: clear_document_cache(bool(inp.get("confirm", False))),
     "write_file":      lambda inp: write_file(inp["path"], inp["content"]),
     "list_directory": lambda inp: list_directory(inp.get("path", ""), inp.get("recursive", False), inp.get("max_depth", 3)),
     "search_files_everything": lambda inp: search_files_everything(
