@@ -77,37 +77,44 @@ def _get_model():
     """懒加载 embedding 模型（首次调用约 5 秒下载）。"""
     global _model, _load_attempted
     if _model is None and not _load_attempted:
-        _load_attempted = True
-        _ensure_torch_fsdp_compat()
-        try:
-            from sentence_transformers import SentenceTransformer
-            logger.info(f"Loading embedding model: {_model_name}")
-            from config import resolve_device
-            _model = SentenceTransformer(_model_name, device=resolve_device("rag"))
-            logger.info("Embedding model ready")
-        except ImportError:
-            logger.warning("sentence-transformers not installed, RAG disabled")
-        except Exception as e:
-            err_str = str(e).lower()
-            # hf-mirror.com 不稳定时自动回退官方 HuggingFace Hub
-            if "hf-mirror" in err_str or "504" in err_str or "502" in err_str or \
-               "timeout" in err_str or "connection" in err_str or "reset" in err_str:
-                logger.warning(f"hf-mirror.com 下载失败，切换官方源重试: {e}")
-                _saved = _os.environ.get("HF_ENDPOINT", "")
-                _os.environ["HF_ENDPOINT"] = "https://huggingface.co"
-                try:
-                    _model = SentenceTransformer(_model_name, device=resolve_device("rag"))
-                    logger.info("Embedding model ready (via official HuggingFace)")
-                except Exception as e2:
-                    logger.warning(f"Embedding model load failed (mirror & official 均失败): {e2}")
-                finally:
-                    if _saved:
-                        _os.environ["HF_ENDPOINT"] = _saved
-                    else:
-                        _os.environ.pop("HF_ENDPOINT", None)
-            else:
-                logger.warning(f"Embedding model load failed: {e}")
-        return None
+        # FunASR and SentenceTransformer both initialise native Torch objects.
+        # Serialising just this construction avoids Windows heap corruption while
+        # keeping normal model inference non-blocking.
+        from utils.torch_model_loading import torch_model_load_lock
+        with torch_model_load_lock:
+            if _model is not None:
+                return _model
+            _load_attempted = True
+            _ensure_torch_fsdp_compat()
+            try:
+                from sentence_transformers import SentenceTransformer
+                logger.info(f"Loading embedding model: {_model_name}")
+                from config import resolve_device
+                _model = SentenceTransformer(_model_name, device=resolve_device("rag"))
+                logger.info("Embedding model ready")
+            except ImportError:
+                logger.warning("sentence-transformers not installed, RAG disabled")
+            except Exception as e:
+                err_str = str(e).lower()
+                # hf-mirror.com 不稳定时自动回退官方 HuggingFace Hub
+                if "hf-mirror" in err_str or "504" in err_str or "502" in err_str or \
+                   "timeout" in err_str or "connection" in err_str or "reset" in err_str:
+                    logger.warning(f"hf-mirror.com 下载失败，切换官方源重试: {e}")
+                    _saved = _os.environ.get("HF_ENDPOINT", "")
+                    _os.environ["HF_ENDPOINT"] = "https://huggingface.co"
+                    try:
+                        _model = SentenceTransformer(_model_name, device=resolve_device("rag"))
+                        logger.info("Embedding model ready (via official HuggingFace)")
+                    except Exception as e2:
+                        logger.warning(f"Embedding model load failed (mirror & official 均失败): {e2}")
+                    finally:
+                        if _saved:
+                            _os.environ["HF_ENDPOINT"] = _saved
+                        else:
+                            _os.environ.pop("HF_ENDPOINT", None)
+                else:
+                    logger.warning(f"Embedding model load failed: {e}")
+        return _model
     return _model
 
 

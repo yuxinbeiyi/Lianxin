@@ -12,7 +12,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout
 from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal, QPropertyAnimation, QSequentialAnimationGroup, QParallelAnimationGroup, QAbstractAnimation, pyqtProperty, QEasingCurve
 
-from PyQt5.QtGui import QPixmap, QMouseEvent
+from PyQt5.QtGui import QBitmap, QPixmap, QMouseEvent
 
 
 
@@ -108,6 +108,18 @@ class TachieWindow(QWidget):
         self._image_label.setPixmap(scaled)
         self._image_label.resize(scaled.size())
         self.resize(scaled.size())
+        # 透明 PNG 的整个矩形窗口原本都会接收鼠标事件，覆盖在主窗口或
+        # 桌面上时会造成"看得到但点不到"。按图片 alpha 生成窗口掩码，
+        # 只有立绘实际可见的区域才可拖拽/右键，透明区域自然穿透。
+        try:
+            alpha_mask = QBitmap.fromImage(scaled.toImage().createAlphaMask())
+            if alpha_mask.isNull():
+                self.clearMask()
+            else:
+                self.setMask(alpha_mask)
+        except Exception:
+            # 某些极少数图片插件不提供 alpha mask；保持原有显示能力。
+            self.clearMask()
         delta = old_center - self.geometry().center()
         self.move(self.pos() + delta)
 

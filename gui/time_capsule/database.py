@@ -31,7 +31,6 @@ class TimeCapsuleDatabase:
     def _connect(self):
         conn = sqlite3.connect(str(self.path), timeout=10)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=10000")
         conn.execute("PRAGMA foreign_keys=ON")
         try:
@@ -42,6 +41,9 @@ class TimeCapsuleDatabase:
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
+            # WAL is persistent database metadata. Re-applying it for every
+            # short read connection made opening the capsule needlessly slow.
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS capsule_days (
@@ -54,6 +56,8 @@ class TimeCapsuleDatabase:
                     is_red_line INTEGER NOT NULL DEFAULT 0,
                     echo_text TEXT NOT NULL DEFAULT '',
                     source_json TEXT NOT NULL DEFAULT '{}',
+                    favorite INTEGER NOT NULL DEFAULT 0,
+                    favorited_at TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -96,10 +100,14 @@ class TimeCapsuleDatabase:
                     echo_of INTEGER,
                     opened INTEGER NOT NULL DEFAULT 1,
                     favorite INTEGER NOT NULL DEFAULT 0,
+                    archived INTEGER NOT NULL DEFAULT 0,
+                    archived_at TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_tree_hole_created
                     ON tree_hole_notes(created_at DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_tree_hole_echo
+                    ON tree_hole_notes(echo_of, author, id DESC);
                 CREATE TABLE IF NOT EXISTS capsule_memories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
@@ -123,6 +131,26 @@ class TimeCapsuleDatabase:
                 );
                 """
             )
+            day_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(capsule_days)").fetchall()
+            }
+            if "favorite" not in day_columns:
+                conn.execute("ALTER TABLE capsule_days ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
+            if "favorited_at" not in day_columns:
+                conn.execute("ALTER TABLE capsule_days ADD COLUMN favorited_at TEXT NOT NULL DEFAULT ''")
+            tree_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(tree_hole_notes)").fetchall()
+            }
+            if "archived" not in tree_columns:
+                conn.execute("ALTER TABLE tree_hole_notes ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+            if "archived_at" not in tree_columns:
+                conn.execute("ALTER TABLE tree_hole_notes ADD COLUMN archived_at TEXT NOT NULL DEFAULT ''")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_capsule_days_favorite ON capsule_days(favorite, favorited_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tree_hole_archive ON tree_hole_notes(archived, favorite, created_at DESC)"
+            )
 
     @staticmethod
     def _day_dict(row) -> dict:
@@ -131,6 +159,7 @@ class TimeCapsuleDatabase:
         data = dict(row)
         data["sealed"] = bool(data.get("sealed"))
         data["is_red_line"] = bool(data.get("is_red_line"))
+        data["favorite"] = bool(data.get("favorite"))
         try:
             data["source"] = json.loads(data.pop("source_json") or "{}")
         except json.JSONDecodeError:
@@ -146,7 +175,7 @@ class TimeCapsuleDatabase:
                 (day, now, now),
             )
 
-    def get_day(self, day: str) -> dict:
+    def get_day(self, day: str, *, include_revisions: bool = False) -> dict:
         self.ensure_day(day)
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM capsule_days WHERE date = ?", (day,)).fetchone()
@@ -158,9 +187,17 @@ class TimeCapsuleDatabase:
                 "SELECT * FROM capsule_collections WHERE capsule_date = ? ORDER BY id DESC",
                 (day,),
             ).fetchall()
+            revisions = []
+            if include_revisions:
+                revisions = conn.execute(
+                    "SELECT * FROM capsule_revisions WHERE capsule_date = ? ORDER BY id DESC",
+                    (day,),
+                ).fetchall()
         result = self._day_dict(row)
         result["traces"] = [dict(item) for item in traces]
         result["collections"] = [self._collection_dict(item) for item in collections]
+        if include_revisions:
+            result["revisions"] = [dict(item) for item in revisions]
         return result
 
     def _save_content(self, day: str, author: str, content: str, **fields) -> dict:
@@ -168,16 +205,9 @@ class TimeCapsuleDatabase:
         self.ensure_day(day)
         now = _now()
         with self._connect() as conn:
-            previous = conn.execute(
-                f"SELECT {column} AS content FROM capsule_days WHERE date = ?", (day,)
-            ).fetchone()
-            old_content = str(previous["content"] or "") if previous else ""
-            if old_content and old_content != content:
-                conn.execute(
-                    """INSERT OR IGNORE INTO capsule_revisions
-                       (capsule_date, author, content, created_at) VALUES (?, ?, ?, ?)""",
-                    (day, author, old_content, now),
-                )
+            # 编辑器会自动保存。将每一次停顿输入都写成"历史版本"会让
+            # 同一篇日记在阅读侧栏中反复出现；日记采用最后一次写入覆盖。
+            # 旧版 revision 表仅保留兼容数据，不再向其中追加自动保存片段。
             assignments = [f"{column} = ?", "updated_at = ?"]
             values = [str(content or ""), now]
             allowed = {"weather", "is_red_line", "echo_text", "source_json"}
@@ -219,17 +249,21 @@ class TimeCapsuleDatabase:
                        WHEN sealed_at = '' THEN ? ELSE sealed_at END, updated_at = ? WHERE date = ?""",
                 (now, now, day),
             )
-            row = conn.execute("SELECT * FROM capsule_days WHERE date = ?", (day,)).fetchone()
-            content = str(row["user_content"] or row["lianxin_content"] or "").strip()
-            if content:
-                title = self._memory_title(day, content)
-                conn.execute(
-                    """INSERT OR IGNORE INTO capsule_memories
-                       (title, description, source_date, cover_kind, favorite, created_at)
-                       VALUES (?, ?, ?, 'story', 1, ?)""",
-                    (title, content[:180], day, now),
-                )
         return self.get_day(day)
+
+    def toggle_day_favorite(self, day: str) -> dict:
+        self.ensure_day(day)
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE capsule_days
+                   SET favorite = CASE favorite WHEN 0 THEN 1 ELSE 0 END,
+                       favorited_at = CASE favorite WHEN 0 THEN ? ELSE '' END,
+                       updated_at = ?
+                   WHERE date = ?""",
+                (now, now, str(day)),
+            )
+        return self.get_day(str(day))
 
     def link_memory_fact(self, day: str, fact_id: int) -> None:
         if not fact_id:
@@ -314,12 +348,33 @@ class TimeCapsuleDatabase:
         if not text:
             return 0
         with self._connect() as conn:
+            if author == "lianxin" and echo_of:
+                existing = conn.execute(
+                    "SELECT id FROM tree_hole_notes WHERE author = 'lianxin' AND echo_of = ? ORDER BY id DESC LIMIT 1",
+                    (int(echo_of),),
+                ).fetchone()
+                if existing:
+                    return int(existing["id"])
             cur = conn.execute(
                 """INSERT INTO tree_hole_notes(author, content, echo_of, created_at)
                    VALUES (?, ?, ?, ?)""",
                 ("lianxin" if author == "lianxin" else "user", text, echo_of, _now()),
             )
             return int(cur.lastrowid)
+
+    def get_tree_note(self, note_id: int) -> dict:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM tree_hole_notes WHERE id = ?", (int(note_id),)).fetchone()
+            reply = conn.execute(
+                "SELECT * FROM tree_hole_notes WHERE author = 'lianxin' AND echo_of = ? ORDER BY id DESC LIMIT 1",
+                (int(note_id),),
+            ).fetchone()
+        if not row:
+            return {}
+        result = {**dict(row), "favorite": bool(row["favorite"]), "opened": bool(row["opened"])}
+        result["archived"] = bool(result.get("archived"))
+        result["reply"] = dict(reply) if reply else None
+        return result
 
     def toggle_tree_favorite(self, note_id: int) -> None:
         with self._connect() as conn:
@@ -339,27 +394,181 @@ class TimeCapsuleDatabase:
             ).fetchall()
         return [self._day_dict(row) for row in rows]
 
-    def tree_notes(self, limit: int = 100) -> list[dict]:
+    def timeline_page(self, page: int = 1, page_size: int = 15,
+                      author: str = "all") -> dict:
+        page_size = max(5, min(50, int(page_size)))
+        author = author if author in {"user", "lianxin"} else "all"
+        user_select = """SELECT date, 'user' AS author, user_content AS content,
+                                 weather, sealed, favorite, favorited_at, updated_at,
+                                 0 AS author_order
+                          FROM capsule_days WHERE user_content <> ''"""
+        lianxin_select = """SELECT date, 'lianxin' AS author, lianxin_content AS content,
+                                    weather, sealed, favorite, favorited_at, updated_at,
+                                    1 AS author_order
+                             FROM capsule_days WHERE lianxin_content <> ''"""
+        if author == "user":
+            entries_sql = user_select
+        elif author == "lianxin":
+            entries_sql = lianxin_select
+        else:
+            entries_sql = f"{user_select} UNION ALL {lianxin_select}"
         with self._connect() as conn:
+            total_row = conn.execute(
+                f"SELECT COUNT(*) AS count FROM ({entries_sql})"
+            ).fetchone()
+            total_items = int(total_row["count"] if total_row else 0)
+            total_pages = max(1, (total_items + page_size - 1) // page_size)
+            page = max(1, min(int(page), total_pages))
             rows = conn.execute(
-                "SELECT * FROM tree_hole_notes ORDER BY created_at DESC, id DESC LIMIT ?",
-                (max(1, min(300, int(limit))),),
+                f"""SELECT * FROM ({entries_sql})
+                    ORDER BY date DESC, author_order ASC LIMIT ? OFFSET ?""",
+                (page_size, (page - 1) * page_size),
             ).fetchall()
-        return [{**dict(row), "favorite": bool(row["favorite"]), "opened": bool(row["opened"])} for row in rows]
+        return {
+            "items": [
+                {
+                    **dict(row),
+                    "sealed": bool(row["sealed"]),
+                    "favorite": bool(row["favorite"]),
+                }
+                for row in rows
+            ],
+            "page": page,
+            "page_size": page_size,
+            "total_items": total_items,
+            "total_pages": total_pages,
+            "author": author,
+        }
+
+    def favorite_diaries_page(self, page: int = 1, page_size: int = 12,
+                              query: str = "", sort: str = "favorite") -> dict:
+        page_size = max(6, min(48, int(page_size)))
+        term = str(query or "").strip()
+        where = ["favorite = 1", "(user_content <> '' OR lianxin_content <> '')"]
+        params: list = []
+        if term:
+            where.append("(user_content LIKE ? OR lianxin_content LIKE ? OR weather LIKE ?)")
+            like = f"%{term}%"
+            params.extend([like, like, like])
+        order = "date DESC" if sort == "date" else "favorited_at DESC, date DESC"
+        where_sql = " AND ".join(where)
+        with self._connect() as conn:
+            total_row = conn.execute(
+                f"SELECT COUNT(*) AS count FROM capsule_days WHERE {where_sql}", params
+            ).fetchone()
+            total_items = int(total_row["count"] if total_row else 0)
+            total_pages = max(1, (total_items + page_size - 1) // page_size)
+            page = max(1, min(int(page), total_pages))
+            rows = conn.execute(
+                f"""SELECT * FROM capsule_days WHERE {where_sql}
+                    ORDER BY {order} LIMIT ? OFFSET ?""",
+                [*params, page_size, (page - 1) * page_size],
+            ).fetchall()
+        items = []
+        for row in rows:
+            day = self._day_dict(row)
+            content = str(day.get("user_content") or day.get("lianxin_content") or "")
+            items.append({
+                **day,
+                "title": self._memory_title(day.get("date", ""), content),
+                "description": " ".join(content.split())[:180],
+                "source_date": day.get("date", ""),
+            })
+        return {
+            "items": items,
+            "page": page,
+            "page_size": page_size,
+            "total_items": total_items,
+            "total_pages": total_pages,
+            "query": term,
+            "sort": sort,
+        }
+
+    def tree_notes(self, limit: int = 100) -> list[dict]:
+        return self.tree_notes_page(1, limit).get("items", [])
+
+    def tree_notes_page(self, page: int = 1, page_size: int = 20,
+                        filter_name: str = "all", query: str = "",
+                        sort: str = "newest", archived: bool = False) -> dict:
+        page_size = max(5, min(50, int(page_size)))
+        where = ["echo_of IS NULL", "archived = ?"]
+        params: list = [int(bool(archived))]
+        if filter_name == "favorite":
+            where.append("favorite = 1")
+        elif filter_name == "user":
+            where.append("author = 'user'")
+        elif filter_name == "replied":
+            where.append("EXISTS (SELECT 1 FROM tree_hole_notes r WHERE r.echo_of = tree_hole_notes.id)")
+        term = str(query or "").strip()
+        if term:
+            where.append("content LIKE ?")
+            params.append(f"%{term}%")
+        where_sql = " AND ".join(where)
+        order = "created_at ASC, id ASC" if sort == "oldest" else "created_at DESC, id DESC"
+        with self._connect() as conn:
+            total_row = conn.execute(
+                f"SELECT COUNT(*) AS count FROM tree_hole_notes WHERE {where_sql}", params
+            ).fetchone()
+            total_items = int(total_row["count"] if total_row else 0)
+            total_pages = max(1, (total_items + page_size - 1) // page_size)
+            page = max(1, min(int(page), total_pages))
+            rows = conn.execute(
+                f"""SELECT * FROM tree_hole_notes WHERE {where_sql}
+                    ORDER BY {order} LIMIT ? OFFSET ?""",
+                [*params, page_size, (page - 1) * page_size],
+            ).fetchall()
+            ids = [int(row["id"]) for row in rows]
+            replies = {}
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                reply_rows = conn.execute(
+                    f"""SELECT * FROM tree_hole_notes
+                        WHERE author = 'lianxin' AND echo_of IN ({placeholders})
+                        ORDER BY id DESC""",
+                    ids,
+                ).fetchall()
+                for reply in reply_rows:
+                    replies.setdefault(int(reply["echo_of"]), dict(reply))
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["favorite"] = bool(item["favorite"])
+            item["opened"] = bool(item["opened"])
+            item["archived"] = bool(item.get("archived"))
+            item["reply"] = replies.get(int(item["id"]))
+            result.append(item)
+        return {
+            "items": result,
+            "page": page,
+            "page_size": page_size,
+            "total_items": total_items,
+            "total_pages": total_pages,
+            "filter": filter_name,
+            "query": term,
+            "sort": sort,
+            "archived": bool(archived),
+        }
+
+    def toggle_tree_archive(self, note_id: int) -> dict:
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE tree_hole_notes
+                   SET archived = CASE archived WHEN 0 THEN 1 ELSE 0 END,
+                       archived_at = CASE archived WHEN 0 THEN ? ELSE '' END
+                   WHERE id = ? AND echo_of IS NULL""",
+                (now, int(note_id)),
+            )
+        return self.get_tree_note(int(note_id))
 
     def memories(self, limit: int = 100) -> list[dict]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM capsule_memories ORDER BY favorite DESC, created_at DESC LIMIT ?",
-                (max(1, min(300, int(limit))),),
-            ).fetchall()
-        return [{**dict(row), "favorite": bool(row["favorite"])} for row in rows]
+        return self.favorite_diaries_page(1, limit).get("items", [])
 
     def recent_collections(self, days: int = 7, limit: int = 20) -> list[dict]:
         start = (date.today() - timedelta(days=max(1, int(days)) - 1)).isoformat()
         with self._connect() as conn:
             rows = conn.execute(
-                """SELECT * FROM capsule_collections WHERE capsule_date >= ?
+                """SELECT * FROM capsule_collections WHERE capsule_date >= ? AND kind = 'photo'
                    ORDER BY created_at DESC, id DESC LIMIT ?""",
                 (start, max(1, min(100, int(limit)))),
             ).fetchall()
@@ -391,7 +600,6 @@ class TimeCapsuleDatabase:
         for rows in (trace_rows, collection_rows):
             for row in rows:
                 activity[row["date"]] = activity.get(row["date"], 0) + int(row["total"])
-        self._merge_study_activity(activity, start, today)
         days = []
         running = longest = 0
         for offset in range(weeks * 7):
@@ -414,26 +622,6 @@ class TimeCapsuleDatabase:
             "longest_streak": longest,
             "current_streak": current_streak,
         }
-
-    @staticmethod
-    def _merge_study_activity(activity: dict, start: date, end: date) -> None:
-        path = get_user_data_dir() / "study_room.db"
-        if not path.exists():
-            return
-        try:
-            conn = sqlite3.connect(str(path), timeout=3)
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """SELECT substr(started_at, 1, 10) AS day, COUNT(*) AS total
-                   FROM focus_sessions WHERE started_at >= ? AND started_at < ?
-                   GROUP BY substr(started_at, 1, 10)""",
-                (start.isoformat(), (end + timedelta(days=1)).isoformat()),
-            ).fetchall()
-            conn.close()
-            for row in rows:
-                activity[row["day"]] = activity.get(row["day"], 0) + int(row["total"])
-        except (sqlite3.Error, OSError):
-            return
 
     def search(self, query: str, limit: int = 80) -> list[dict]:
         term = f"%{str(query or '').strip()}%"
@@ -478,6 +666,14 @@ class TimeCapsuleDatabase:
             "memories": self.memories(),
             "companion": self.companion_state(timeline),
         }
+
+    def timeline_count(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT COUNT(*) AS count FROM capsule_days
+                   WHERE user_content <> '' OR lianxin_content <> '' OR sealed = 1"""
+            ).fetchone()
+        return int(row["count"] if row else 0)
 
     def companion_state(self, timeline: list[dict] | None = None) -> dict:
         timeline = timeline if timeline is not None else self.timeline(10)

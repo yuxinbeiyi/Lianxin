@@ -768,13 +768,6 @@ class MainWindow(QMainWindow):
         self._btn_duty.clicked.connect(self._show_duty_center)
         top_bar_layout.addWidget(self._btn_duty)
 
-        self._btn_window_mode = QPushButton("🪟")
-        self._btn_window_mode.setFixedSize(30, 24)
-        self._btn_window_mode.setCursor(Qt.PointingHandCursor)
-        self._btn_window_mode.setToolTip("")
-        self._btn_window_mode.clicked.connect(self._show_window_mode_menu)
-        top_bar_layout.addWidget(self._btn_window_mode)
-
         top_bar_layout.addStretch()
 
         # 窗口控制按钮（最右侧）
@@ -834,7 +827,7 @@ class MainWindow(QMainWindow):
             QPushButton:pressed { background-color: #35685C; border-color: #9AD8C8; }
         """
         for button in (self._btn_history, self._btn_new_chat, self._btn_note,
-                       self._galgame_btn, self._btn_standby, self._btn_window_mode):
+                       self._galgame_btn, self._btn_standby):
             button.setStyleSheet(top_action_style)
 
         main_layout.addWidget(top_bar)
@@ -993,35 +986,17 @@ class MainWindow(QMainWindow):
         self._set_chat_background_opacity(opacity)
         self._global_settings.chat_background_opacity = opacity
 
-    # ── 窗口形态与桌面陪伴 ───────────────────────────────────
-
-    def _show_window_mode_menu(self):
-        menu = QMenu(self)
-        menu.addAction("标准窗口", lambda: self._window_experience.set_mode("normal"))
-        menu.addAction("紧凑聊天", lambda: self._window_experience.set_mode("compact"))
-        menu.addAction("桌面陪伴", lambda: self._window_experience.set_mode("companion"))
-        menu.addSeparator()
-        top_action = menu.addAction("始终置顶")
-        top_action.setCheckable(True)
-        top_action.setChecked(self._global_settings.always_on_top)
-        top_action.toggled.connect(self._window_experience.set_always_on_top)
-        menu.exec_(self._btn_window_mode.mapToGlobal(QPoint(0, self._btn_window_mode.height())))
-
     def _apply_window_mode(self, mode: str):
         if mode == "compact":
             self._char_widget.hide()
             self.setMinimumSize(620, 480)
             if not self.isMaximized() and self.width() > 760:
                 self.resize(720, max(520, self.height()))
-            self._btn_window_mode.setText("▣")
-        elif mode == "companion":
-            self._btn_window_mode.setText("♡")
         else:
             self._char_widget.show()
             self.setMinimumSize(820, 600)
             if not self.isMaximized() and self.width() < 820:
                 self.resize(960, max(680, self.height()))
-            self._btn_window_mode.setText("🪟")
 
     def _set_companion_visible(self, visible: bool):
         if visible:

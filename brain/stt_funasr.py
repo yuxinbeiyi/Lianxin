@@ -31,6 +31,17 @@ def _load_model():
         return _model
     _load_attempted = True
 
+    # Do not construct FunASR concurrently with the embedding model.  Native
+    # Torch initialisation is not safe to race on the affected Windows builds.
+    from utils.torch_model_loading import torch_model_load_lock
+    with torch_model_load_lock:
+        return _load_model_locked()
+
+
+def _load_model_locked():
+    """Load the singleton while ``torch_model_load_lock`` is held."""
+    global _model
+
     # 抑制 funasr import 时的 print() 和 modelscope 的 warnings
     import warnings as _w
     _w.simplefilter("ignore")

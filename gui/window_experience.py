@@ -72,11 +72,15 @@ class WindowExperienceController(QObject):
         if self.settings.restore_window_state:
             self._restore_geometry()
         mode = self.settings.window_mode
+        # 桌面陪伴会创建置顶的立绘和对话窗口。它们即使视觉上透明，仍会
+        # 占据鼠标命中区域；把它作为上次退出后的自动恢复模式，会让用户
+        # 误以为主界面失去响应。因此桌面陪伴只允许由用户在当前会话主动
+        # 开启，重启后一律回到可操作的主窗口。
         if mode == "companion":
-            QTimer.singleShot(0, lambda: self.set_mode("companion", persist=False))
-        else:
-            if self.mode_callback:
-                self.mode_callback(mode)
+            self.settings.window_mode = "normal"
+            mode = "normal"
+        if self.mode_callback:
+            self.mode_callback(mode)
 
     def _restore_geometry(self) -> None:
         data = self.settings.window_geometry
