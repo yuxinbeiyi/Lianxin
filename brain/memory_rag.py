@@ -73,6 +73,17 @@ _model_name = "BAAI/bge-small-zh-v1.5"  # 96MB, 中文优化, 512维
 _load_attempted = False
 
 
+def _load_sentence_transformer(cls, device: str):
+    """Construct the model, falling back to CPU when CUDA is unavailable."""
+    try:
+        return cls(_model_name, device=device)
+    except Exception as exc:
+        if str(device).startswith("cuda"):
+            logger.warning("RAG CUDA 加载失败，回退 CPU: %s", exc)
+            return cls(_model_name, device="cpu")
+        raise
+
+
 def _get_model():
     """懒加载 embedding 模型（首次调用约 5 秒下载）。"""
     global _model, _load_attempted
@@ -90,7 +101,7 @@ def _get_model():
                 from sentence_transformers import SentenceTransformer
                 logger.info(f"Loading embedding model: {_model_name}")
                 from config import resolve_device
-                _model = SentenceTransformer(_model_name, device=resolve_device("rag"))
+                _model = _load_sentence_transformer(SentenceTransformer, resolve_device("rag"))
                 logger.info("Embedding model ready")
             except ImportError:
                 logger.warning("sentence-transformers not installed, RAG disabled")
@@ -103,7 +114,7 @@ def _get_model():
                     _saved = _os.environ.get("HF_ENDPOINT", "")
                     _os.environ["HF_ENDPOINT"] = "https://huggingface.co"
                     try:
-                        _model = SentenceTransformer(_model_name, device=resolve_device("rag"))
+                        _model = _load_sentence_transformer(SentenceTransformer, resolve_device("rag"))
                         logger.info("Embedding model ready (via official HuggingFace)")
                     except Exception as e2:
                         logger.warning(f"Embedding model load failed (mirror & official 均失败): {e2}")

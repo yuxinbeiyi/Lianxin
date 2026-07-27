@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -18,6 +19,24 @@ from brain.graph_memory import ALL_CATEGORIES, ENTITY_TYPES, build_extraction_pr
 
 
 logger = logging.getLogger("MemoryExtraction")
+_WAL_INIT_LOCK = threading.Lock()
+
+
+def _json_completion(completion: Callable, **kwargs):
+    """Use JSON mode when supported, otherwise keep the same prompt and retry plainly."""
+    try:
+        return completion(response_format={"type": "json_object"}, **kwargs)
+    except Exception as exc:
+        message = str(exc).lower()
+        unsupported = (
+            "grammar-backend" in message
+            or "grammar-based generation" in message
+            or "response_format" in message and "not support" in message
+        )
+        if not unsupported:
+            raise
+        logger.warning("模型服务不支持 JSON 结构化输出，降级为提示词约束: %s", exc)
+        return completion(**kwargs)
 
 
 def _now_text() -> str:
@@ -85,7 +104,10 @@ class MemoryExtractionStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=5, isolation_level=None)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        # SQLite changes journal mode at the database level.  Serialize this
+        # transition because scheduler/history dialogs can initialize together.
+        with _WAL_INIT_LOCK:
+            conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
@@ -684,7 +706,8 @@ class LLMExtractionProcessor:
         if len(text) < 30:
             return {"model": self.model, "duration_ms": 0}
 
-        response = self.completion(
+        response = _json_completion(
+            self.completion,
             model=self.model,
             messages=[
                 {
@@ -693,7 +716,6 @@ class LLMExtractionProcessor:
                 },
                 {"role": "user", "content": build_extraction_prompt(text)},
             ],
-            response_format={"type": "json_object"},
             temperature=0.1,
             api_key=self.api_key,
             api_base=self.api_base,
@@ -830,7 +852,8 @@ class LLMExtractionProcessor:
                 }
                 for item in candidates
             ]
-            response = self.completion(
+            response = _json_completion(
+                self.completion,
                 model=self.model,
                 messages=[
                     {
@@ -843,7 +866,6 @@ class LLMExtractionProcessor:
                     },
                     {"role": "user", "content": json.dumps(review_payload, ensure_ascii=False)},
                 ],
-                response_format={"type": "json_object"},
                 temperature=0.0,
                 api_key=self.api_key,
                 api_base=self.api_base,
