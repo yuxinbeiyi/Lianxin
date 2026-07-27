@@ -6,6 +6,7 @@ DutyScheduler：统一后台职责调度器
 """
 
 import time
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -170,6 +171,7 @@ class DutyScheduler(QObject):
     reminder_response = pyqtSignal(str)               # reminder text
     memory_maintenance_completed = pyqtSignal(object) # maintenance result dict
     memory_maintenance_failed = pyqtSignal(str)
+    tree_hole_updated = pyqtSignal(int, object)
 
     # 摸鱼数据源透明信号
     mooyu_data_sources = pyqtSignal(str, object)      # action_name, list[MooyuDataSource]
@@ -236,6 +238,9 @@ class DutyScheduler(QObject):
 
     def start(self):
         self._master_timer.start()
+        # Reconcile durable queues immediately after startup instead of leaving
+        # crash recovery waiting for the first 60-second master tick.
+        QTimer.singleShot(0, self._tick)
 
     def stop(self):
         self._master_timer.stop()
@@ -375,6 +380,118 @@ class DutyScheduler(QObject):
         state = self._build_state()
         for duty in self._duties.values():
             duty.on_tick(state)
+
+
+class TreeHoleReplyDuty(Duty):
+    """Durable tree-hole reply queue, independent of the capsule window."""
+
+    def __init__(self):
+        super().__init__("tree_hole_reply", "树洞回应", tick_interval_seconds=60)
+        self._job: dict = {}
+        self._owner = f"tree-hole-{uuid.uuid4().hex[:12]}"
+
+    @staticmethod
+    def _database():
+        from gui.time_capsule.database import TimeCapsuleDatabase
+        return TimeCapsuleDatabase(migrate_legacy=False)
+
+    def _check_enabled(self, state: SchedulerState) -> bool:
+        return True
+
+    def _should_fire(self, state: SchedulerState) -> bool:
+        self._job = {}
+        db = self._database()
+        try:
+            db.remove_invalid_empty_days()
+            db.reconcile_tree_reply_jobs()
+            db.recover_expired_tree_reply_jobs()
+            pending = db.pending_tree_reply_jobs()
+            self.status.pending_count = sum(
+                1 for item in pending if item.get("status") in {"waiting", "retrying"}
+            )
+            if state.agent_busy or not state.agent:
+                self.status.detail_text = "等待莲心空闲后回复树洞"
+                return False
+            job = db.claim_due_tree_reply_job(self._owner, lease_seconds=300)
+            if not job:
+                self.status.detail_text = "暂无到期的树洞纸条"
+                return False
+            self._job = job
+            self.status.pending_count = max(0, self.status.pending_count - 1)
+            self.status.detail_text = f"正在回复纸条 #{job.get('note_id')}"
+            return True
+        except Exception as exc:
+            self.status.detail_text = f"树洞队列读取失败：{exc}"
+            return False
+
+    def manual_trigger(self, state: SchedulerState, **kwargs):
+        note_id = int(kwargs.get("note_id", 0) or 0)
+        if not note_id or self.status.is_running or not state.agent:
+            return
+        db = self._database()
+        db.force_tree_reply(note_id)
+        self._job = db.claim_due_tree_reply_job(self._owner, lease_seconds=300)
+        if self._job:
+            self._execute(state)
+
+    def _create_worker(self, state: SchedulerState, **kwargs):
+        if not self._job:
+            return None
+        from workers.tree_hole_reply_worker import TreeHoleReplyWorker
+        return TreeHoleReplyWorker(
+            database_path=self._database().path,
+            job=self._job,
+            agent=state.agent,
+        )
+
+    def _wire_worker(self, worker):
+        worker.completed.connect(self._on_completed)
+        worker.failed.connect(self._on_failed)
+
+    def _on_completed(self, result):
+        note_id = int((result or {}).get("note_id") or self._job.get("note_id", 0) or 0)
+        db = self._database()
+        status = str((result or {}).get("status") or "success")
+        if note_id:
+            db.mark_tree_reply_result(note_id, True)
+            if status == "success":
+                try:
+                    reply = (result or {}).get("reply") or {}
+                    from brain.interaction_events import record_interaction
+                    record_interaction(
+                        feature="tree_hole", event_type="tree_reply_finished",
+                        source_id=note_id, content=str(reply.get("content") or ""),
+                        summary=str(reply.get("content") or "")[:240],
+                        metadata={"reply_id": reply.get("id"), "echo_of": note_id},
+                    )
+                except Exception as exc:
+                    print(f"[互动事件] 树洞回复事件记录失败: {exc}")
+        self.status.is_running = False
+        self.status.last_result = "success"
+        self.status.success_count += 1
+        self.status.last_result_text = "树洞回应已写入"
+        if note_id:
+            self._scheduler.tree_hole_updated.emit(note_id, result or {})
+        self._scheduler.duty_completed.emit(self.name, self.status.last_result_text)
+        self._job = {}
+
+    def _on_failed(self, result):
+        result = result or {}
+        note_id = int(result.get("note_id") or self._job.get("note_id", 0) or 0)
+        error = str(result.get("error") or "树洞回应失败")
+        db = self._database()
+        attempts = int(self._job.get("attempts", 1) or 1)
+        if note_id and attempts < 5:
+            retry_at = time.time() + min(300, 30 * (2 ** max(0, attempts - 1)))
+            db.reschedule_tree_reply(note_id, retry_at, error)
+        elif note_id:
+            db.mark_tree_reply_result(note_id, False, error)
+        self.status.is_running = False
+        self.status.last_result = "failed"
+        self.status.fail_count += 1
+        self.status.last_result_text = error
+        self._scheduler.duty_failed.emit(self.name, error)
+        self._job = {}
 
 
 # ═══════════════════════════════════════════════════════════════

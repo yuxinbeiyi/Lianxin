@@ -200,6 +200,20 @@ class StudyDatabase:
             )
             self._record_event(conn, "focus_completed" if completed else "focus_interrupted",
                                task_id, safe_name, duration_seconds=seconds, completed=bool(completed))
+        try:
+            from brain.interaction_events import record_interaction
+            record_interaction(
+                feature="study_room",
+                event_type="focus_completed" if completed else "focus_interrupted",
+                local_date=str(started_at)[:10],
+                occurred_at=str(started_at),
+                source_id=f"focus:{task_id or 0}:{started_at}:{seconds}",
+                content=f"{safe_name}，专注 {seconds // 60} 分钟",
+                summary=f"{safe_name}，专注 {seconds // 60} 分钟",
+                metadata={"task_id": task_id, "duration_seconds": seconds, "completed": bool(completed)},
+            )
+        except Exception as exc:
+            print(f"[互动事件] 自习室事件记录失败: {exc}")
 
     def recent_focus_sessions(self, limit: int = 8) -> list[dict]:
         """读取最近专注，完成与中断均保留，便于用户回看自己的节奏。"""

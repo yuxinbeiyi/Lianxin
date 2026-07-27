@@ -6,6 +6,8 @@ import base64
 import binascii
 import json
 import re
+import random
+import time
 import shutil
 import uuid
 from datetime import date
@@ -27,7 +29,9 @@ class TimeCapsuleBridge(QObject):
     page_state_changed = pyqtSignal(str, str)
     page_invalidated = pyqtSignal(str)
     tree_reply_ready = pyqtSignal(int, str)
+    tree_reply_requested = pyqtSignal(int)
     generation_requested = pyqtSignal(str)
+    generation_completed = pyqtSignal(str, bool, str)
     close_requested = pyqtSignal()
     minimize_requested = pyqtSignal()
     fullscreen_requested = pyqtSignal()
@@ -42,8 +46,6 @@ class TimeCapsuleBridge(QObject):
         self._companion_running = False
         self._companion_lock = Lock()
         self._companion_source = ("", "all")
-        self._tree_reply_running = set()
-        self._tree_reply_lock = Lock()
 
     @staticmethod
     def _json(payload) -> str:
@@ -64,6 +66,7 @@ class TimeCapsuleBridge(QObject):
                 "animations_enabled": config.get("animations_enabled", True),
                 "low_power_mode": config.get("low_power_mode", False),
             },
+            **self.db.tree_unread_counts(),
         }
 
     def _page_state(self, page: str) -> dict:
@@ -77,7 +80,7 @@ class TimeCapsuleBridge(QObject):
                 ),
             }
         if page == "tree":
-            return {"tree_page": self.db.tree_notes_page()}
+            return {"tree_page": self.db.tree_notes_page(), **self.db.tree_unread_counts()}
         if page == "museum":
             return {"museum_page": self.db.favorite_diaries_page()}
         return self._state()
@@ -139,7 +142,8 @@ class TimeCapsuleBridge(QObject):
                 "tree_page": self.db.tree_notes_page(
                     int(page), int(page_size), str(filter_name), str(query),
                     str(sort), bool(archived),
-                )
+                ),
+                **self.db.tree_unread_counts(),
             })
         except Exception as exc:
             return self._json({"ok": False, "error": f"纸匣子读取失败：{exc}"})
@@ -156,6 +160,16 @@ class TimeCapsuleBridge(QObject):
         day = str(day)
         self.db.save_user_content(day, str(user_content))
         result = self.db.seal_day(day)
+        try:
+            from brain.interaction_events import record_interaction
+            record_interaction(
+                feature="time_capsule", event_type="user_diary_sealed",
+                local_date=day, source_id=f"user-diary:{day}",
+                content=str(user_content), summary=str(user_content)[:240],
+                metadata={"author": "user", "sealed": True},
+            )
+        except Exception as exc:
+            print(f"[互动事件] 用户日记事件记录失败: {exc}")
         self._start_memory_link(day, result)
         if not str(result.get("lianxin_content", "")).strip():
             self.generation_requested.emit(day)
@@ -164,9 +178,26 @@ class TimeCapsuleBridge(QObject):
         return self._json(result)
 
     @pyqtSlot(str, result=str)
+    def request_diary_generation(self, day):
+        """Request generation through MainWindow's existing background worker."""
+        day = str(day or date.today().isoformat())
+        self.generation_requested.emit(day)
+        return self._json({"ok": True, "date": day})
+
+    @pyqtSlot(str, result=str)
     def toggle_day_favorite(self, day):
         try:
             result = self.db.toggle_day_favorite(str(day))
+            try:
+                from brain.interaction_events import record_interaction
+                record_interaction(
+                    feature="time_capsule", event_type="diary_favorited",
+                    local_date=str(day), source_id=f"favorite:{day}",
+                    summary=f"收藏了 {day} 的时间胶囊日记",
+                    metadata={"favorite": bool(result.get("favorite"))},
+                )
+            except Exception as event_exc:
+                print(f"[互动事件] 收藏事件记录失败: {event_exc}")
             self.emit_page_state("corridor")
             self.emit_page_state("museum")
             return self._json({"ok": True, "day": result})
@@ -235,6 +266,16 @@ class TimeCapsuleBridge(QObject):
     @pyqtSlot(str, str, str, result=str)
     def add_trace(self, day, author, content):
         result = self.db.add_trace(str(day), str(author), str(content))
+        try:
+            from brain.interaction_events import record_interaction
+            record_interaction(
+                feature="time_capsule", event_type="diary_trace_added",
+                local_date=str(day), source_id=f"trace:{day}:{content[:24]}",
+                content=str(content), summary=str(content)[:240],
+                metadata={"author": str(author)},
+            )
+        except Exception as exc:
+            print(f"[互动事件] 日记批注事件记录失败: {exc}")
         self.emit_state(str(day))
         self.emit_page_state("corridor")
         return self._json(result)
@@ -242,6 +283,16 @@ class TimeCapsuleBridge(QObject):
     @pyqtSlot(str, str, str, str, result=str)
     def add_collection(self, day, kind, title, uri):
         result = self.db.add_collection(str(day), str(kind), str(title), str(uri))
+        try:
+            from brain.interaction_events import record_interaction
+            record_interaction(
+                feature="time_capsule", event_type="attachment_added",
+                local_date=str(day), source_id=f"collection:{day}:{kind}:{title}",
+                content=str(title), summary=f"添加了{kind}附件：{title}",
+                metadata={"kind": str(kind), "uri": str(uri)},
+            )
+        except Exception as exc:
+            print(f"[互动事件] 附件事件记录失败: {exc}")
         self.emit_state(str(day))
         self.emit_page_state("corridor")
         return self._json(result)
@@ -426,9 +477,19 @@ class TimeCapsuleBridge(QObject):
     @pyqtSlot(str, result=str)
     def add_tree_note(self, content):
         note_id = self.db.add_tree_note("user", str(content))
+        if note_id:
+            try:
+                from brain.interaction_events import record_interaction
+                record_interaction(
+                    feature="tree_hole", event_type="tree_note_created",
+                    source_id=note_id, content=str(content), summary=str(content)[:240],
+                    metadata={"author": "user"},
+                )
+            except Exception as exc:
+                print(f"[互动事件] 树洞事件记录失败: {exc}")
         self.emit_page_state("tree")
         if note_id:
-            self._start_tree_reply(note_id)
+            self._schedule_tree_reply(note_id)
         return self._json({"ok": bool(note_id), "id": note_id})
 
     @pyqtSlot(int, result=str)
@@ -438,57 +499,27 @@ class TimeCapsuleBridge(QObject):
             return self._json({"ok": False, "error": "纸条已经找不到了"})
         if note.get("reply"):
             return self._json({"ok": True, "pending": False, "reply": note["reply"]})
-        self._start_tree_reply(int(note_id))
+        self.db.force_tree_reply(int(note_id))
+        self.tree_reply_requested.emit(int(note_id))
+        self.emit_page_state("tree")
         return self._json({"ok": True, "pending": True})
 
-    def _start_tree_reply(self, note_id: int) -> None:
-        with self._tree_reply_lock:
-            if note_id in self._tree_reply_running:
-                return
-            self._tree_reply_running.add(note_id)
-        Thread(
-            target=self._generate_tree_reply,
-            args=(note_id,),
-            name=f"capsule-tree-reply-{note_id}",
-            daemon=True,
-        ).start()
+    @pyqtSlot(int, str, result=str)
+    def mark_tree_notifications_read(self, note_id=0, notification_type=""):
+        changed = self.db.mark_tree_notifications_read(
+            int(note_id) if int(note_id or 0) > 0 else None,
+            str(notification_type or "") or None,
+        )
+        return self._json({"ok": True, "changed": changed, **self.db.tree_unread_counts()})
 
-    def _generate_tree_reply(self, note_id: int) -> None:
-        result = {"ok": False, "error": "莲心暂时没有写完回应，可以稍后重试。"}
-        try:
-            note = self.db.get_tree_note(note_id)
-            if not note or note.get("author") != "user":
-                result = {"ok": False, "error": "纸条已经找不到了。"}
-            elif note.get("reply"):
-                result = {"ok": True, "reply": note["reply"]}
-            else:
-                from brain.agent import AgentCore
-                from brain.persona.runtime import active_assistant_name, capture_persona_snapshot
-                persona = capture_persona_snapshot()
-                assistant_name = active_assistant_name(persona)
-                prompt = (
-                    f"你是{assistant_name}。主人把下面这段话放进了只属于你们的树洞。\n"
-                    "请写一段温柔、克制、真诚的回应，像写在纸条背面的短笺。"
-                    "不要分析、说教、复述规则或使用标题，控制在80到220个中文字符。\n\n"
-                    f"纸条：{str(note.get('content', ''))[:1200]}"
-                )
-                response = AgentCore()._call_api_with_retry([{"role": "user", "content": prompt}])
-                text = str(response.choices[0].message.content or "").strip()
-                if not text:
-                    raise ValueError("empty tree reply")
-                reply_id = self.db.add_tree_note("lianxin", text[:800], echo_of=note_id)
-                updated = self.db.get_tree_note(note_id)
-                result = {"ok": bool(reply_id), "reply": updated.get("reply")}
-                self.emit_page_state("tree")
-        except Exception as exc:
-            result = {"ok": False, "error": f"莲心暂时没有写完回应：{exc}"}
-        finally:
-            with self._tree_reply_lock:
-                self._tree_reply_running.discard(note_id)
-            try:
-                self.tree_reply_ready.emit(note_id, self._json(result))
-            except RuntimeError:
-                pass
+    @pyqtSlot(int, result=str)
+    def mark_tree_thread_read(self, note_id):
+        changed = self.db.mark_tree_thread_read(int(note_id))
+        return self._json({"ok": True, "changed": changed, **self.db.tree_unread_counts()})
+
+    def _schedule_tree_reply(self, note_id: int) -> None:
+        scheduled_at = time.time() + random.uniform(0, 300)
+        self.db.schedule_tree_reply(note_id, scheduled_at)
 
     @pyqtSlot(int, result=str)
     def toggle_tree_favorite(self, note_id):
@@ -543,9 +574,12 @@ class TimeCapsuleBridge(QObject):
     def get_default_media_directory(self):
         return str(self._default_media_root().resolve())
 
-    @pyqtSlot(bool, str, int, str, str, int, bool, bool, result=str)
+    @pyqtSlot(bool, str, int, str, str, int, bool, bool, bool, bool, bool, bool, bool, bool, int, result=str)
     def save_settings(self, scheduled_enabled, scheduled_time, max_messages, direction,
-                      media_directory, timeline_page_size, animations_enabled, low_power_mode):
+                      media_directory, timeline_page_size, animations_enabled, low_power_mode,
+                      reference_chat=True, reference_tree_hole=True, reference_study_room=True,
+                      reference_time_capsule=True, reference_attachments=False,
+                      important_detail=True, max_chars=1600):
         payload = get_diary_config()
         raw_media_directory = str(media_directory or "").strip()
         try:
@@ -564,6 +598,13 @@ class TimeCapsuleBridge(QObject):
                 "timeline_page_size": max(5, min(50, int(timeline_page_size))),
                 "animations_enabled": bool(animations_enabled),
                 "low_power_mode": bool(low_power_mode),
+                "reference_chat": bool(reference_chat),
+                "reference_tree_hole": bool(reference_tree_hole),
+                "reference_study_room": bool(reference_study_room),
+                "reference_time_capsule": bool(reference_time_capsule),
+                "reference_attachments": bool(reference_attachments),
+                "important_detail": bool(important_detail),
+                "max_chars": max(400, min(5000, int(max_chars))),
             })
             save_diary_config(payload)
             self.settings_changed.emit()
@@ -572,11 +613,47 @@ class TimeCapsuleBridge(QObject):
             return self._json({"ok": False, "error": f"设置保存失败：{exc}"})
 
     @pyqtSlot(str, result=str)
+    def save_settings_payload(self, raw_payload):
+        """通过单个 JSON 参数保存设置，避免 Qt 5 高参数槽函数匹配失败。"""
+        try:
+            payload = json.loads(str(raw_payload or "{}"))
+            if not isinstance(payload, dict):
+                raise ValueError("设置内容格式不正确")
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            return self._json({"ok": False, "error": f"设置内容无法解析：{exc}"})
+        return self.save_settings(
+            bool(payload.get("scheduled_enabled", True)),
+            str(payload.get("scheduled_time", "23:55")),
+            int(payload.get("max_messages", 30)),
+            str(payload.get("direction", "latest")),
+            str(payload.get("media_directory", "")),
+            int(payload.get("timeline_page_size", 15)),
+            bool(payload.get("animations_enabled", True)),
+            bool(payload.get("low_power_mode", False)),
+            bool(payload.get("reference_chat", True)),
+            bool(payload.get("reference_tree_hole", True)),
+            bool(payload.get("reference_study_room", True)),
+            bool(payload.get("reference_time_capsule", True)),
+            bool(payload.get("reference_attachments", False)),
+            bool(payload.get("important_detail", True)),
+            int(payload.get("max_chars", 1600)),
+        )
+
+    @pyqtSlot(str, result=str)
     def visit_diary(self, source_date):
         day = self.db.get_day(str(source_date))
         if not day:
             return self._json({"ok": False})
         self.db.record_visit(0, str(source_date))
+        try:
+            from brain.interaction_events import record_interaction
+            record_interaction(
+                feature="time_capsule", event_type="diary_viewed",
+                local_date=str(source_date), source_id=f"view:{source_date}",
+                summary=f"查看了 {source_date} 的时间胶囊日记",
+            )
+        except Exception as exc:
+            print(f"[互动事件] 日记查看事件记录失败: {exc}")
         return self._json({"ok": True, "date": str(source_date)})
 
     @pyqtSlot(str, str, result=str)
@@ -594,6 +671,16 @@ class TimeCapsuleBridge(QObject):
         )
         if not str(selected_content or "").strip():
             return self._json({"ok": False, "error": "这篇日记目前还没有可以阅读的内容。"})
+        try:
+            from brain.interaction_events import record_interaction
+            record_interaction(
+                feature="time_capsule", event_type="lianxin_invited_to_diary",
+                local_date=source_date, source_id=f"invite:{source_date}:{author}",
+                summary=f"邀请莲心查看 {source_date} 的日记",
+                metadata={"author": author},
+            )
+        except Exception as exc:
+            print(f"[互动事件] 邀请事件记录失败: {exc}")
         with self._companion_lock:
             if self._companion_running:
                 active_date, active_author = self._companion_source

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -108,6 +109,27 @@ class TimeCapsuleDatabase:
                     ON tree_hole_notes(created_at DESC, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_tree_hole_echo
                     ON tree_hole_notes(echo_of, author, id DESC);
+                CREATE TABLE IF NOT EXISTS tree_reply_jobs (
+                    note_id INTEGER PRIMARY KEY,
+                    scheduled_at REAL NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'waiting',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT NOT NULL DEFAULT '',
+                    lease_owner TEXT NOT NULL DEFAULT '',
+                    lease_expires_at REAL NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS tree_hole_notifications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    note_id INTEGER NOT NULL,
+                    related_note_id INTEGER,
+                    notification_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    read_at TEXT NOT NULL DEFAULT '',
+                    unique_key TEXT NOT NULL UNIQUE
+                );
+                CREATE INDEX IF NOT EXISTS idx_tree_notifications_unread
+                    ON tree_hole_notifications(read_at, notification_type, created_at DESC);
                 CREATE TABLE IF NOT EXISTS capsule_memories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
@@ -145,6 +167,13 @@ class TimeCapsuleDatabase:
                 conn.execute("ALTER TABLE tree_hole_notes ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
             if "archived_at" not in tree_columns:
                 conn.execute("ALTER TABLE tree_hole_notes ADD COLUMN archived_at TEXT NOT NULL DEFAULT ''")
+            reply_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(tree_reply_jobs)").fetchall()
+            }
+            if "lease_owner" not in reply_columns:
+                conn.execute("ALTER TABLE tree_reply_jobs ADD COLUMN lease_owner TEXT NOT NULL DEFAULT ''")
+            if "lease_expires_at" not in reply_columns:
+                conn.execute("ALTER TABLE tree_reply_jobs ADD COLUMN lease_expires_at REAL NOT NULL DEFAULT 0")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_capsule_days_favorite ON capsule_days(favorite, favorited_at DESC)"
             )
@@ -177,6 +206,10 @@ class TimeCapsuleDatabase:
 
     def get_day(self, day: str, *, include_revisions: bool = False) -> dict:
         self.ensure_day(day)
+        return self.read_day(day, include_revisions=include_revisions)
+
+    def read_day(self, day: str, *, include_revisions: bool = False) -> dict:
+        """Read one capsule without creating an empty row on a miss."""
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM capsule_days WHERE date = ?", (day,)).fetchone()
             traces = conn.execute(
@@ -199,6 +232,18 @@ class TimeCapsuleDatabase:
         if include_revisions:
             result["revisions"] = [dict(item) for item in revisions]
         return result
+
+    def remove_invalid_empty_days(self) -> int:
+        """Remove query artifacts such as a literal '昨天' row, never real content."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """DELETE FROM capsule_days
+                   WHERE date NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+                     AND user_content='' AND lianxin_content=''
+                     AND NOT EXISTS (SELECT 1 FROM capsule_traces t WHERE t.capsule_date=capsule_days.date)
+                     AND NOT EXISTS (SELECT 1 FROM capsule_collections c WHERE c.capsule_date=capsule_days.date)"""
+            )
+            return int(cur.rowcount or 0)
 
     def _save_content(self, day: str, author: str, content: str, **fields) -> dict:
         column = "user_content" if author == "user" else "lianxin_content"
@@ -360,7 +405,12 @@ class TimeCapsuleDatabase:
                    VALUES (?, ?, ?, ?)""",
                 ("lianxin" if author == "lianxin" else "user", text, echo_of, _now()),
             )
-            return int(cur.lastrowid)
+            note_id = int(cur.lastrowid)
+            if author == "lianxin":
+                notification_type = "reply" if echo_of else "lianxin_note"
+                unique_key = f"reply:{note_id}" if echo_of else f"note:{note_id}"
+                self._insert_tree_notification(conn, note_id, echo_of, notification_type, unique_key)
+            return note_id
 
     def get_tree_note(self, note_id: int) -> dict:
         with self._connect() as conn:
@@ -375,6 +425,247 @@ class TimeCapsuleDatabase:
         result["archived"] = bool(result.get("archived"))
         result["reply"] = dict(reply) if reply else None
         return result
+
+    def schedule_tree_reply(self, note_id: int, scheduled_at: float) -> dict:
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO tree_reply_jobs(
+                       note_id, scheduled_at, status, attempts, last_error,
+                       lease_owner, lease_expires_at, updated_at
+                   ) VALUES (?, ?, 'waiting', 0, '', '', 0, ?)
+                   ON CONFLICT(note_id) DO UPDATE SET
+                       scheduled_at=excluded.scheduled_at,
+                       status=CASE WHEN tree_reply_jobs.status = 'done'
+                                   THEN tree_reply_jobs.status ELSE 'waiting' END,
+                       lease_owner='', lease_expires_at=0,
+                       updated_at=excluded.updated_at""",
+                (int(note_id), float(scheduled_at), _now()),
+            )
+        return self.get_tree_reply_job(note_id) or {}
+
+    def reconcile_tree_reply_jobs(self, *, now: float | None = None,
+                                  max_delay_seconds: int = 300) -> int:
+        """Create missing durable jobs for every unanswered user note."""
+        import random
+        base = float(now if now is not None else time.time())
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT n.id FROM tree_hole_notes n
+                   LEFT JOIN tree_reply_jobs j ON j.note_id=n.id
+                   WHERE n.author='user' AND j.note_id IS NULL
+                     AND NOT EXISTS (SELECT 1 FROM tree_hole_notes r
+                                     WHERE r.author='lianxin' AND r.echo_of=n.id)"""
+            ).fetchall()
+            for row in rows:
+                conn.execute(
+                    """INSERT OR IGNORE INTO tree_reply_jobs(
+                           note_id, scheduled_at, status, attempts, last_error,
+                           lease_owner, lease_expires_at, updated_at
+                       ) VALUES (?, ?, 'waiting', 0, '', '', 0, ?)""",
+                    (int(row["id"]), base + random.uniform(0, max(0, int(max_delay_seconds))), _now()),
+                )
+        return len(rows)
+
+    def force_tree_reply(self, note_id: int) -> dict:
+        """Put one note back into the durable queue for an immediate retry."""
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO tree_reply_jobs(
+                       note_id, scheduled_at, status, attempts, last_error,
+                       lease_owner, lease_expires_at, updated_at
+                   ) VALUES (?, ?, 'waiting', 0, '', '', 0, ?)
+                   ON CONFLICT(note_id) DO UPDATE SET
+                       scheduled_at=excluded.scheduled_at, status='waiting',
+                       attempts=0, last_error='', lease_owner='',
+                       lease_expires_at=0, updated_at=excluded.updated_at""",
+                (int(note_id), time.time(), _now()),
+            )
+        return self.get_tree_reply_job(note_id) or {}
+
+    def get_tree_reply_job(self, note_id: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM tree_reply_jobs WHERE note_id = ?", (int(note_id),)).fetchone()
+        return dict(row) if row else None
+
+    def pending_tree_reply_jobs(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tree_reply_jobs WHERE status IN ('waiting','retrying','running')"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def recover_expired_tree_reply_jobs(self, now: float | None = None) -> int:
+        now = float(now if now is not None else time.time())
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE tree_reply_jobs
+                   SET status='done', lease_owner='', lease_expires_at=0, updated_at=?
+                   WHERE status <> 'done' AND EXISTS (
+                       SELECT 1 FROM tree_hole_notes r
+                       WHERE r.author='lianxin' AND r.echo_of=tree_reply_jobs.note_id
+                   )""",
+                (_now(),),
+            )
+            cur = conn.execute(
+                """UPDATE tree_reply_jobs
+                   SET status='retrying', scheduled_at=?, lease_owner='',
+                       lease_expires_at=0, updated_at=?
+                   WHERE status='running' AND lease_expires_at > 0
+                     AND lease_expires_at <= ?""",
+                (now, _now(), now),
+            )
+            return int(cur.rowcount or 0)
+
+    def claim_due_tree_reply_job(self, owner: str, now: float | None = None,
+                                 lease_seconds: int = 300) -> dict:
+        """Atomically claim one due job; safe across concurrent schedulers."""
+        now = float(now if now is not None else time.time())
+        owner = str(owner or "tree-reply-duty")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                """UPDATE tree_reply_jobs
+                   SET status='done', lease_owner='', lease_expires_at=0, updated_at=?
+                   WHERE status <> 'done' AND EXISTS (
+                       SELECT 1 FROM tree_hole_notes r
+                       WHERE r.author='lianxin' AND r.echo_of=tree_reply_jobs.note_id
+                   )""",
+                (_now(),),
+            )
+            conn.execute(
+                """UPDATE tree_reply_jobs
+                   SET status='retrying', scheduled_at=?, lease_owner='',
+                       lease_expires_at=0, updated_at=?
+                   WHERE status='running' AND lease_expires_at > 0
+                     AND lease_expires_at <= ?""",
+                (now, _now(), now),
+            )
+            row = conn.execute(
+                """SELECT j.* FROM tree_reply_jobs j
+                   JOIN tree_hole_notes n ON n.id = j.note_id
+                   WHERE j.status IN ('waiting','retrying')
+                     AND j.scheduled_at <= ? AND n.author='user'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM tree_hole_notes r
+                         WHERE r.author='lianxin' AND r.echo_of=n.id
+                     )
+                   ORDER BY j.scheduled_at ASC, j.note_id ASC LIMIT 1""",
+                (now,),
+            ).fetchone()
+            if not row:
+                return {}
+            expires = now + max(1, int(lease_seconds))
+            conn.execute(
+                """UPDATE tree_reply_jobs
+                   SET status='running', attempts=attempts+1,
+                       lease_owner=?, lease_expires_at=?, updated_at=?
+                   WHERE note_id=? AND status IN ('waiting','retrying')""",
+                (owner, expires, _now(), int(row["note_id"])),
+            )
+            claimed = conn.execute(
+                "SELECT * FROM tree_reply_jobs WHERE note_id = ?", (int(row["note_id"]),)
+            ).fetchone()
+        return dict(claimed) if claimed else {}
+
+    def mark_tree_reply_running(self, note_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE tree_reply_jobs SET status='running', attempts=attempts+1,
+                   lease_owner='legacy-bridge', lease_expires_at=?, updated_at=? WHERE note_id=?""",
+                (time.time() + 300, _now(), int(note_id)),
+            )
+
+    def mark_tree_reply_result(self, note_id: int, success: bool, error: str = "") -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE tree_reply_jobs SET status=?, last_error=?,
+                   lease_owner='', lease_expires_at=0, updated_at=? WHERE note_id=?""",
+                ("done" if success else "failed", str(error or ""), _now(), int(note_id)),
+            )
+
+    def reschedule_tree_reply(self, note_id: int, scheduled_at: float, error: str = "") -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE tree_reply_jobs SET status='retrying', scheduled_at=?, last_error=?, updated_at=? WHERE note_id=?",
+                (float(scheduled_at), str(error or ""), _now(), int(note_id)),
+            )
+
+    def add_tree_reply_if_missing(self, note_id: int, content: str) -> dict:
+        """Create one reply and its unread notification atomically."""
+        text = str(content or "").strip()
+        if not text:
+            return {}
+        with self._connect() as conn:
+            source = conn.execute(
+                "SELECT id FROM tree_hole_notes WHERE id=? AND author='user'", (int(note_id),)
+            ).fetchone()
+            if not source:
+                return {}
+            existing = conn.execute(
+                "SELECT * FROM tree_hole_notes WHERE author='lianxin' AND echo_of=? ORDER BY id DESC LIMIT 1",
+                (int(note_id),),
+            ).fetchone()
+            if existing:
+                return dict(existing)
+            cur = conn.execute(
+                """INSERT INTO tree_hole_notes(author, content, echo_of, created_at)
+                   VALUES ('lianxin', ?, ?, ?)""",
+                (text[:800], int(note_id), _now()),
+            )
+            reply_id = int(cur.lastrowid)
+            self._insert_tree_notification(
+                conn, reply_id, int(note_id), "reply", f"reply:{reply_id}"
+            )
+            row = conn.execute("SELECT * FROM tree_hole_notes WHERE id=?", (reply_id,)).fetchone()
+        return dict(row) if row else {}
+
+    @staticmethod
+    def _insert_tree_notification(conn, note_id: int, related_note_id: int | None,
+                                  notification_type: str, unique_key: str) -> None:
+        conn.execute(
+            """INSERT OR IGNORE INTO tree_hole_notifications(
+                   note_id, related_note_id, notification_type, created_at, unique_key
+               ) VALUES (?, ?, ?, ?, ?)""",
+            (int(note_id), related_note_id, str(notification_type), _now(), str(unique_key)),
+        )
+
+    def tree_unread_counts(self) -> dict:
+        with self._connect() as conn:
+            total = conn.execute(
+                "SELECT COUNT(*) AS count FROM tree_hole_notifications WHERE read_at=''"
+            ).fetchone()["count"]
+            replies = conn.execute(
+                """SELECT COUNT(*) AS count FROM tree_hole_notifications
+                   WHERE read_at='' AND notification_type='reply'"""
+            ).fetchone()["count"]
+        return {"tree_unread_count": int(total or 0), "tree_reply_unread_count": int(replies or 0)}
+
+    def mark_tree_notifications_read(self, note_id: int | None = None,
+                                     notification_type: str | None = None) -> int:
+        clauses = ["read_at=''"]
+        params: list = []
+        if note_id is not None:
+            clauses.append("note_id=?")
+            params.append(int(note_id))
+        if notification_type:
+            clauses.append("notification_type=?")
+            params.append(str(notification_type))
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"UPDATE tree_hole_notifications SET read_at=? WHERE {' AND '.join(clauses)}",
+                [_now(), *params],
+            )
+            return int(cur.rowcount or 0)
+
+    def mark_tree_thread_read(self, source_note_id: int) -> int:
+        """Mark only notifications visible in one paper thread."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """UPDATE tree_hole_notifications SET read_at=?
+                   WHERE read_at='' AND (note_id=? OR related_note_id=?)""",
+                (_now(), int(source_note_id), int(source_note_id)),
+            )
+            return int(cur.rowcount or 0)
 
     def toggle_tree_favorite(self, note_id: int) -> None:
         with self._connect() as conn:
@@ -547,6 +838,7 @@ class TimeCapsuleDatabase:
             "query": term,
             "sort": sort,
             "archived": bool(archived),
+            **self.tree_unread_counts(),
         }
 
     def toggle_tree_archive(self, note_id: int) -> dict:

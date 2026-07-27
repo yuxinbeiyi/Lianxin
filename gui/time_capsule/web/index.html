@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="time-capsule-version" content="2026.07.26.5">
+  <meta name="time-capsule-version" content="2026.07.27.2">
   <title>莲心 Time Capsule</title>
   <link rel="stylesheet" href="styles.css?v=20260726-5">
 </head>
@@ -44,9 +44,9 @@
         <button class="c-sidebar-item" data-page="corridor"><svg><use href="#i-book"/></svg><span>时间长廊</span></button>
         <button class="c-sidebar-item" data-page="tree"><svg><use href="#i-leaf"/></svg><span>树洞</span><i id="tree-badge" class="nav-badge hidden"></i></button>
         <button class="c-sidebar-item" data-page="museum"><svg><use href="#i-star"/></svg><span>收藏馆</span></button>
-        <button id="open-settings" class="c-sidebar-item" data-action="settings"><svg><use href="#i-settings"/></svg><span>设置</span></button>
+        <button id="open-settings" class="c-sidebar-item" data-page="settings"><svg><use href="#i-settings"/></svg><span>设置</span></button>
       </nav>
-      <small class="version">TIME CAPSULE 2.0</small>
+      <small class="version">TIME CAPSULE 2.0 · 2026.07.27.2</small>
     </aside>
 
     <main class="main-content">
@@ -63,7 +63,7 @@
             <div id="lianxin-paper" class="paper-reading empty-paper">今天还没有留下故事。<br><br>但书页已经准备好了。</div>
           </article>
         </div>
-        <div class="seal-wrap"><button id="seal-day" class="c-button primary"><svg><use href="#i-archive"/></svg><span>封存今天</span></button><p id="seal-note">封存后仍然可以继续留下笔迹。</p></div>
+        <div class="seal-wrap"><button id="request-diary" class="c-button ghost" type="button"><svg><use href="#i-flower"/></svg><span>请莲心写日记</span></button><button id="seal-day" class="c-button primary"><svg><use href="#i-archive"/></svg><span>封存今天</span></button><p id="seal-note">封存后仍然可以继续留下笔迹。</p></div>
 
         <section class="traces-section"><div class="section-heading"><div><span>后来留下的</span><h3>笔迹</h3></div><svg><use href="#i-pen"/></svg></div><div id="trace-list" class="trace-list"></div><div class="trace-compose"><textarea id="trace-input" class="c-input" rows="2" placeholder="在这一页旁边，再留下一点笔迹……"></textarea><button id="add-trace" class="c-icon-button"><svg><use href="#i-send"/></svg></button></div></section>
 
@@ -78,11 +78,30 @@
       </section>
 
       <section id="page-tree" class="page tree-page">
-        <div class="tree-workspace"><div class="tree-main"><div class="tree-intro"><svg><use href="#i-leaf"/></svg><span>今晚，</span><h2>有什么不能告诉别人的吗？</h2><p>可以放进树洞。</p></div><div class="tree-compose c-glass-card"><textarea id="tree-input" rows="7" placeholder="不用标题，也不用解释。"></textarea><button id="send-tree" class="c-button primary"><svg><use href="#i-send"/></svg><span>放进树洞</span></button></div><div id="tree-notes" class="tree-notes"></div></div><aside class="paper-box"><header><div><span>PAPER BOX</span><h3>纸匣子</h3></div><strong id="paper-box-count">0</strong></header><input id="paper-box-search" class="c-input" type="search" placeholder="搜索纸条内容"><div id="paper-box-filters" class="paper-box-filters"><button class="selected" data-filter="all">全部</button><button data-filter="favorite">收藏</button><button data-filter="user">我的</button><button data-filter="replied">有回应</button></div><div class="paper-box-options"><select id="paper-box-sort" class="c-input"><option value="newest">最新在前</option><option value="oldest">最早在前</option></select><label><input id="paper-box-archived" type="checkbox"> 已归档</label></div><div id="paper-box-list" class="paper-box-list"></div><nav id="paper-box-pagination" class="compact-pagination"></nav></aside></div>
+        <div class="tree-workspace"><div class="tree-main"><div class="tree-intro"><svg><use href="#i-leaf"/></svg><span>今晚，</span><h2>有什么不能告诉别人的吗？</h2><p>可以放进树洞。</p></div><div class="tree-compose c-glass-card"><textarea id="tree-input" rows="7" placeholder="不用标题，也不用解释。"></textarea><button id="send-tree" class="c-button primary"><svg><use href="#i-send"/></svg><span>放进树洞</span></button></div><div id="tree-notes" class="tree-notes"></div></div><aside class="paper-box"><header><div><span>PAPER BOX</span><h3>纸匣子</h3></div><strong id="paper-box-count">0</strong></header><input id="paper-box-search" class="c-input" type="search" placeholder="搜索纸条内容"><div id="paper-box-filters" class="paper-box-filters"><button class="selected" data-filter="all">全部</button><button data-filter="favorite">收藏</button><button data-filter="user">我的</button><button data-filter="replied">有回应<i id="tree-replies-badge" class="nav-badge hidden"></i></button></div><div class="paper-box-options"><select id="paper-box-sort" class="c-input"><option value="newest">最新在前</option><option value="oldest">最早在前</option></select><label><input id="paper-box-archived" type="checkbox"> 已归档</label></div><div id="paper-box-list" class="paper-box-list"></div><nav id="paper-box-pagination" class="compact-pagination"></nav></aside></div>
       </section>
 
       <section id="page-museum" class="page">
         <div class="page-heading museum-heading"><div><span>MEMORY MUSEUM</span><h2>收藏馆</h2><p>这里只陈列你亲手点亮星星的日记。</p></div><button id="invite-lianxin" class="c-button ghost" disabled><svg><use href="#i-flower"/></svg><span>请先打开一篇收藏</span></button></div><div class="museum-controls"><input id="museum-search" class="c-input" type="search" placeholder="搜索收藏的日记"><select id="museum-sort" class="c-input"><option value="favorite">最近收藏</option><option value="date">日记日期</option></select></div><div id="memory-grid" class="memory-grid"></div><nav id="museum-pagination" class="timeline-pagination"></nav>
+      </section>
+
+      <section id="page-settings" class="page settings-page">
+        <div class="page-heading"><span>TIME CAPSULE</span><h2>设置</h2><p>调整时间胶囊的书页、日记生成和附件保存方式。</p></div>
+        <section class="settings-card settings-page-card">
+          <div id="settings-status" class="settings-status">正在读取设置……</div>
+          <div id="settings-fields">
+            <label class="setting-toggle"><span><strong>自动留下莲心的书页</strong><small>在每天指定时间整理当天共同经历。</small></span><input id="scheduled-enabled" type="checkbox"></label>
+            <label><span><strong>留下书页的时间</strong><small>仅影响之后自动生成的日记。</small></span><input id="scheduled-time" class="c-input" type="time"></label>
+            <label><span><strong>参考对话数量</strong><small>从当天会话中选择多少条作为日记依据。</small></span><input id="max-messages" class="c-input" type="number" min="1" max="200"></label>
+            <label><span><strong>对话取样位置</strong><small>选择靠近一天开始或结束的对话。</small></span><select id="message-direction" class="c-input"><option value="latest">靠近一天结束</option><option value="earliest">靠近一天开始</option></select></label>
+            <label><span><strong>时间轴每页显示</strong><small>减少一次渲染的日记数量可提升流畅度。</small></span><select id="timeline-page-size" class="c-input"><option value="10">10 篇</option><option value="15">15 篇</option><option value="20">20 篇</option></select></label>
+            <label class="setting-toggle"><span><strong>保留纸张和翻页动画</strong><small>关闭后将减少界面动画效果。</small></span><input id="animations-enabled" type="checkbox"></label>
+            <label class="setting-toggle"><span><strong>低性能模式</strong><small>减少阴影、动画和复杂绘制。</small></span><input id="low-power-mode" type="checkbox"></label>
+            <label class="media-directory-setting"><span><strong>照片保存位置</strong><small>新添加到记忆相簿的照片会复制到这里。</small></span><div><input id="media-directory" class="c-input" type="text" readonly><div class="media-directory-actions"><button id="choose-media-directory" class="c-button ghost" type="button">选择</button><button id="open-media-directory" class="c-button ghost" type="button">打开</button><button id="reset-media-directory" class="c-button ghost" type="button">默认</button></div></div></label>
+            <p>修改位置不会移动旧附件，原始文件也不会被修改或删除。</p>
+            <button id="save-settings" class="c-button primary"><span>保存设置</span></button>
+          </div>
+        </section>
       </section>
     </main>
 
@@ -94,7 +113,6 @@
   <div id="attachment-panel" class="detail-panel hidden"><div class="attachment-backdrop detail-backdrop"></div><article class="attachment-paper"><button class="attachment-close">×</button><span id="attachment-kind"></span><h2 id="attachment-title"></h2><div id="attachment-preview"></div><button id="attachment-open" class="c-button ghost">在系统中打开</button></article></div>
   <div id="image-lightbox" class="image-lightbox hidden"><div class="image-lightbox-backdrop"></div><header><span id="lightbox-title"></span><div><button id="lightbox-reset">适应窗口</button><button id="lightbox-rotate">旋转</button><button id="lightbox-close">×</button></div></header><div id="lightbox-stage"><img id="lightbox-image" alt="附件大图"></div></div>
   <div id="companion-panel" class="companion-panel hidden"><button class="companion-close">×</button><svg><use href="#i-flower"/></svg><small id="companion-source">莲心的陪伴</small><p id="companion-reading"></p></div>
-  <div id="settings-panel" class="settings-panel hidden"><div class="settings-backdrop"></div><section class="settings-card"><button class="settings-close">×</button><span>TIME CAPSULE</span><h2>书页设置</h2><div id="settings-status" class="settings-status">正在读取设置……</div><div id="settings-fields"><label class="setting-toggle"><input id="scheduled-enabled" type="checkbox"><span>每天让莲心自动留下她的书页</span></label><label><span>留下书页的时间</span><input id="scheduled-time" class="c-input" type="time"></label><label><span>参考最近多少条共同对话</span><input id="max-messages" class="c-input" type="number" min="1" max="200"></label><label><span>对话取样位置</span><select id="message-direction" class="c-input"><option value="latest">靠近一天结束的对话</option><option value="earliest">一天开始时的对话</option></select></label><label><span>时间轴每页显示</span><select id="timeline-page-size" class="c-input"><option value="10">10 篇</option><option value="15">15 篇</option><option value="20">20 篇</option></select></label><label class="setting-toggle"><input id="animations-enabled" type="checkbox"><span>保留纸张和翻页动画</span></label><label class="setting-toggle"><input id="low-power-mode" type="checkbox"><span>低性能模式</span></label><label class="media-directory-setting"><span>附件保存位置<small>新添加的图片、音乐和文件将复制到这里</small></span><div><input id="media-directory" class="c-input" type="text" readonly><div class="media-directory-actions"><button id="choose-media-directory" class="c-button ghost" type="button">选择</button><button id="open-media-directory" class="c-button ghost" type="button">打开</button><button id="reset-media-directory" class="c-button ghost" type="button">默认</button></div></div></label><p>修改位置不会移动已保存的旧附件；原始文件不会被修改或删除。</p><button id="save-settings" class="c-button primary"><span>保存设置</span></button></div></section></div>
   <div id="toast" class="toast hidden"></div>
   <div id="loading-state" class="loading-state"><svg><use href="#i-moon"/></svg><strong>正在展开共同的书页</strong><span>稍等一下，回忆正在从时间里醒来。</span></div>
   <script src="qrc:///qtwebchannel/qwebchannel.js"></script>

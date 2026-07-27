@@ -192,6 +192,40 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "read_diary",
+            "description": (
+                "读取莲心时间胶囊中的真实日记和共同书页。用户提到昨天、前天、某天日记或时间胶囊时必须优先使用，"
+                "不得用 read_file 或文件搜索代替；返回内容会标注数据库来源、日期和作者。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string", "description": "YYYY-MM-DD，也可传‘昨天’或‘前天’"},
+                    "keyword": {"type": "string", "description": "在时间胶囊日记中检索的关键词"},
+                    "limit": {"type": "integer", "description": "最多返回几篇，默认1"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_diary",
+            "description": "让莲心根据今天的共同记录写入时间胶囊日记；已有日记时不会静默覆盖。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message_count": {"type": "integer"},
+                    "force": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "discover_connections",
             "description": (
                 "图谱关系发现引擎：从指定实体出发，遍历知识图谱，发现所有直接和间接关联的实体、关系、路径。"
@@ -5472,7 +5506,32 @@ def _track_tasks_exec(todos: list) -> str:
     from brain.task_tracker import get_task_tracker
     return get_task_tracker().update(todos)
 # ── 工具调度表 ───────────────────────────────────────────────
+def _normalize_diary_date(value: str | None) -> str | None:
+    from gui.time_capsule.diary_reader import normalize_diary_date
+    return normalize_diary_date(value)
+
+
+def _read_diary_core(inp: dict) -> str:
+    from gui.time_capsule.diary_reader import read_diary
+    result = read_diary(
+        date_value=inp.get("date"), keyword=inp.get("keyword"),
+        limit=int(inp.get("limit", 1) or 1),
+    )
+    return "来源：TimeCapsuleDatabase（莲心时间胶囊）\n" + str(result)
+
+
+def _write_diary_core(inp: dict) -> str:
+    import importlib
+    module = importlib.import_module("skills.日记与备忘.tools")
+    return str(module._write_diary(
+        message_count=inp.get("message_count"),
+        force=bool(inp.get("force", False)),
+    ))
+
+
 TOOL_EXECUTORS = {
+    "read_diary":      _read_diary_core,
+    "write_diary":     _write_diary_core,
     "read_file":       lambda inp: read_file(inp["path"]),
     "read_file_chunk": lambda inp: read_file_chunk(inp["path"], int(inp["chunk_index"])),
     "clear_document_cache": lambda inp: clear_document_cache(bool(inp.get("confirm", False))),

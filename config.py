@@ -789,6 +789,19 @@ _MEMORY_DEFAULTS = {
     "working_memory_summary_interval_minutes": 10,
 }
 
+# 日记生成设置与旧配置并存，缺失字段自动使用这些默认值。
+_DIARY_GENERATION_DEFAULTS = {
+    "reference_chat": True,
+    "reference_tree_hole": True,
+    "reference_study_room": True,
+    "reference_time_capsule": True,
+    "reference_attachments": False,
+    "important_detail": True,
+    "max_chars": 1600,
+    "auto_generate": False,
+    "generation_hour": 23,
+}
+
 
 def get_memory_config() -> dict:
     """读取记忆系统配置，缺失字段用默认值补全。"""
@@ -1022,6 +1035,14 @@ def get_diary_config() -> dict:
     diary = full.get("diary", {})
     result = _DIARY_DEFAULTS.copy()
     result.update(diary)
+    result.setdefault("reference_chat", True)
+    result.setdefault("reference_tree_hole", True)
+    result.setdefault("reference_study_room", True)
+    result.setdefault("reference_time_capsule", True)
+    result.setdefault("reference_attachments", False)
+    result.setdefault("important_detail", True)
+    result.setdefault("max_chars", 1600)
+    result.setdefault("auto_generate", False)
     return result
 
 def save_diary_config(config: dict):

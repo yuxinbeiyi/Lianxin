@@ -53,6 +53,24 @@ function reportFrontendError(error, context = '运行') {
   } else {
     showToast?.('时间胶囊刚刚遇到一个界面错误，详情已写入日志。');
   }
+  hideLoadingState();
+}
+
+function hideLoadingState() {
+  q('#loading-state')?.classList.add('hidden');
+}
+
+function updateBadge(selector, value) {
+  const badge = q(selector);
+  if (!badge) return;
+  const count = Math.max(0, Number(value || 0));
+  badge.textContent = count > 99 ? '99+' : String(count);
+  badge.classList.toggle('hidden', count <= 0);
+}
+
+function updateTreeBadges(data = state || {}) {
+  updateBadge('#tree-badge', data.tree_unread_count);
+  updateBadge('#tree-replies-badge', data.tree_reply_unread_count);
 }
 
 window.addEventListener('error', event => reportFrontendError(event.error || event.message, '脚本异常'));
@@ -108,10 +126,13 @@ function switchPage(page) {
   activePage = page;
   qa('.page').forEach(section => section.classList.toggle('active', section.id === `page-${page}`));
   qa('.c-sidebar-item').forEach(item => item.classList.toggle('selected', item.dataset.page === page));
-  const labels = { today: '今天', corridor: '时间长廊', tree: '树洞', museum: '收藏馆' };
+  const labels = { today: '今天', corridor: '时间长廊', tree: '树洞', museum: '收藏馆', settings: '设置' };
   q('#topbar-title').textContent = labels[page] || '时间胶囊';
   q('.main-content').scrollTop = 0;
-  if (page !== 'today') {
+  if (page === 'settings') {
+    console.info('[TimeCapsule] settings page selected');
+    openSettings();
+  } else if (page !== 'today') {
     if (loadedPages.has(page) && !dirtyPages.has(page)) renderPage(page);
     else loadPage(page);
   }
@@ -120,6 +141,7 @@ function switchPage(page) {
 function render(data) {
   state = { ...(state || {}), ...(data || {}) };
   if (!state) return;
+  updateTreeBadges(state);
   renderToday(state.today || {});
   const companion = state.companion || {};
   q('#companion-message').textContent = companion.message || '我会在这里陪你慢慢看。';
@@ -147,6 +169,7 @@ async function loadPage(page, force = false) {
 
 function applyPageState(page, data) {
   state = { ...(state || {}), ...(data || {}) };
+  updateTreeBadges(state);
   loadedPages.add(page);
   dirtyPages.delete(page);
   if (activePage === page) renderPage(page);
@@ -392,6 +415,7 @@ function renderTree(payload) {
   treeSort = payload.sort || treeSort;
   treeArchived = Boolean(payload.archived);
   q('#paper-box-count').textContent = payload.total_items || 0;
+  updateTreeBadges(payload);
   q('#paper-box-search').value = treeQuery;
   q('#paper-box-sort').value = treeSort;
   q('#paper-box-archived').checked = treeArchived;
@@ -430,7 +454,11 @@ function renderTreeNote(item) {
   shell.oncontextmenu = async event => {
     event.preventDefault();
     shell.classList.toggle('flipped');
-    if (isUserNote && !item.reply && shell.classList.contains('flipped')) await call('request_tree_reply', item.id);
+    if (shell.classList.contains('flipped')) {
+      const unread = await call('mark_tree_thread_read', item.id);
+      if (unread) { state = { ...(state || {}), ...unread }; updateTreeBadges(state); }
+      if (isUserNote && !item.reply) await call('request_tree_reply', item.id);
+    }
   };
   shell.querySelector('.tree-favorite').onclick = async event => { event.stopPropagation(); await call('toggle_tree_favorite', item.id); };
   shell.querySelector('.tree-archive').onclick = async event => { event.stopPropagation(); await call('toggle_tree_archive', item.id); };
@@ -664,18 +692,14 @@ function formatTime(value) {
 }
 
 function bindEvents() {
-  qa('.c-sidebar-item').forEach(item => item.onclick = () => {
-    if (item.dataset.action === 'settings') {
-      openSettings();
-      return;
-    }
+  document.addEventListener('click', event => {
+    const item = event.target?.closest?.('.c-sidebar-item');
+    if (!item) return;
     if (item.dataset.page) switchPage(item.dataset.page);
   });
   on('#minimize', 'click', () => bridge?.request_minimize());
   on('#fullscreen', 'click', () => bridge?.request_fullscreen());
   on('#close', 'click', () => bridge?.request_close());
-  on('.settings-close', 'click', closeSettings);
-  on('.settings-backdrop', 'click', closeSettings);
   on('#save-settings', 'click', saveSettings);
   on('#choose-media-directory', 'click', async () => {
     const path = await call('choose_media_directory');
@@ -738,12 +762,17 @@ function bindEvents() {
   on('#paper-box-list', 'click', event => {
     const button = event.target?.closest?.('.paper-box-item');
     if (!button) return;
-    currentTreeNoteId = Number(button.dataset.noteId); renderTree(state.tree_page || { items: [] });
+    currentTreeNoteId = Number(button.dataset.noteId);
+    call('mark_tree_thread_read', currentTreeNoteId).then(result => {
+      if (result) { state = { ...(state || {}), ...result }; updateTreeBadges(state); }
+    });
+    renderTree(state.tree_page || { items: [] });
   });
   on('#paper-box-filters', 'click', event => {
     const button = event.target?.closest?.('button[data-filter]');
     if (!button) return;
-    treeFilter = button.dataset.filter; treePage = 1; loadPage('tree', true);
+    treeFilter = button.dataset.filter; treePage = 1;
+    loadPage('tree', true);
   });
   on('#paper-box-search', 'input', debounce(event => { treeQuery = event.target.value.trim(); treePage = 1; loadPage('tree', true); }, 260));
   on('#paper-box-sort', 'change', event => { treeSort = event.target.value; treePage = 1; loadPage('tree', true); });
@@ -795,7 +824,7 @@ function bindEvents() {
     if (!q('#image-lightbox').classList.contains('hidden')) closeImageLightbox();
     else if (!q('#day-picker-panel').classList.contains('hidden')) q('#day-picker-panel').classList.add('hidden');
     else if (!q('#detail-panel').classList.contains('hidden')) closeDetail();
-    else if (!q('#settings-panel').classList.contains('hidden')) closeSettings();
+    else if (activePage === 'settings') switchPage('today');
   });
   on('.companion-close', 'click', () => q('#companion-panel').classList.add('hidden'));
   const editor = q('#user-paper');
@@ -851,6 +880,23 @@ function bindEvents() {
     await call('seal_day', currentDay, q('#user-paper').textContent);
     setTimeout(() => { book.classList.remove('closing'); switchPage('corridor'); showToast('今天已经被好好封存。'); }, 800);
   });
+  on('#request-diary', 'click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.querySelector('span').textContent = '正在整理今天的日记';
+    const result = await call('request_diary_generation', currentDay);
+    if (result?.ok === false) {
+      button.disabled = false;
+      button.querySelector('span').textContent = '请莲心写日记';
+      showToast(result.error || '暂时无法生成日记');
+      return;
+    }
+    showToast('莲心已经开始整理今天的记录');
+    setTimeout(() => {
+      button.disabled = false;
+      button.querySelector('span').textContent = '请莲心写日记';
+    }, 1800);
+  });
   on('#send-tree', 'click', async () => {
     const input = q('#tree-input'); const value = input.value.trim(); if (!value) return;
     const result = await call('add_tree_note', value); if (result?.ok) { input.value = ''; showToast('纸条已经飞进树洞。'); }
@@ -867,51 +913,85 @@ function bindEvents() {
 }
 
 async function openSettings() {
-  const panel = q('#settings-panel');
   const fields = q('#settings-fields');
   const status = q('#settings-status');
-  if (!panel) {
-    reportFrontendError(new Error('settings-panel missing'), '打开设置');
+  if (!fields || !status) {
+    reportFrontendError(new Error('settings page missing'), '打开设置');
     return;
   }
-  panel.classList.remove('hidden');
+  console.info('[TimeCapsule] settings page shown');
+  if (!q('#reference-chat')) {
+    q('#save-settings')?.insertAdjacentHTML('beforebegin', `
+      <label class="setting-toggle"><span><strong>参考主界面对话</strong><small>整理今天在主界面发生的真实会话。</small></span><input id="reference-chat" type="checkbox"></label>
+      <label class="setting-toggle"><span><strong>参考树洞纸条</strong><small>仅引用当天真实存在的纸条和回应。</small></span><input id="reference-tree-hole" type="checkbox"></label>
+      <label class="setting-toggle"><span><strong>参考自习室记录</strong><small>把当天完成的专注和任务作为经历来源。</small></span><input id="reference-study-room" type="checkbox"></label>
+      <label class="setting-toggle"><span><strong>参考时间胶囊互动</strong><small>包括书页、笔迹、收藏和共同阅读。</small></span><input id="reference-time-capsule" type="checkbox"></label>
+      <label class="setting-toggle"><span><strong>参考附件描述</strong><small>只使用已有附件信息，不猜测图片内容。</small></span><input id="reference-attachments" type="checkbox"></label>
+      <label class="setting-toggle"><span><strong>重要事件详细记录</strong><small>普通事情略写，重要经历保留更多细节。</small></span><input id="important-detail" type="checkbox"></label>
+      <label><span><strong>莲心日记最大字数</strong><small>控制自动生成书页的大致篇幅。</small></span><input id="diary-max-chars" class="c-input" type="number" min="400" max="5000" step="100"></label>`);
+  }
   fields?.classList.add('settings-loading');
   if (status) status.textContent = '正在读取设置……';
-  const settings = await call('get_settings') || { ok: false, error: '桥接尚未准备好' };
-  if (settings.ok === false) {
-    if (status) status.textContent = settings.error || '设置读取失败，请稍后重试。';
+  try {
+    const settings = await call('get_settings') || { ok: false, error: '桥接尚未准备好' };
+    if (settings.ok === false) {
+      if (status) status.textContent = settings.error || '设置读取失败，请稍后重试。';
+      return;
+    }
+    q('#scheduled-enabled').checked = Boolean(settings.scheduled_enabled);
+    q('#scheduled-time').value = settings.scheduled_time || '23:55';
+    q('#max-messages').value = settings.max_messages || 30;
+    q('#message-direction').value = settings.direction || 'latest';
+    q('#media-directory').value = settings.media_directory || '';
+    q('#timeline-page-size').value = String(settings.timeline_page_size || 15);
+    q('#animations-enabled').checked = settings.animations_enabled !== false;
+    q('#low-power-mode').checked = Boolean(settings.low_power_mode);
+    q('#reference-chat').checked = settings.reference_chat !== false;
+    q('#reference-tree-hole').checked = settings.reference_tree_hole !== false;
+    q('#reference-study-room').checked = settings.reference_study_room !== false;
+    q('#reference-time-capsule').checked = settings.reference_time_capsule !== false;
+    q('#reference-attachments').checked = Boolean(settings.reference_attachments);
+    q('#important-detail').checked = settings.important_detail !== false;
+    q('#diary-max-chars').value = Number(settings.max_chars || 1600);
+    defaultMediaDirectory = settings.default_media_directory || settings.media_directory || '';
+    if (status) status.textContent = '设置已经载入';
+  } catch (error) {
+    reportFrontendError(error, '读取设置');
+    if (status) status.textContent = '设置读取失败，请稍后重试。';
+  } finally {
     fields?.classList.remove('settings-loading');
-    return;
   }
-  q('#scheduled-enabled').checked = Boolean(settings.scheduled_enabled);
-  q('#scheduled-time').value = settings.scheduled_time || '23:55';
-  q('#max-messages').value = settings.max_messages || 30;
-  q('#message-direction').value = settings.direction || 'latest';
-  q('#media-directory').value = settings.media_directory || '';
-  q('#timeline-page-size').value = String(settings.timeline_page_size || 15);
-  q('#animations-enabled').checked = settings.animations_enabled !== false;
-  q('#low-power-mode').checked = Boolean(settings.low_power_mode);
-  defaultMediaDirectory = settings.default_media_directory || settings.media_directory || '';
-  if (status) status.textContent = '设置已经载入';
-  fields?.classList.remove('settings-loading');
 }
-
-function closeSettings() { q('#settings-panel').classList.add('hidden'); }
 
 async function saveSettings() {
   q('#settings-status').textContent = '正在保存……';
-  const result = await call(
-    'save_settings', q('#scheduled-enabled').checked, q('#scheduled-time').value || '23:55',
-    Number(q('#max-messages').value || 30), q('#message-direction').value,
-    q('#media-directory').value, Number(q('#timeline-page-size').value || 15),
-    q('#animations-enabled').checked, q('#low-power-mode').checked
-  );
-  if (!result?.ok) { showToast(result?.error || '附件保存位置不可用。'); return; }
+  const payload = {
+    scheduled_enabled: q('#scheduled-enabled').checked,
+    scheduled_time: q('#scheduled-time').value || '23:55',
+    max_messages: Number(q('#max-messages').value || 30),
+    direction: q('#message-direction').value,
+    media_directory: q('#media-directory').value,
+    timeline_page_size: Number(q('#timeline-page-size').value || 15),
+    animations_enabled: q('#animations-enabled').checked,
+    low_power_mode: q('#low-power-mode').checked,
+    reference_chat: q('#reference-chat').checked,
+    reference_tree_hole: q('#reference-tree-hole').checked,
+    reference_study_room: q('#reference-study-room').checked,
+    reference_time_capsule: q('#reference-time-capsule').checked,
+    reference_attachments: q('#reference-attachments').checked,
+    important_detail: q('#important-detail').checked,
+    max_chars: Number(q('#diary-max-chars').value || 1600),
+  };
+  const result = await call('save_settings_payload', JSON.stringify(payload));
+  if (!result?.ok) {
+    showToast(result?.error || '设置没有传到后端，请重新打开时间胶囊后再试。');
+    q('#settings-status').textContent = result?.error || '设置保存失败：后端桥接没有返回结果。';
+    return;
+  }
   timelinePageSize = Number(result.timeline_page_size || 15);
   document.body.classList.toggle('animations-off', result.animations_enabled === false);
   document.body.classList.toggle('low-power', Boolean(result.low_power_mode));
   dirtyPages.add('corridor'); loadedPages.delete('corridor');
-  closeSettings();
   showToast('书页设置已经保存。');
 }
 
@@ -945,9 +1025,12 @@ function debounce(fn, delay) { let timer; return (...args) => { clearTimeout(tim
 
 function initialize() {
   try {
+    const version = document.querySelector('meta[name="time-capsule-version"]')?.content || 'unknown';
+    console.info(`[TimeCapsule] DOM ready version=${version} href=${location.href}`);
     const mediaLabel = q('.media-directory-setting > span');
     if (mediaLabel) mediaLabel.innerHTML = '照片保存位置<small>新添加到记忆相簿的照片将复制到这里</small>';
     bindEvents();
+    console.info('[TimeCapsule] event binding complete');
     renderCollectionActions();
   } catch (error) {
     reportFrontendError(error, '初始化事件');
@@ -956,13 +1039,23 @@ function initialize() {
   if (typeof QWebChannel === 'undefined' || !window.qt?.webChannelTransport) {
     q('#footer-status').textContent = '桥接加载失败，请重新打开时间胶囊';
     q('#loading-state').innerHTML = '<strong>书页没有顺利展开</strong><span>请关闭后重新打开时间胶囊。</span>';
+    hideLoadingState();
     return;
   }
   new QWebChannel(qt.webChannelTransport, channel => {
     try {
       bridge = channel.objects.capsuleBridge;
       if (!bridge) throw new Error('capsuleBridge unavailable');
+      console.info('[TimeCapsule] QWebChannel connected');
       bridge.state_changed.connect(payload => render(parse(payload)));
+      bridge.generation_completed.connect((day, success, error) => {
+        const button = q('#request-diary');
+        if (button) {
+          button.disabled = false;
+          button.querySelector('span').textContent = success ? '重新整理今天的日记' : '请莲心写日记';
+        }
+        if (!success && error) showToast(error);
+      });
       bridge.page_state_changed.connect((page, payload) => applyPageState(page, parse(payload)));
       bridge.page_invalidated.connect(page => {
         dirtyPages.add(page);
@@ -990,9 +1083,16 @@ function initialize() {
       q('#companion-reading').textContent = result?.message || '我在这里。';
       q('#companion-panel').classList.remove('hidden');
       });
-      call('get_initial_state').then(render).catch(error => reportFrontendError(error, '读取初始状态'));
+      call('get_initial_state')
+        .then(data => {
+          if (!data) throw new Error('初始状态为空');
+          render(data);
+        })
+        .catch(error => reportFrontendError(error, '读取初始状态'))
+        .finally(hideLoadingState);
     } catch (error) {
       reportFrontendError(error, '连接界面桥接');
+      hideLoadingState();
     }
   });
 }

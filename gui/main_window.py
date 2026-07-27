@@ -304,6 +304,7 @@ class MainWindow(QMainWindow):
         # ── 统一后台职责调度器（替代 3 个独立 QTimer）─────────
         from utils.duty_scheduler import (
             DutyScheduler, ProactiveDuty, HeartbeatDuty, SmartReminderDuty,
+            TreeHoleReplyDuty,
             MemoryExtractionDuty, MemoryMaintenanceDuty, MemoryCueEvaluationDuty,
             MemoryNarrativeDuty, WorkingMemorySummaryDuty, register_duty,
         )
@@ -325,6 +326,7 @@ class MainWindow(QMainWindow):
         register_duty(self._duty_scheduler, ProactiveDuty())
         register_duty(self._duty_scheduler, HeartbeatDuty())
         register_duty(self._duty_scheduler, SmartReminderDuty())
+        register_duty(self._duty_scheduler, TreeHoleReplyDuty())
         register_duty(self._duty_scheduler, MemoryExtractionDuty())
         register_duty(self._duty_scheduler, MemoryMaintenanceDuty())
         register_duty(self._duty_scheduler, MemoryCueEvaluationDuty())
@@ -349,6 +351,7 @@ class MainWindow(QMainWindow):
         self._duty_scheduler.heartbeat_response.connect(self._on_heartbeat_response)
         self._duty_scheduler.heartbeat_silent.connect(self._on_heartbeat_finished_silent)
         self._duty_scheduler.reminder_response.connect(self._do_reminder)
+        self._duty_scheduler.tree_hole_updated.connect(self._on_tree_hole_updated)
         # ── 摸鱼数据源透明信号 ────────────────────────────────
         self._duty_scheduler.mooyu_data_sources.connect(self._on_mooyu_data_sources)
         self._duty_scheduler.mooyu_duty_data_source.connect(self._on_mooyu_duty_data_source)
@@ -2376,6 +2379,13 @@ class MainWindow(QMainWindow):
             self._chat_widget.add_system_tip(message)
         self._set_normal_state()
     def _on_diary_finished(self, success: bool, result: str):
+        if self._diary_dialog is not None:
+            bridge = getattr(self._diary_dialog, "_bridge", None)
+            if bridge is not None:
+                bridge.generation_completed.emit(str(result), bool(success), "")
+                if success:
+                    bridge.emit_state(str(result))
+                    bridge.emit_page_state("corridor")
         if success:
             self._chat_widget.add_system_tip(f"🌙 莲心已在 {result} 的时间胶囊里留下了她的书页")
             # 播放写完成音效
@@ -3364,6 +3374,7 @@ class MainWindow(QMainWindow):
                 settings_callback=self._setup_diary_timer,
             )
             self._diary_dialog.closed.connect(self._on_time_capsule_closed)
+            self._diary_dialog.tree_reply_requested.connect(self._on_tree_reply_requested)
         self._diary_dialog.refresh()
         self._diary_dialog.show()
         self._diary_dialog.raise_()
@@ -3371,6 +3382,20 @@ class MainWindow(QMainWindow):
 
     def _on_time_capsule_closed(self):
         self._diary_dialog = None
+
+    def _on_tree_hole_updated(self, note_id: int, payload):
+        """Refresh an open capsule without making the WebEngine own the worker."""
+        if self._diary_dialog is not None:
+            try:
+                self._diary_dialog.notify_tree_hole_changed(int(note_id), payload or {})
+            except Exception as exc:
+                print(f"[树洞] 界面刷新失败: {exc}")
+
+    def _on_tree_reply_requested(self, note_id: int):
+        try:
+            self._duty_scheduler.manual_trigger("tree_hole_reply", note_id=int(note_id))
+        except Exception as exc:
+            print(f"[树洞] 手动回复触发失败: {exc}")
 
     def _show_voice_stt_dialog(self):
         """显示语音转录设置独立弹窗（非模态，不阻塞主界面）"""
@@ -3411,6 +3436,25 @@ class MainWindow(QMainWindow):
             {"role": m["role"], "content": m["content"]}
             for m in all_messages
         ]
+        try:
+            from brain.interaction_events import InteractionEventStore
+            events = InteractionEventStore().list_for_date(date_str, limit=80)
+            cfg = get_diary_config()
+            enabled_features = {
+                "desktop": cfg.get("reference_chat", True),
+                "tree_hole": cfg.get("reference_tree_hole", True),
+                "study_room": cfg.get("reference_study_room", True),
+                "time_capsule": cfg.get("reference_time_capsule", True),
+            }
+            events = [event for event in events if enabled_features.get(event.get("feature", ""), True)]
+            events = [event for event in events if event.get("importance") != "noise"]
+            events.sort(key=lambda event: (event.get("importance") != "important", event.get("occurred_at", "")))
+            date_messages.extend(
+                {"role": "system", "source_event_id": event["id"], "content": f"[{event['importance']}][{event['feature']}] {event['summary'] or event['content']}"}
+                for event in events if event.get("event_type") != "diary_saved"
+            )
+        except Exception as exc:
+            print(f"[日记] 读取跨功能互动失败: {exc}")
         
         if not date_messages:
             self._chat_widget.add_system_tip(f"未找到 {date_str} 的共同对话，莲心暂时无法为这一天留下书页。")
@@ -3438,10 +3482,30 @@ class MainWindow(QMainWindow):
         today_str = datetime.now().strftime("%Y-%m-%d")
         mgr = self._agent.get_history_manager()
         all_messages = mgr.get_messages_by_date(today_str, owner_only=True)
-        return [
+        messages = [
             {"role": m["role"], "content": m["content"]}
             for m in all_messages
         ]
+        try:
+            from brain.interaction_events import InteractionEventStore
+            events = InteractionEventStore().list_for_date(today_str, limit=80)
+            cfg = get_diary_config()
+            enabled_features = {
+                "desktop": cfg.get("reference_chat", True),
+                "tree_hole": cfg.get("reference_tree_hole", True),
+                "study_room": cfg.get("reference_study_room", True),
+                "time_capsule": cfg.get("reference_time_capsule", True),
+            }
+            events = [event for event in events if enabled_features.get(event.get("feature", ""), True)]
+            events = [event for event in events if event.get("importance") != "noise"]
+            events.sort(key=lambda event: (event.get("importance") != "important", event.get("occurred_at", "")))
+            messages.extend(
+                {"role": "system", "source_event_id": event["id"], "content": f"[{event['importance']}][{event['feature']}] {event['summary'] or event['content']}"}
+                for event in events if event.get("event_type") != "diary_saved"
+            )
+        except Exception as exc:
+            print(f"[日记] 读取跨功能互动失败: {exc}")
+        return messages
 
     def _write_diary_if_needed(self, force=False):
         """如果当天还没有莲心的书页，则根据共同对话写下右页。"""

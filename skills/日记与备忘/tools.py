@@ -81,41 +81,8 @@ TOOL_DEFINITIONS = [
 
 
 def _read_diary(date: str = None, keyword: str = None, limit: int = 1) -> str:
-    from gui.time_capsule.database import TimeCapsuleDatabase
-    store = TimeCapsuleDatabase()
-    if date:
-        capsule = store.get_day(date)
-        if not capsule.get("user_content") and not capsule.get("lianxin_content"):
-            return f"没有找到 {date} 的时间胶囊。"
-        parts = [f"【{date} 的时间胶囊】"]
-        if capsule.get("user_content"):
-            parts.append(f"主人留下的书页：\n{capsule['user_content']}")
-        if capsule.get("lianxin_content"):
-            parts.append(f"莲心留下的书页：\n{capsule['lianxin_content']}")
-        if capsule.get("traces"):
-            parts.append("后来的笔迹：\n" + "\n".join(
-                f"- {'莲心' if item['author'] == 'lianxin' else '主人'}：{item['content']}"
-                for item in capsule["traces"]
-            ))
-        return "\n\n".join(parts)
-    elif keyword:
-        results = store.search(keyword, limit=limit)
-        if not results:
-            return f"没有找到包含「{keyword}」的时间胶囊。"
-        output = f"找到 {len(results)} 页包含「{keyword}」的共同回忆：\n"
-        for r in results:
-            content = r.get("user_content") or r.get("lianxin_content") or ""
-            output += f"\n- {r['date']}：{content[:100]}...\n"
-        return output
-    else:
-        results = store.timeline(limit=limit)
-        if not results:
-            return "时间胶囊还是空的，第一张书页正在等待被写下。"
-        output = f"最近 {len(results)} 页共同回忆：\n"
-        for r in results:
-            content = r.get("user_content") or r.get("lianxin_content") or ""
-            output += f"\n- {r['date']}：{content[:100]}...\n"
-        return output
+    from gui.time_capsule.diary_reader import read_diary
+    return read_diary(date_value=date, keyword=keyword, limit=limit)
 
 
 def _write_diary(message_count: int = None, force: bool = False) -> str:

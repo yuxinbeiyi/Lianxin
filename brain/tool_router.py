@@ -30,6 +30,7 @@ CORE_TOOLS: Set[str] = {
     "search_conversation_history", "search_cross_session",
     # 文件操作（最高频入口，始终可用避免模型绕弯路）
     "search_files_everything", "read_file",
+    "read_diary", "write_diary",
 }
 
 # ── 领域工具分类 ────────────────────────────────────────
@@ -216,7 +217,22 @@ def get_active_tool_names(user_message: str) -> Set[str]:
     needed = set(CORE_TOOLS)
     for cat in categories:
         needed.update(CATEGORY_TOOLS.get(cat, set()))
+    if is_diary_request(user_message):
+        # A diary/time-capsule question is a structured database query, not a
+        # filesystem search. Keep the exact tools available and remove the
+        # two broad file fallbacks that previously hijacked this intent.
+        needed.update({"read_diary", "write_diary"})
+        needed.discard("read_file")
+        needed.discard("search_files_everything")
     return needed
+
+
+def is_diary_request(user_message: str) -> bool:
+    text = str(user_message or "").lower()
+    return any(token in text for token in (
+        "日记", "时间胶囊", "共同书页", "昨天写了什么", "前天写了什么",
+        "昨天的日记", "前天的日记", "上周的日记", "记得我写的",
+    ))
 
 
 def filter_builtin_tools(all_tools: List[dict], user_message: str) -> List[dict]:

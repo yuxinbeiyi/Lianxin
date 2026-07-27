@@ -41,30 +41,50 @@ def init_diary_db():
             echo_text TEXT,
             status INTEGER DEFAULT 1,
             retry_count INTEGER DEFAULT 0,
+            source_event_ids TEXT NOT NULL DEFAULT '[]',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    columns = {row[1] for row in cursor.execute("PRAGMA table_info(diary)")}
+    if "source_event_ids" not in columns:
+        cursor.execute("ALTER TABLE diary ADD COLUMN source_event_ids TEXT NOT NULL DEFAULT '[]'")
     conn.commit()
     conn.close()
 
 
-def save_diary(date_str: str, content: str, weather: str, is_red_line: bool, echo_text: str):
+def save_diary(date_str: str, content: str, weather: str, is_red_line: bool, echo_text: str,
+               source_event_ids: list[int] | None = None):
     init_diary_db()
     conn = sqlite3.connect(str(DIARY_DB_PATH))
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT OR REPLACE INTO diary (date, content, weather, is_red_line, echo_text, status, retry_count)
-        VALUES (?, ?, ?, ?, ?, 1, 0)
-    ''', (date_str, content, weather, 1 if is_red_line else 0, echo_text))
+        INSERT OR REPLACE INTO diary (date, content, weather, is_red_line, echo_text, status, retry_count, source_event_ids)
+        VALUES (?, ?, ?, ?, ?, 1, 0, ?)
+    ''', (date_str, content, weather, 1 if is_red_line else 0, echo_text,
+          json.dumps(source_event_ids or [], ensure_ascii=False)))
     conn.commit()
     conn.close()
+    try:
+        from brain.interaction_events import record_interaction
+        record_interaction(
+            feature="time_capsule",
+            event_type="diary_saved",
+            local_date=date_str,
+            source_id=f"legacy-diary:{date_str}",
+            content=content,
+            summary=content[:240],
+            importance="important" if is_red_line else "normal",
+            metadata={"author": "lianxin", "weather": weather or "", "source_event_ids": source_event_ids or []},
+        )
+    except Exception as exc:
+        print(f"[互动事件] 日记事件记录失败: {exc}")
     # 旧工具和定时任务继续写 diary.db，同时镜像到 Time Capsule。
     # 镜像失败不影响原有日记保存链路。
     try:
         from gui.time_capsule.database import TimeCapsuleDatabase
         TimeCapsuleDatabase().save_lianxin_content(
             date_str, content, weather=weather, is_red_line=is_red_line,
-            echo_text=echo_text, source={"legacy_diary_api": True},
+            echo_text=echo_text, source={"legacy_diary_api": True, "source_event_ids": source_event_ids or []},
         )
     except Exception as exc:
         print(f"[时间胶囊] 日记镜像失败: {exc}")
@@ -178,7 +198,30 @@ def generate_diary_content(messages: List[Dict]) -> Optional[Dict]:
     try:
         response = agent._call_api_with_retry([{"role": "user", "content": prompt}])
         response_text = response.choices[0].message.content
-        return _parse_diary_json(response_text)
+        result = _parse_diary_json(response_text)
+        if not result:
+            return None
+        allowed_ids = {
+            int(message["source_event_id"])
+            for message in messages
+            if message.get("source_event_id") is not None
+        }
+        raw_ids = result.get("source_event_ids", [])
+        if not isinstance(raw_ids, list):
+            raw_ids = []
+        valid_ids = []
+        for value in raw_ids:
+            try:
+                event_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if event_id in allowed_ids and event_id not in valid_ids:
+                valid_ids.append(event_id)
+        result["source_event_ids"] = valid_ids or sorted(allowed_ids)
+        cfg = get_diary_config()
+        max_chars = max(400, min(5000, int(cfg.get("max_chars", 1600) or 1600)))
+        result["content"] = str(result.get("content", "")).strip()[:max_chars]
+        return result if result["content"] else None
     except Exception as e:
         print(f"[日记] 生成失败: {e}")
         return None
@@ -196,7 +239,8 @@ def _build_diary_prompt(messages: List[Dict], persona_snapshot=None) -> str:
         elif m["role"] == "assistant":
             lines.append(f"[你（{assistant_name}）]: {m['content']}")
         else:
-            lines.append(f"[{m['role']}]: {m['content']}")
+            source = f" source_event_id={m['source_event_id']}" if m.get('source_event_id') else ""
+            lines.append(f"[{m['role']}{source}]: {m['content']}")
     conversation = "\n".join(lines)
     name = get_user_name()
     legacy_prompt = f"""你是莲心，一个温柔细腻、有点小俏皮的AI助手，{name}是你的主人，也是你最重要的人。
@@ -219,8 +263,19 @@ def _build_diary_prompt(messages: List[Dict], persona_snapshot=None) -> str:
 今天的对话记录：
 {conversation}
 """
+    cfg = get_diary_config()
+    detail_rule = "重要事件可以写得更具体。" if cfg.get("important_detail", True) else "所有事件都保持简洁。"
+    grounding_rules = f"""
+【写作边界】
+1. 只整理上面的真实记录，不得猜测、补充或编造没有出现过的时间、地点、人物、数字和心理活动。
+2. {detail_rule} 普通事件一句带过；没有足够内容时写短一点，不要为了凑篇幅扩写。
+3. 少用模板化总结、鸡汤和旁白式的 AI 语气，像莲心给未来的自己留下的一段真实记录。
+4. 不确定的内容直接省略，不要使用“也许”“或许”来掩盖猜测。
+5. 输出仍然只能是 JSON，字段保持 content、weather、is_red_line、echo_text。
+"""
+    grounding_rules += "\nEvery source_event_id must be copied from the input records. Never invent an ID.\n"
     return compose_scene_prompt(
-        legacy_prompt, user_name=name, snapshot=persona_snapshot
+        legacy_prompt + grounding_rules, user_name=name, snapshot=persona_snapshot
     )
 
 def _parse_diary_json(response_text: str) -> Optional[Dict]:
@@ -256,7 +311,8 @@ class DiaryWorker(QThread):
                     content=data.get("content", ""),
                     weather=data.get("weather", ""),
                     is_red_line=data.get("is_red_line", False),
-                    echo_text=data.get("echo_text", "")
+                    echo_text=data.get("echo_text", ""),
+                    source_event_ids=data.get("source_event_ids", []),
                 )
                 self.finished.emit(True, self.target_date)
             else:

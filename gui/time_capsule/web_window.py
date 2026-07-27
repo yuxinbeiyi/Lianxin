@@ -1,7 +1,9 @@
 """Time Capsule 的 QWebEngine 宿主窗口。"""
 
 import hashlib
+import os
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -39,6 +41,7 @@ class TimeCapsulePage(QWebEnginePage):
 
 class TimeCapsuleWindow(QMainWindow):
     closed = pyqtSignal()
+    tree_reply_requested = pyqtSignal(int)
 
     def __init__(self, parent=None, *, generation_callback=None, settings_callback=None,
                  db_path=None):
@@ -81,6 +84,7 @@ class TimeCapsuleWindow(QMainWindow):
         self._bridge.close_requested.connect(self.close)
         self._bridge.minimize_requested.connect(self.showMinimized)
         self._bridge.fullscreen_requested.connect(self._toggle_fullscreen)
+        self._bridge.tree_reply_requested.connect(self.tree_reply_requested)
         self._index = Path(__file__).with_name("web") / "index.html"
         self._view.loadFinished.connect(self._on_load_finished)
         page.renderProcessTerminated.connect(self._on_render_process_terminated)
@@ -98,9 +102,16 @@ class TimeCapsuleWindow(QMainWindow):
         """一次装入同一版本的 HTML/CSS/JS，避免旧页面与新脚本交叉缓存。"""
         web_dir = self._index.parent
         html = self._index.read_text(encoding="utf-8")
+        digests = {}
         for asset in ("styles.css", "app.js"):
             digest = hashlib.sha256((web_dir / asset).read_bytes()).hexdigest()[:12]
+            digests[asset] = digest
             html = re.sub(rf'{re.escape(asset)}(?:\?v=[^"\']+)?', f"{asset}?v={digest}", html)
+        self._write_web_log(
+            f"BUILD pid={os.getpid()} python={sys.executable} module={Path(__file__).resolve()} "
+            f"html={hashlib.sha256(html.encode('utf-8')).hexdigest()[:12]} "
+            f"css={digests.get('styles.css')} js={digests.get('app.js')}"
+        )
         base_url = QUrl.fromLocalFile(str(web_dir.resolve()) + "/")
         self._view.setHtml(html, base_url)
 
@@ -132,6 +143,11 @@ class TimeCapsuleWindow(QMainWindow):
 
     def refresh(self, day: str | None = None):
         self._bridge.emit_state(day)
+
+    def notify_tree_hole_changed(self, note_id: int = 0, payload: dict | None = None):
+        """Notify the page from the Qt thread; WebEngine is never touched by a worker."""
+        self._bridge.emit_state()
+        self._bridge.emit_page_state("tree")
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape and self._stable_fullscreen:

@@ -22,7 +22,7 @@ from config import (
 )
 from brain.tools import TOOL_DEFINITIONS, execute_tool, set_cross_session_context
 from brain.skill_manager import get_active_tool_definitions, get_active_knowledge
-from brain.tool_router import filter_builtin_tools, build_tool_catalog, match_categories, detect_tool_request, CATEGORY_ORDER
+from brain.tool_router import filter_builtin_tools, build_tool_catalog, match_categories, detect_tool_request, CATEGORY_ORDER, is_diary_request
 from memory.history_manager import HistoryManager
 from brain.context_compressor import (
     build_fallback_summary,
@@ -1194,42 +1194,66 @@ class AgentCore:
         return 0
 
     def _build_diary_context(self, level: int, user_message: str) -> dict | None:
-        """搜索日记并构建上下文消息，无结果返回 None"""
-        from utils.diary import search_diaries_by_keyword, get_recent_diaries
-
-        if level == 1:
-            # Level 1: 去掉触发词后，整句当关键词搜
-            LEVEL1_TRIGGERS = [
-                "上次", "之前", "那天", "还记得", "你记得", "说过",
-                "聊过", "以前", "过去", "曾经", "不是说过", "不是聊过"
-            ]
-            kw = user_message
-            for t in LEVEL1_TRIGGERS:
-                kw = kw.replace(t, "")
-            kw = kw.strip()
-            if not kw:
-                kw = user_message.strip()
-            diaries = search_diaries_by_keyword(kw, limit=3)
-            if not diaries:
-                return None
-            title = "【日记回忆】你在日记中记录过这些相关内容：\n"
-        elif level == 2:
-            # Level 2: 最近 7 天日记
-            diaries = get_recent_diaries(limit=7)
-            if not diaries:
-                return None
-            title = "【日记回忆】最近一周你写的日记：\n"
-        else:
+        """Build read-only context from the canonical Time Capsule store."""
+        if not is_diary_request(user_message):
+            return None
+        try:
+            from gui.time_capsule.diary_reader import build_diary_context
+            content = build_diary_context(user_message, limit=7 if level == 2 else 3)
+            return {"role": "system", "content": "【时间胶囊只读回忆】\n" + content}
+        except Exception as exc:
+            print(f"[时间胶囊] 上下文预读取失败: {exc}")
             return None
 
-        lines = [title]
-        for d in diaries:
-            content = d["content"]
-            if len(content) > 150:
-                content = content[:150] + "..."
-            lines.append(f"- {d['date']}: {content}")
-
-        return {"role": "system", "content": "\n".join(lines)}
+    def _build_interaction_context(self, user_message: str) -> dict | None:
+        """Retrieve a small, source-labelled cross-feature memory snippet on demand."""
+        text = str(user_message or "").strip()
+        feature_terms = {
+            "time_capsule": ("时间胶囊", "日记本", "时间长廊", "收藏馆", "那篇日记"),
+            "study_room": ("自习室", "学习了多久", "学习记录", "自习"),
+            "tree_hole": ("树洞", "纸条", "纸匣子"),
+        }
+        matched = [feature for feature, terms in feature_terms.items()
+                   if any(term in text for term in terms)]
+        recall_terms = ("刚才", "刚刚", "之前", "那天", "记得", "记住", "看过",
+                        "聊过", "完成", "哪篇", "那条", "里面")
+        if not matched and not any(term in text for term in recall_terms):
+            return None
+        try:
+            from brain.interaction_events import InteractionEventStore
+            store = InteractionEventStore()
+            if matched:
+                events = []
+                seen = set()
+                for feature in matched:
+                    for term in feature_terms[feature]:
+                        for event in store.search(term, limit=8):
+                            if event.get("feature") == feature and event.get("id") not in seen:
+                                seen.add(event.get("id"))
+                                events.append(event)
+                        if len(events) >= 8:
+                            break
+                events = events[:8]
+            else:
+                events = store.search(text, limit=8)
+            lines = [
+                "【莲心的功能与互动记录】",
+                "莲心拥有莲心自习室、时间胶囊和树洞；下面只列出实际检索到的记录。",
+            ]
+            if not events:
+                lines.append("当前没有检索到与这句话对应的具体记录，不要声称已经看到了不存在的内容。")
+            else:
+                for event in events:
+                    detail = event.get("summary") or event.get("content") or ""
+                    detail = str(detail).replace("\n", " ")[:240]
+                    lines.append(
+                        f"- [{event.get('local_date', '')}] {event.get('feature', '')}/"
+                        f"{event.get('event_type', '')}: {detail}"
+                    )
+            return {"role": "system", "content": "\n".join(lines)}
+        except Exception as exc:
+            print(f"[互动记忆] 检索失败: {exc}")
+            return None
 
     # ── 内部实现 ─────────────────────────────────────────────
 
@@ -1802,13 +1826,11 @@ class AgentCore:
         if self._prev_session_summary and current_user_turns <= 4:
             messages.append({"role": "system", "content": self._prev_session_summary})
 
-        # ── 日记智能回忆：命中触发词自动搜索注入 ──────────────
+        # ── 跨功能互动回忆 ───────────────────────────────────
         if not self._use_local and self._owner_scope:
-            level = self._should_search_diary(user_message) # type: ignore
-            if level > 0:
-                diary_msg = self._build_diary_context(level, user_message) # type: ignore
-                if diary_msg:
-                    messages.append(diary_msg)
+            interaction_msg = self._build_interaction_context(user_message)
+            if interaction_msg:
+                messages.append(interaction_msg)
 
         # ── 注入情感状态（涟漪系统） ──────────────────────────
 
@@ -2024,6 +2046,22 @@ class AgentCore:
                 disabled_tool_names=runtime_disabled_names,
             )
             messages.append({"role": "system", "content": catalog_text})
+            if is_diary_request(_msg_for_match):
+                try:
+                    from gui.time_capsule.diary_reader import build_diary_context
+                    diary_context = build_diary_context(_msg_for_match, limit=3)
+                except Exception as exc:
+                    diary_context = f"时间胶囊预读取失败：{exc}"
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "【时间胶囊权威读取结果】以下内容已在本轮调用模型前直接从 "
+                        "TimeCapsuleDatabase 只读取得，不是模型猜测，也不是文件搜索结果。\n"
+                        f"{diary_context}\n\n"
+                        "请直接依据上述真实内容回答用户，不要再调用 read_file、"
+                        "search_files_everything 或 read_diary 重复查询。严禁补写不存在的经历。"
+                    ),
+                })
 
 
         # ── 长期记忆说明（必须在对话历史之前注入） ────────────
@@ -2414,7 +2452,13 @@ class AgentCore:
                     _full_tools_injected = True
                     print("[工具激活] 检测到模型需要未激活工具，全量注入重试", flush=True)
                     loaded_categories = set(CATEGORY_ORDER)  # 全部激活
-                    all_tools = TOOL_DEFINITIONS + skill_tools + mcp_tools
+                    _seen_tool_names = set()
+                    all_tools = []
+                    for _tool in TOOL_DEFINITIONS + skill_tools + mcp_tools:
+                        _tool_name = _tool.get("function", {}).get("name", "")
+                        if _tool_name and _tool_name not in _seen_tool_names:
+                            _seen_tool_names.add(_tool_name)
+                            all_tools.append(_tool)
                     if runtime_disabled_names:
                         all_tools = [t for t in all_tools
                                      if t.get("function", {}).get("name", "") not in runtime_disabled_names]
