@@ -1173,8 +1173,15 @@ class MainWindow(QMainWindow):
         if self._speaker_worker and self._speaker_worker.isRunning():
             self._speaker.stop()
 
+        # 新消息接管时，必须撤销旧看门狗的延迟清理。
+        # 否则旧任务的超时回调会误把刚创建的新 Worker 当成超时目标并终止。
+        self._agent_watchdog.stop()
+        self._stop_watchdog_check_timer()
+        self._watchdog_resolved = True
+
         # ── 风暴式打断：终止旧 AgentWorker，防止旧回复污染 ──
         if self._agent_worker and self._agent_worker.isRunning():
+            self._agent.cancel_active_request("用户发送了新的消息")
             self._agent_worker.terminate()
             self._agent_worker.wait(1000)
             try:
@@ -1379,6 +1386,7 @@ class MainWindow(QMainWindow):
     def _on_error(self, err: str):
         self._watchdog_resolved = True  # 防止看门狗 cleanup 重复添加系统提示
         self._agent_watchdog.stop()
+        self._stop_watchdog_check_timer()
         self._chat_widget.finalize_tool_groups()
         self._duty_scheduler.set_agent_busy(False)
         self._input_panel.hide_interrupt_bar()
@@ -1392,6 +1400,7 @@ class MainWindow(QMainWindow):
     def _on_ai_response(self, text: str):
         self._watchdog_resolved = True  # 防止看门狗 cleanup 重复添加系统提示
         self._agent_watchdog.stop()
+        self._stop_watchdog_check_timer()
         from brain.task_tracker import get_task_tracker
         get_task_tracker().clear()
         self._input_panel.hide_interrupt_bar()
@@ -1803,6 +1812,7 @@ class MainWindow(QMainWindow):
         """打断思考，回填上一条用户消息到输入框。"""
         self._agent_watchdog.stop()
         if self._agent_worker and self._agent_worker.isRunning():
+            self._agent.cancel_active_request("用户手动打断")
             self._agent_worker.terminate()
             self._agent_worker = None
         self._input_panel.hide_interrupt_bar()
@@ -2685,6 +2695,7 @@ class MainWindow(QMainWindow):
         if not self._agent_worker or not self._agent_worker.isRunning():
             return
         print("[看门狗] AgentWorker 超过 3 分钟无响应，发起优雅取消", flush=True)
+        self._watchdog_worker = self._agent_worker
         # 记录当前 history 末尾索引，用于后续清理残留的未展示回复
         self._watchdog_history_snapshot = len(self._agent.history) if self._agent else 0
         self._watchdog_resolved = False  # 防止 response_ready 和 cleanup 重复处理
@@ -2697,27 +2708,40 @@ class MainWindow(QMainWindow):
         self._watchdog_check_timer.start(2000)  # 每 2 秒检查一次
 
     def _on_watchdog_check(self):
+        target_worker = getattr(self, "_watchdog_worker", None)
+        # 新消息已经替换 Worker 时，旧看门狗只需自行失效，绝不能碰新任务。
+        if target_worker is None or target_worker is not self._agent_worker:
+            self._stop_watchdog_check_timer()
+            return
         self._watchdog_retry_count += 1
-        if self._agent_worker and self._agent_worker.isRunning():
+        if target_worker.isRunning():
             if self._watchdog_retry_count >= 5:  # 10 秒后仍运行
                 print("[看门狗] 优雅取消失败，强制终止", flush=True)
-                self._agent_worker.terminate()
-                self._agent_worker = None
+                target_worker.terminate()
+                target_worker.wait(500)
+                if self._agent_worker is target_worker:
+                    self._agent_worker = None
                 self._finish_watchdog_cleanup(force=True)
         else:
             # worker 已自然结束（_on_ai_response 可能已处理）
             if not getattr(self, '_watchdog_resolved', False):
                 self._finish_watchdog_cleanup(force=False)
 
+    def _stop_watchdog_check_timer(self):
+        timer = getattr(self, "_watchdog_check_timer", None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+            del self._watchdog_check_timer
+        for name in ("_watchdog_retry_count", "_watchdog_worker"):
+            if hasattr(self, name):
+                delattr(self, name)
+
     def _finish_watchdog_cleanup(self, force: bool):
         if getattr(self, '_watchdog_resolved', False):
             return
         self._watchdog_resolved = True
-        if hasattr(self, '_watchdog_check_timer'):
-            self._watchdog_check_timer.stop()
-            del self._watchdog_check_timer
-        if hasattr(self, '_watchdog_retry_count'):
-            del self._watchdog_retry_count
+        self._stop_watchdog_check_timer()
 
         # 清理 history 中残留的未展示 assistant 回复
         if force and self._agent:
@@ -2738,6 +2762,7 @@ class MainWindow(QMainWindow):
             del self._watchdog_history_snapshot
 
         self._agent._cancel_event.clear()
+        self._duty_scheduler.set_agent_busy(False)
         self._input_panel.hide_interrupt_bar()
         self._char_widget.stop_thinking()
         self._set_idle_state()

@@ -29,12 +29,14 @@ def _load_model():
     global _model, _load_attempted
     if _load_attempted:
         return _model
-    _load_attempted = True
 
     # Do not construct FunASR concurrently with the embedding model.  Native
     # Torch initialisation is not safe to race on the affected Windows builds.
     from utils.torch_model_loading import torch_model_load_lock
     with torch_model_load_lock:
+        if _load_attempted:
+            return _model
+        _load_attempted = True
         return _load_model_locked()
 
 
@@ -156,11 +158,16 @@ def is_available() -> bool:
 
 
 def warmup():
-    """预热模型：在后台线程加载，不阻塞启动。
+    """预热模型：非 Windows 默认允许，Windows 仅显式 opt-in。
 
-    外层 try/except 确保即使 GPU/CUDA 硬崩溃也能安全降级，
-    不会拖垮整个进程。
+    某些 Windows Torch/Transformers 组合会在启动阶段与 embedding 模型
+    并发构造时发生进程级 heap corruption，Python 的 try/except 无法恢复。
+    Windows 改为首次实际转录时按需加载；设置
+    ``LIANXIN_ENABLE_BACKGROUND_MODEL_WARMUP=1`` 才恢复旧预热行为。
     """
+    if os.name == "nt" and os.environ.get("LIANXIN_ENABLE_BACKGROUND_MODEL_WARMUP") != "1":
+        logger.info("Windows 已跳过 FunASR 后台预热，将在首次语音识别时加载")
+        return
     import threading
     def _load():
         try:

@@ -505,7 +505,10 @@ def reindex_all_facts():
 
 
 def warmup():
-    """后台预热 embedding 模型（启动时调用）。"""
+    """后台预热 embedding 模型（Windows 默认按需加载）。"""
+    if _os.name == "nt" and _os.environ.get("LIANXIN_ENABLE_BACKGROUND_MODEL_WARMUP") != "1":
+        logger.info("Windows 已跳过 RAG 后台预热，将在首次语义检索时加载")
+        return
     def _load():
         _get_model()
         if _model is not None:

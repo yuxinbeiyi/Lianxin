@@ -78,6 +78,29 @@ class PersonaPromptComposer:
         return "\n\n".join(sections)
 
     @classmethod
+    def render_persona_compact(cls, profile: PersonaProfile, user_name: str) -> str:
+        """日常聊天运行版：保留身份、性格、关系和硬边界，省略重复细节。"""
+        replacements = {"{user_name}": user_name, "{assistant_name}": profile.assistant_name}
+
+        def render(value: str) -> str:
+            result = str(value or "")
+            for source, target in replacements.items():
+                result = result.replace(source, target)
+            return result.strip()
+
+        sections = [f"你的名字是“{profile.assistant_name}”。"]
+        for field, label in (
+            ("summary", "角色摘要"), ("identity", "身份"),
+            ("personality", "性格"), ("speaking_style", "语言风格"),
+            ("relationship", "与用户的关系"), ("user_address", "称呼"),
+            ("boundaries", "硬边界"), ("custom_instructions", "补充约束"),
+        ):
+            content = render(getattr(profile, field))
+            if content:
+                sections.append(f"【{label}】\n{content}")
+        return "\n\n".join(sections)
+
+    @classmethod
     def compose(
         cls,
         snapshot: PersonaSnapshot,
@@ -86,11 +109,13 @@ class PersonaPromptComposer:
         core_policy: str,
         scene_policy: str = "",
         dynamic_context: Iterable[str] = (),
+        compact: bool = False,
     ) -> CompiledPrompt:
         layers: list[PromptLayer] = [
             PromptLayer(
                 "人格设定",
-                cls.render_persona(snapshot.profile, user_name),
+                (cls.render_persona_compact(snapshot.profile, user_name)
+                 if compact else cls.render_persona(snapshot.profile, user_name)),
                 editable=True,
             )
         ]

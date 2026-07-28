@@ -14,6 +14,8 @@
 
 from typing import List, Dict, Set, Tuple
 
+from brain.request_router import RequestRoute
+
 # ── 核心工具（始终加载完整定义）────────────────────────────
 CORE_TOOLS: Set[str] = {
     # 记忆系统（仅保留高频 CRUD，其余按需激活）
@@ -256,6 +258,18 @@ def filter_builtin_tools(all_tools: List[dict], user_message: str) -> List[dict]
     active = get_active_tool_names(user_message)
     selected = [t for t in all_tools
                 if t.get("function", {}).get("name", "") in active]
+    from brain.request_tool_policy import filter_definitions_for_request
+    return filter_definitions_for_request(selected, user_message)
+
+
+def filter_builtin_tools_for_route(all_tools: List[dict], route: RequestRoute,
+                                   user_message: str) -> List[dict]:
+    """按请求模式只注入本轮确实开放的工具，取代核心工具常驻。"""
+    active = set(route.tool_names)
+    selected = [
+        item for item in all_tools
+        if item.get("function", {}).get("name", "") in active
+    ]
     from brain.request_tool_policy import filter_definitions_for_request
     return filter_definitions_for_request(selected, user_message)
 
