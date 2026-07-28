@@ -2,24 +2,35 @@
 import random
 import time
 from datetime import datetime
-from PyQt5.QtCore import QObject, QThread, pyqtSignal
+from PyQt5.QtCore import QObject, QThread, QTimer, pyqtSignal
 
-from config import get_chat_avatar_config
+from config import get_chat_avatar_config, get_user_name
 
 
-_FALLBACKS = [
+_USER_TAPS_LIANXIN_FALLBACKS = [
     "你是不是又开始摸鱼了？怎么突然拍我？",
     "拍完就想跑？这一下我可记住了。",
     "呦，这不是雨心博士吗？今天怎么突然想起拍我了？",
-    "谁允许你摸我头的……不过这次先算了。",
     "我刚才还在认真想事情，差点被你拍散了。",
     "嗯，这一下收到了。你今天心情还好吗？",
 ]
 
-_HEADPAT_FALLBACKS = [
+_USER_HEADPATS_LIANXIN_FALLBACKS = [
     "嗯……轻一点嘛，不过这次就原谅你了。",
     "被你摸到了。今天可以稍微陪你久一点。",
     "好啦好啦，摸完记得继续陪我说话。",
+]
+
+_LIANXIN_TAPS_USER_FALLBACKS = [
+    "刚刚那一下是我拍的，提醒你一下，我还在这里。",
+    "我主动拍了拍你，别走神太久呀。",
+    "轻轻拍你一下，今天也要记得照顾好自己。",
+]
+
+_LIANXIN_HEADPATS_USER_FALLBACKS = [
+    "摸摸头，今天辛苦了，我在这里陪你。",
+    "刚刚是我摸了摸你的头，给你一点安静的鼓励。",
+    "轻轻摸一下，别把所有事情都一个人扛着。",
 ]
 
 
@@ -27,10 +38,11 @@ class AvatarInteractionWorker(QThread):
     response_ready = pyqtSignal(str)
     failed = pyqtSignal()
 
-    def __init__(self, agent, prompt, parent=None):
+    def __init__(self, agent, prompt, invalid_markers=(), parent=None):
         super().__init__(parent)
         self.agent = agent
         self.prompt = prompt
+        self.invalid_markers = tuple(str(marker).lower() for marker in invalid_markers)
 
     def run(self):
         # 拍一拍不写入正常会话，但必须走真实 LLM 链路。部分网关会把
@@ -70,7 +82,7 @@ class AvatarInteractionWorker(QThread):
                         "api", "调用失败", "请求失败", "服务异常", "网络异常",
                         "no user query", "authenticationerror", "connection slots",
                     )
-                    if text and not any(marker in lowered for marker in error_markers):
+                    if text and not any(marker in lowered for marker in error_markers + self.invalid_markers):
                         print(f"[拍一拍] LLM 动态回应成功 attempt={attempt}, len={len(text)}", flush=True)
                         self.response_ready.emit(text[:180])
                         return
@@ -89,9 +101,9 @@ class AvatarInteractionWorker(QThread):
 
 class AvatarInteractionController(QObject):
     thinking_started = pyqtSignal(str)
-    response_ready = pyqtSignal(str, bool)  # text, 是否反拍
+    response_ready = pyqtSignal(str, bool)  # text, 保留兼容的旧反拍标记
     interaction_blocked = pyqtSignal(str)
-    interaction_accepted = pyqtSignal(str, str, str)  # action, target, source
+    interaction_accepted = pyqtSignal(str, str, str, str)  # action, target, source, counter_action
 
     def __init__(self, agent, stats, parent=None):
         super().__init__(parent)
@@ -107,6 +119,7 @@ class AvatarInteractionController(QObject):
         self._last_action = "tap"
         self._last_source = "user"
         self._fallback_used = False
+        self._planned_counter_action = ""
 
     def _time_context(self):
         hour = datetime.now().hour
@@ -188,12 +201,103 @@ class AvatarInteractionController(QObject):
             probability += 0.08
         return max(0.08, min(0.68, probability))
 
+    def _fallback_choices(self):
+        if self._last_actor == "assistant":
+            return (
+                _LIANXIN_HEADPATS_USER_FALLBACKS
+                if self._last_action == "headpat" else _LIANXIN_TAPS_USER_FALLBACKS
+            )
+        return (
+            _USER_HEADPATS_LIANXIN_FALLBACKS
+            if self._last_action == "headpat" else _USER_TAPS_LIANXIN_FALLBACKS
+        )
+
+    def _build_prompt(self, context):
+        user_name = str(get_user_name() or "主人")
+        if self._last_actor == "assistant":
+            action_description = (
+                f"莲心刚刚主动轻轻摸了摸{user_name}的头像。"
+                if self._last_action == "headpat"
+                else f"莲心刚刚主动拍了拍{user_name}的头像。"
+            )
+            prohibited = (
+                "禁止出现“你拍我”“你怎么拍我”“被你拍到”“你摸我”或“被你摸头”等"
+                "把莲心写成被互动对象的表达。"
+            )
+            tone = "摸头应是温柔陪伴或安慰；拍一拍可以是轻松提醒、调皮或关心。"
+        else:
+            action_description = (
+                f"{user_name}刚刚摸了摸莲心的头像。"
+                if self._last_action == "headpat"
+                else f"{user_name}刚刚拍了拍莲心的头像。"
+            )
+            prohibited = "不要把动作方向写反，也不要编造莲心主动拍了对方。"
+            tone = "可以自然回应被互动的感受，保持轻松、亲近和克制。"
+        return (
+            "事实不可改变：\n"
+            f"- 发起者：{'莲心' if self._last_actor == 'assistant' else user_name}\n"
+            f"- 对象：{user_name if self._last_target == 'user' else '莲心'}\n"
+            f"- 动作：{'摸头' if self._last_action == 'headpat' else '拍一拍'}\n"
+            f"- 事件：{action_description}\n"
+            "请以莲心第一人称写 1 到 2 句自然、口语化的主动互动短句。"
+            f"{tone}{prohibited}"
+            "不要提到系统、模型、提示词、事件日志，不要调用工具，不要输出标题或标签。\n"
+            f"当前时间语境：{self._time_context()}；连续互动次数：{self._tap_streak}\n"
+            f"当前情绪与关系数据：{context}\n"
+            "这些数据只用于调整语气，不要在回复中直接复述数值。"
+        )
+
+    def _invalid_response_markers(self):
+        if self._last_actor != "assistant":
+            return ()
+        if self._last_action == "headpat":
+            return ("你摸我", "被你摸", "被你摸头", "摸完记得")
+        return ("你拍我", "你怎么拍我", "被你拍", "拍完就想跑")
+
+    def _plan_counter_action(self, context, cfg):
+        """用户互动莲心时，先决定是否反拍/反摸，再开始生成台词。"""
+        if (
+            self._last_actor == "user" and self._last_target == "assistant"
+            and bool(cfg.get("counter_tap", True))
+            and random.random() < self._counter_probability(context)
+        ):
+            return self._last_action
+        return ""
+
+    def _begin_response(self, context, cfg):
+        """在反击动画结束后再开始 LLM 或备用回复。"""
+        if not self._busy:
+            return
+        if not cfg.get("dynamic_response", True):
+            self._fallback_used = True
+            self._finish(random.choice(self._fallback_choices()))
+            return
+        self._fallback_used = False
+        thinking_text = (
+            "莲心正在想该怎么轻轻回应你……"
+            if self._last_actor == "assistant" and self._last_action == "headpat" else
+            "莲心正在组织刚才主动互动的回应……"
+            if self._last_actor == "assistant" else
+            "莲心正在想该怎么回应你……"
+        )
+        self.thinking_started.emit(thinking_text)
+        self._worker = AvatarInteractionWorker(
+            self.agent, self._build_prompt(context), self._invalid_response_markers(), self,
+        )
+        self._worker.response_ready.connect(self._finish)
+        self._worker.failed.connect(self._finish_fallback)
+        self._worker.finished.connect(self._worker.deleteLater)
+        self._worker.start()
+
     def trigger(self, role="assistant", action="tap", source="user"):
         cfg = get_chat_avatar_config()
         if not cfg.get("interactions_enabled", True):
             self.interaction_blocked.emit("头像互动已在设置中关闭")
             return False
         if role not in ("assistant", "user"):
+            return False
+        if source == "user" and role == "user":
+            self.interaction_blocked.emit("只有莲心可以拍一拍或摸你的头像")
             return False
         self._last_role = role
         now_ms = time.monotonic() * 1000
@@ -215,81 +319,53 @@ class AvatarInteractionController(QObject):
         self._last_source = source
         target = role
         actor = "user" if source == "user" else "assistant"
-        interaction_type = "user_tap" if action == "tap" and actor == "user" and target == "assistant" else (
-            "user_self_tap" if action == "tap" and target == "user" and actor == "user" else (
-                "assistant_tap_user" if action == "tap" else (
-                    "user_headpat" if actor == "user" else "assistant_headpat_user")))
-        self._remember_event(action, actor, "user" if target == "user" else "assistant", source)
+        self._last_actor = actor
+        self._last_target = target
+        interaction_type = (
+            "assistant_headpat_user" if action == "headpat" and actor == "assistant" else
+            "user_headpat" if action == "headpat" else
+            "assistant_tap_user" if actor == "assistant" else "user_tap"
+        )
+        self._remember_event(action, actor, target, source)
         self.stats.record_avatar_detail(
             interaction_type, actor=actor, target="user" if target == "user" else "assistant",
             source=source, reaction=action, streak=self._tap_streak,
             context={"time": self._time_context()})
-        self.interaction_accepted.emit(action, target, source)
         print(f"[拍一拍] 互动开始 role={role}, dynamic={cfg.get('dynamic_response', True)}", flush=True)
-        self.thinking_started.emit(random.choice([
-            "莲心揉了揉刚才被拍的地方……",
-            "莲心正在决定要不要反击……",
-            "莲心想了一下该怎么回应你……",
-        ]))
         context = self._emotion_context()
-        if action == "headpat" and source == "assistant":
-            action_text = "你刚刚主动温柔地摸了摸用户的头像。"
-        elif action == "headpat":
-            action_text = "用户刚刚温柔地摸了摸你的头像。"
-        elif source == "assistant":
-            action_text = "你刚刚主动拍了拍用户的头像。"
+        self._planned_counter_action = self._plan_counter_action(context, cfg)
+        if self._planned_counter_action:
+            self.stats.record_avatar_detail(
+                "counter_tap" if self._planned_counter_action == "tap" else "counter_headpat",
+                actor="assistant", target="user", source="counter",
+                reaction=self._planned_counter_action, streak=self._tap_streak,
+                context={"time": self._time_context()},
+            )
+        self.interaction_accepted.emit(action, target, source, self._planned_counter_action)
+        # 留出反击动画时间，保证用户先看到动作，再看到思考与台词。
+        if self._planned_counter_action:
+            QTimer.singleShot(460, lambda: self._begin_response(context, cfg))
         else:
-            action_text = "用户刚刚双击拍了拍你的头像。" if role == "assistant" else "用户刚刚双击拍了拍自己的头像。"
-        prompt = (
-            f"{action_text}请以莲心当前的人格自然回应这件事，"
-            "只回复1到2句口语化短句，可以吐槽、撒娇、害羞、反击或关心。"
-            "不要提到系统、模型、提示词、事件日志，不要调用工具，不要输出标签，"
-            "不要重复固定句式。\n"
-            f"互动动作：{action}；当前时间语境：{self._time_context()}。\n"
-            f"当前拍击连续次数：{self._tap_streak}\n"
-            f"当前情绪与关系数据：{context}\n"
-            "这些数据只用于调整语气，不要在回复中直接复述数值。"
-        )
-        if not cfg.get("dynamic_response", True):
-            self._fallback_used = True
-            choices = _HEADPAT_FALLBACKS if action == "headpat" else _FALLBACKS
-            self._finish(random.choice(choices))
-            return True
-        self._fallback_used = False
-        self._worker = AvatarInteractionWorker(self.agent, prompt, self)
-        self._worker.response_ready.connect(self._finish)
-        self._worker.failed.connect(self._finish_fallback)
-        self._worker.finished.connect(self._worker.deleteLater)
-        self._worker.start()
+            self._begin_response(context, cfg)
         return True
 
     def _finish_fallback(self):
         self._fallback_used = True
-        choices = _HEADPAT_FALLBACKS if self._last_action == "headpat" else _FALLBACKS
-        self._finish(random.choice(choices))
+        self._finish(random.choice(self._fallback_choices()))
 
     def _finish(self, text):
         if not self._busy:
             return
-        cfg = get_chat_avatar_config()
-        context = self._emotion_context()
-        counter = self._last_action == "tap" and self._last_role == "assistant" and bool(cfg.get("counter_tap", True)) and random.random() < self._counter_probability(context)
-        # 用户拍自己的头像时，不触发莲心的反拍动作。
-        if getattr(self, "_last_role", "assistant") == "user":
-            counter = False
-        if counter:
-            self.stats.record_avatar_detail(
-                "counter_tap", actor="assistant", target="user", source="counter",
-                reaction="counter", streak=self._tap_streak,
-                context={"time": self._time_context()})
         self._busy = False
         try:
             self.stats.record_avatar_outcome(llm=not self._fallback_used, fallback=self._fallback_used)
         except Exception:
             pass
-        print(f"[拍一拍] 动态回应完成 counter_tap={counter}, len={len(text.strip())}", flush=True)
-        choices = _HEADPAT_FALLBACKS if self._last_action == "headpat" else _FALLBACKS
-        self.response_ready.emit(text.strip() or random.choice(choices), counter)
+        print(
+            f"[拍一拍] 动态回应完成 counter_action={self._planned_counter_action or 'none'}, "
+            f"len={len(text.strip())}", flush=True,
+        )
+        self.response_ready.emit(text.strip() or random.choice(self._fallback_choices()), False)
         self._worker = None
 
     def trigger_outbound(self, action="tap"):

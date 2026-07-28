@@ -58,6 +58,10 @@ class CircularAvatar(QLabel):
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
+            # 用户头像只作为莲心主动互动的受体，不能触发“自己拍自己”。
+            if self.role == "user":
+                event.accept()
+                return
             self._suppress_click = True
             self.play_tap_animation()
             self.double_clicked.emit(self.role)
@@ -284,7 +288,7 @@ class ChatAvatarSettingsTab(QWidget):
         self._enabled=QCheckBox("在聊天气泡中显示头像"); self._enabled.setChecked(self._draft.get("enabled",True)); layout.addWidget(self._enabled)
         self._interaction_enabled=QCheckBox("启用双击头像拍一拍互动"); self._interaction_enabled.setChecked(self._draft.get("interactions_enabled", True)); layout.addWidget(self._interaction_enabled)
         self._dynamic_response=QCheckBox("让莲心思考后动态生成回应"); self._dynamic_response.setChecked(self._draft.get("dynamic_response", True)); layout.addWidget(self._dynamic_response)
-        self._counter_tap=QCheckBox("允许莲心反拍我的头像"); self._counter_tap.setChecked(self._draft.get("counter_tap", True)); layout.addWidget(self._counter_tap)
+        self._counter_tap=QCheckBox("允许莲心反拍或反摸我的头像"); self._counter_tap.setChecked(self._draft.get("counter_tap", True)); layout.addWidget(self._counter_tap)
         self._animation_enabled=QCheckBox("启用头像震动动画"); self._animation_enabled.setChecked(self._draft.get("animation_enabled", True)); layout.addWidget(self._animation_enabled)
         self._response_in_chat=QCheckBox("将莲心的拍一拍回应显示为聊天消息"); self._response_in_chat.setChecked(self._draft.get("response_in_chat", True)); layout.addWidget(self._response_in_chat)
         cooldown_row=QHBoxLayout(); cooldown_row.addWidget(QLabel("拍一拍冷却")); self._cooldown=QDoubleSpinBox(); self._cooldown.setRange(0.5,10.0); self._cooldown.setSingleStep(0.5); self._cooldown.setSuffix(" 秒"); self._cooldown.setValue(float(self._draft.get("tap_cooldown_seconds",1.5))); cooldown_row.addWidget(self._cooldown); cooldown_row.addStretch(); layout.addLayout(cooldown_row)

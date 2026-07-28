@@ -906,7 +906,7 @@ class MainWindow(QMainWindow):
         self._chat_widget.avatar_context_requested.connect(self._on_avatar_context)
         from gui.avatar_interaction import AvatarInteractionController
         self._avatar_interaction = AvatarInteractionController(self._agent, self._accompany_stats, self)
-        self._avatar_interaction.thinking_started.connect(self._chat_widget.show_avatar_thinking)
+        self._avatar_interaction.thinking_started.connect(self._on_avatar_interaction_thinking)
         self._avatar_interaction.response_ready.connect(self._on_avatar_interaction_response)
         self._avatar_interaction.interaction_accepted.connect(self._on_avatar_interaction_accepted)
         self._avatar_interaction.interaction_blocked.connect(
@@ -1897,10 +1897,21 @@ class MainWindow(QMainWindow):
 
     def _on_avatar_interaction(self, role: str):
         """头像双击入口；互动独立于正常 AgentWorker。"""
+        if role != "assistant":
+            return
         if hasattr(self, "_avatar_interaction"):
             self._avatar_interaction.trigger(role)
 
-    def _on_avatar_interaction_accepted(self, action: str, target: str, source: str):
+    def _on_avatar_interaction_thinking(self, text: str):
+        """拍一拍走 LLM 时，同步聊天提示与左侧角色思考状态。"""
+        self._chat_widget.show_avatar_thinking(text)
+        try:
+            self._avatar_actions.request("thinking", source="avatar_interaction", force=True)
+        except Exception:
+            self._char_widget.start_thinking()
+
+    def _on_avatar_interaction_accepted(self, action: str, target: str, source: str,
+                                        counter_action: str = ""):
         """有效互动才写入聊天事件流；冷却/忙碌请求不会留下假事件。"""
         try:
             self._avatar_actions.request("affection", source=f"avatar_{action}", force=True)
@@ -1927,7 +1938,22 @@ class MainWindow(QMainWindow):
                     avatar.play_headpat_animation()
                 elif action == "tap":
                     avatar.play_tap_animation()
-                break
+        if counter_action:
+            def play_counter_action():
+                for avatar in self._chat_widget.findChildren(CircularAvatar):
+                    if avatar.role != "user":
+                        continue
+                    if counter_action == "headpat":
+                        avatar.play_headpat_animation()
+                    else:
+                        avatar.play_tap_animation()
+                play_sound("拍一拍.mp3")
+                counter_text = (
+                    "莲心也轻轻摸了摸你的头"
+                    if counter_action == "headpat" else "莲心反手拍了拍你的头"
+                )
+                self._chat_widget.add_system_tip(counter_text)
+            QTimer.singleShot(160, play_counter_action)
 
     def _on_avatar_context(self, role: str):
         if role != "assistant":
@@ -1964,10 +1990,6 @@ class MainWindow(QMainWindow):
         self._avatar_interaction.trigger_headpat("assistant")
 
     def _on_avatar_interaction_response(self, text: str, counter_tap: bool):
-        try:
-            self._char_widget.stop_thinking()
-        except Exception:
-            pass
         self._accompany_stats.reload()
         if self._accompany_dialog is not None and self._accompany_dialog.isVisible():
             self._accompany_dialog._update_content()
@@ -1978,14 +2000,8 @@ class MainWindow(QMainWindow):
             self._chat_widget.show_avatar_interaction_notice(text, 3200)
         # 头像互动回复也是莲心的真实发言，进入统一语音链路。
         self._speak(text)
-        if counter_tap:
-            from gui.avatar_widgets import CircularAvatar
-            for avatar in self._chat_widget.findChildren(CircularAvatar):
-                if avatar.role == "user":
-                    avatar.play_tap_animation()
-                    break
-            play_sound("拍一拍.mp3")
-            self._chat_widget.add_system_tip("莲心反手拍了拍你的头")
+        if self._global_settings.silent_mode:
+            self._avatar_actions.request("idle", source="avatar_interaction_silent", force=True)
 
     def _on_accompany_dialog_closed(self):
         duration_str = self._accompany_stats.get_current_formatted_duration()

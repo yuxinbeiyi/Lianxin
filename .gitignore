@@ -44,6 +44,9 @@ memory/wechat_session_map.json
 user_data/
 data/
 
+# 时间胶囊日记照片（仅保存在本地，不提交）
+data/dairy_picture/
+
 # OCR 运行时依赖（Tesseract）
 ocr/
 

@@ -114,11 +114,19 @@ class CharacterWidget(QWidget):
         gif_container.addWidget(gif_wrapper)
         main_layout.addLayout(gif_container)
 
-        self._state_label = QLabel("● 待机中")
+        # 状态作为头像框内的悬浮层，不再挤在头像与音乐盒之间。
+        self._state_label = QLabel("● 待机中", gif_wrapper)
         self._state_label.setAlignment(Qt.AlignCenter)
         self._state_label.setFont(QFont("Microsoft YaHei UI", 9))
-        self._state_label.setStyleSheet("color: #6C7BFF; background: transparent;")
-        main_layout.addWidget(self._state_label)
+        self._state_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._state_label.setStyleSheet(
+            "color: #BFC8FF; background: rgba(20, 24, 40, 185); "
+            "border: 1px solid rgba(127, 142, 232, 170); border-radius: 11px; "
+            "padding: 3px 9px;"
+        )
+        self._state_label.adjustSize()
+        self._state_label.move(12, 12)
+        self._state_label.raise_()
 
         # 音乐盒与功能区整体下移
         main_layout.addSpacing(8)
@@ -821,7 +829,14 @@ class CharacterWidget(QWidget):
     def _update_status_label(self, state: str):
         text, color = STATE_CONFIG.get(state, ("● 待机中", "#6C7BFF"))
         self._state_label.setText(text)
-        self._state_label.setStyleSheet(f"color: {color}; background: transparent;")
+        self._state_label.setStyleSheet(
+            f"color: {color}; background: rgba(20, 24, 40, 185); "
+            "border: 1px solid rgba(127, 142, 232, 170); border-radius: 11px; "
+            "padding: 3px 9px;"
+        )
+        self._state_label.adjustSize()
+        self._state_label.move(12, 12)
+        self._state_label.raise_()
 
     def _apply_static_avatar(self, image_path: str):
         pixmap = QPixmap(image_path)
