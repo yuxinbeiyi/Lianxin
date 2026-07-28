@@ -111,14 +111,16 @@ class TimeCapsuleBridge(QObject):
         except Exception as exc:
             return self._json({"ok": False, "error": f"页面读取失败：{exc}"})
 
-    @pyqtSlot(int, int, str, result=str)
-    def get_corridor_page(self, page, page_size, author="all"):
+    @pyqtSlot(int, int, str, str, str, str, result=str)
+    def get_corridor_page(self, page, page_size, author="all", query="",
+                          start_date="", end_date=""):
         try:
             return self._json({
                 "contribution": self.db.contribution(),
                 "recent_collections": self.db.recent_collections(),
                 "timeline_page": self.db.timeline_page(
-                    int(page), int(page_size), str(author)
+                    int(page), int(page_size), str(author), str(query),
+                    str(start_date), str(end_date)
                 ),
             })
         except Exception as exc:

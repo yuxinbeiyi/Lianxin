@@ -686,26 +686,55 @@ class TimeCapsuleDatabase:
         return [self._day_dict(row) for row in rows]
 
     def timeline_page(self, page: int = 1, page_size: int = 15,
-                      author: str = "all") -> dict:
+                      author: str = "all", query: str = "",
+                      start_date: str = "", end_date: str = "") -> dict:
         page_size = max(5, min(50, int(page_size)))
         author = author if author in {"user", "lianxin"} else "all"
-        user_select = """SELECT date, 'user' AS author, user_content AS content,
+        query = str(query or "").strip()
+        try:
+            start_date = date.fromisoformat(str(start_date or "")).isoformat() if start_date else ""
+        except ValueError:
+            start_date = ""
+        try:
+            end_date = date.fromisoformat(str(end_date or "")).isoformat() if end_date else ""
+        except ValueError:
+            end_date = ""
+        if start_date and end_date and start_date > end_date:
+            start_date, end_date = end_date, start_date
+
+        def build_select(author_name: str, content_column: str, author_order: int):
+            conditions = [f"{content_column} <> ''"]
+            params = []
+            if query:
+                like = f"%{query}%"
+                conditions.append(f"({content_column} LIKE ? OR weather LIKE ?)")
+                params.extend([like, like])
+            if start_date:
+                conditions.append("date >= ?")
+                params.append(start_date)
+            if end_date:
+                conditions.append("date <= ?")
+                params.append(end_date)
+            sql = f"""SELECT date, '{author_name}' AS author, {content_column} AS content,
                                  weather, sealed, favorite, favorited_at, updated_at,
-                                 0 AS author_order
-                          FROM capsule_days WHERE user_content <> ''"""
-        lianxin_select = """SELECT date, 'lianxin' AS author, lianxin_content AS content,
-                                    weather, sealed, favorite, favorited_at, updated_at,
-                                    1 AS author_order
-                             FROM capsule_days WHERE lianxin_content <> ''"""
+                                 {author_order} AS author_order
+                          FROM capsule_days WHERE {' AND '.join(conditions)}"""
+            return sql, params
+
+        user_select, user_params = build_select("user", "user_content", 0)
+        lianxin_select, lianxin_params = build_select("lianxin", "lianxin_content", 1)
         if author == "user":
             entries_sql = user_select
+            query_params = user_params
         elif author == "lianxin":
             entries_sql = lianxin_select
+            query_params = lianxin_params
         else:
             entries_sql = f"{user_select} UNION ALL {lianxin_select}"
+            query_params = [*user_params, *lianxin_params]
         with self._connect() as conn:
             total_row = conn.execute(
-                f"SELECT COUNT(*) AS count FROM ({entries_sql})"
+                f"SELECT COUNT(*) AS count FROM ({entries_sql})", query_params
             ).fetchone()
             total_items = int(total_row["count"] if total_row else 0)
             total_pages = max(1, (total_items + page_size - 1) // page_size)
@@ -713,7 +742,7 @@ class TimeCapsuleDatabase:
             rows = conn.execute(
                 f"""SELECT * FROM ({entries_sql})
                     ORDER BY date DESC, author_order ASC LIMIT ? OFFSET ?""",
-                (page_size, (page - 1) * page_size),
+                [*query_params, page_size, (page - 1) * page_size],
             ).fetchall()
         return {
             "items": [
@@ -729,6 +758,9 @@ class TimeCapsuleDatabase:
             "total_items": total_items,
             "total_pages": total_pages,
             "author": author,
+            "query": query,
+            "start_date": start_date,
+            "end_date": end_date,
         }
 
     def favorite_diaries_page(self, page: int = 1, page_size: int = 12,

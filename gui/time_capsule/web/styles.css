@@ -258,16 +258,24 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .rewind-stats div { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .rewind-stats strong { font-family: var(--font-serif); font-size: var(--font-size-h3); }
 .rewind-stats span { color: var(--text-tertiary); font-size: var(--font-size-caption); }
-.c-tooltip { position: fixed; z-index: 80; width: 220px; padding: 16px; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--surface-panel); box-shadow: var(--shadow-lg); pointer-events: none; font-size: var(--font-size-small); }
+.c-tooltip { position: fixed; z-index: 80; width: 220px; padding: 12px 14px; border: 1px solid var(--accent); border-radius: var(--radius-md); background: var(--surface-panel); color: var(--text-primary); box-shadow: var(--shadow-lg); pointer-events: none; font-size: var(--font-size-small); line-height: 1.55; }
 .timeline { max-width: 920px; margin: 0 auto; }
-.timeline-heading { position: relative; align-items: flex-end; min-height: 62px; }
-.timeline-heading .diary-filters { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); }
+.timeline-heading { position: relative; align-items: flex-end; min-height: 76px; padding-bottom: 8px; }
+.timeline-heading .diary-filters { position: absolute; left: 50%; bottom: -4px; transform: translateX(-50%); }
 .corridor-search-wrap { position: relative; width: min(360px, 31vw); margin-left: auto; }
 .corridor-search-wrap > svg { position: absolute; z-index: 1; left: 14px; top: 13px; width: 17px; height: 17px; color: var(--text-tertiary); pointer-events: none; }
 .corridor-search-wrap input { width: 100%; height: 44px; padding: 0 14px 0 42px; font-size: 16px; }
 .diary-filters { display: inline-flex; flex-wrap: wrap; gap: 8px; padding: 5px; border: 1px solid var(--glass-border); border-radius: var(--radius-full); background: var(--surface-subtle); white-space: nowrap; }
 .diary-filters button { min-height: 38px; padding: 0 18px; border: 0; border-radius: var(--radius-full); color: var(--text-tertiary); background: transparent; cursor: pointer; font-size: var(--font-size-small); }
 .diary-filters button.selected { color: var(--text-primary); background: var(--accent-soft); }
+.timeline-date-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; max-width: 1240px; margin: 18px auto 0; padding: 16px 20px; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--surface-subtle); }
+.timeline-date-label { margin-right: 4px; color: var(--text-secondary); font-size: var(--font-size-small); font-weight: 600; white-space: nowrap; }
+.timeline-date-controls .c-input { min-width: 154px; height: 42px; padding: 0 12px; color: var(--text-primary); background: var(--glass-bg); font-size: var(--font-size-small); }
+.timeline-date-controls select.c-input { appearance: auto; color: var(--text-primary); background-color: var(--surface-panel); }
+.timeline-date-controls select.c-input option { color: var(--text-primary); background: var(--surface-panel); }
+.timeline-date-controls input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(82%) sepia(12%) saturate(600%); opacity: .8; cursor: pointer; }
+.timeline-date-controls .c-button { min-width: 92px; min-height: 42px; }
+.timeline-date-separator { color: var(--text-tertiary); }
 .timeline-pagination { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px; margin: 32px auto 0; }
 .timeline-pagination button { min-width: 38px; height: 38px; padding: 0 12px; border: 1px solid var(--glass-border); border-radius: var(--radius-sm); color: var(--text-secondary); background: var(--surface-subtle); cursor: pointer; }
 .timeline-pagination button:hover:not(:disabled), .timeline-pagination button.selected { color: var(--text-primary); border-color: var(--accent); background: var(--accent-soft); }
@@ -511,9 +519,12 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 @media (max-width: 900px) {
   .tree-workspace { grid-template-columns: 1fr; }
   .paper-box { position: static; max-height: none; }
-  .timeline-heading { align-items: flex-start; flex-direction: column; min-height: 0; }
-  .timeline-heading .diary-filters { position: static; transform: none; max-width: 100%; white-space: normal; }
+  .timeline-heading { align-items: flex-start; flex-direction: column; min-height: 0; padding-bottom: 0; }
+  .timeline-heading .diary-filters { position: static; transform: none; max-width: 100%; margin-top: 10px; white-space: normal; }
   .corridor-search-wrap { width: min(100%, 440px); margin: 16px 0 0; }
+  .timeline-date-controls { align-items: stretch; }
+  .timeline-date-controls .c-input, .timeline-date-controls .c-button { flex: 1 1 140px; }
+  .timeline-date-separator { display: none; }
   .diary-card { grid-template-columns: 92px 1fr; }
   .diary-card > span { display: none; }
   .diary-drawer { left: 72px; width: auto; }

@@ -23,6 +23,9 @@ let timelinePage = 1;
 let timelinePageSize = 15;
 let timelineDates = [];
 let timelineAuthor = 'all';
+let timelineQuery = '';
+let timelineStartDate = '';
+let timelineEndDate = '';
 let museumPage = 1;
 let museumQuery = '';
 let museumSort = 'favorite';
@@ -159,7 +162,10 @@ function render(data) {
 async function loadPage(page, force = false) {
   if (!bridge || (loadedPages.has(page) && !dirtyPages.has(page) && !force)) return;
   let data;
-  if (page === 'corridor') data = await call('get_corridor_page', timelinePage, timelinePageSize, timelineAuthor);
+  if (page === 'corridor') data = await call(
+    'get_corridor_page', timelinePage, timelinePageSize, timelineAuthor,
+    timelineQuery, timelineStartDate, timelineEndDate
+  );
   else if (page === 'museum') data = await call('get_museum_page', museumPage, 12, museumQuery, museumSort);
   else if (page === 'tree') data = await call('get_tree_page', treePage, 20, treeFilter, treeQuery, treeSort, treeArchived);
   else data = await call('get_page_state', page);
@@ -177,6 +183,7 @@ function applyPageState(page, data) {
 
 function renderPage(page) {
   if (page === 'corridor') {
+    ensureTimelineDateControls();
     renderContribution(state.contribution || {});
     renderCollections(q('#featured-collections'), state.recent_collections || [], true);
     renderTimeline(state.timeline_page || { items: [] });
@@ -299,27 +306,123 @@ function showHeatTooltip(event, item) {
   const tooltip = q('#heat-tooltip');
   tooltip.innerHTML = `<strong>${displayDate(item.date)}</strong><br><span>${item.future ? '未来的书页' : item.value ? `留下了 ${item.value} 道足迹` : '这一天还很安静'}</span>`;
   tooltip.classList.remove('hidden');
-  moveHeatTooltip(event);
+  requestAnimationFrame(() => moveHeatTooltip(event));
 }
 function moveHeatTooltip(event) {
   const tooltip = q('#heat-tooltip');
+  if (!tooltip || !event) return;
+  // CSS pixels at the usual 96 DPI: approximately 1 cm from the pointer.
+  // This makes the tooltip sit directly above the pointer instead of beside it.
+  const gap = Math.round(96 / 2.54);
+  const width = tooltip.offsetWidth || 220;
+  const height = tooltip.offsetHeight || 72;
   const cell = event.target?.closest?.('.heat-cell');
-  if (cell) {
-    const rect = cell.getBoundingClientRect();
-    tooltip.style.left = `${Math.min(window.innerWidth - 240, rect.right + 12)}px`;
-    tooltip.style.top = `${Math.max(12, rect.top - 8)}px`;
-    return;
-  }
-  tooltip.style.left = `${event.clientX + 16}px`;
-  tooltip.style.top = `${event.clientY + 16}px`;
+  const rect = cell?.getBoundingClientRect?.();
+  const x = Number.isFinite(Number(event.clientX))
+    ? Number(event.clientX) : (rect?.left || 0);
+  const y = Number.isFinite(Number(event.clientY))
+    ? Number(event.clientY) : (rect?.top || 0);
+  // Anchor to the actual pointer, not the cell.  The default position is
+  // Center the tooltip horizontally on the pointer and place its bottom edge
+  // above the pointer by the tooltip height plus the requested gap.
+  let left = x - width / 2;
+  let top = y - height - gap;
+  if (top < 8) top = y + gap;
+  tooltip.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
+  tooltip.style.top = `${Math.max(8, Math.min(top, window.innerHeight - height - 8))}px`;
 }
 function hideHeatTooltip() { q('#heat-tooltip').classList.add('hidden'); }
+
+function ensureTimelineDateControls() {
+  if (q('#timeline-date-controls')) return;
+  const heading = q('.timeline-heading');
+  if (!heading) return;
+  const controls = document.createElement('div');
+  controls.id = 'timeline-date-controls';
+  controls.className = 'timeline-date-controls';
+  controls.innerHTML = `
+    <label class="timeline-date-label" for="timeline-date-preset">按时间查找</label>
+    <select id="timeline-date-preset" class="c-input" aria-label="时间范围">
+      <option value="all">全部时间</option>
+      <option value="today">今天</option>
+      <option value="7d">最近7天</option>
+      <option value="30d">最近30天</option>
+      <option value="3m">最近3个月</option>
+      <option value="custom">自定义日期</option>
+    </select>
+    <input id="timeline-start-date" class="c-input" type="date" aria-label="开始日期">
+    <span class="timeline-date-separator">至</span>
+    <input id="timeline-end-date" class="c-input" type="date" aria-label="结束日期">
+    <button id="timeline-date-apply" class="c-button primary" type="button">查找日记</button>
+    <button id="timeline-date-clear" class="c-button ghost" type="button">清除</button>`;
+  heading.insertAdjacentElement('afterend', controls);
+
+  const preset = q('#timeline-date-preset');
+  const start = q('#timeline-start-date');
+  const end = q('#timeline-end-date');
+  const today = () => localDateKey(new Date());
+  const shiftDays = days => {
+    const value = new Date(`${today()}T12:00:00`);
+    value.setDate(value.getDate() - days);
+    return localDateKey(value);
+  };
+  preset.addEventListener('change', () => {
+    const value = preset.value;
+    if (value === 'all') { start.value = ''; end.value = ''; }
+    else if (value === 'today') { start.value = today(); end.value = today(); }
+    else if (value === '7d') { start.value = shiftDays(6); end.value = today(); }
+    else if (value === '30d') { start.value = shiftDays(29); end.value = today(); }
+    else if (value === '3m') {
+      const date = new Date(`${today()}T12:00:00`);
+      date.setMonth(date.getMonth() - 3);
+      start.value = localDateKey(date); end.value = today();
+    }
+    start.disabled = value !== 'custom';
+    end.disabled = value !== 'custom';
+  });
+  on('#timeline-date-apply', 'click', applyTimelineFilters);
+  on('#timeline-date-clear', 'click', () => {
+    timelineQuery = ''; timelineStartDate = ''; timelineEndDate = '';
+    q('#global-search').value = '';
+    q('#search-results')?.classList.add('hidden');
+    preset.value = 'all'; start.value = ''; end.value = '';
+    start.disabled = true; end.disabled = true;
+    timelinePage = 1; dirtyPages.add('corridor'); loadPage('corridor', true);
+  });
+  preset.dispatchEvent(new Event('change'));
+}
+
+function syncTimelineDateControls() {
+  const start = q('#timeline-start-date');
+  const end = q('#timeline-end-date');
+  const preset = q('#timeline-date-preset');
+  if (!start || !end || !preset) return;
+  start.value = timelineStartDate || '';
+  end.value = timelineEndDate || '';
+  preset.value = timelineStartDate || timelineEndDate ? 'custom' : 'all';
+  start.disabled = preset.value !== 'custom';
+  end.disabled = preset.value !== 'custom';
+  if (q('#global-search')) q('#global-search').value = timelineQuery;
+}
+
+function applyTimelineFilters() {
+  timelineQuery = q('#global-search')?.value.trim() || '';
+  timelineStartDate = q('#timeline-start-date')?.value || '';
+  timelineEndDate = q('#timeline-end-date')?.value || '';
+  timelinePage = 1;
+  dirtyPages.add('corridor');
+  loadPage('corridor', true);
+}
 
 function renderTimeline(payload) {
   const items = payload.items || [];
   timelinePage = payload.page || 1;
   timelinePageSize = payload.page_size || timelinePageSize;
   timelineAuthor = payload.author || timelineAuthor;
+  timelineQuery = payload.query ?? timelineQuery;
+  timelineStartDate = payload.start_date || '';
+  timelineEndDate = payload.end_date || '';
+  syncTimelineDateControls();
   timelineDates = [...new Set(items.map(item => item.date))];
   qa('#timeline-author-filters button').forEach(button => button.classList.toggle('selected', button.dataset.author === timelineAuthor));
   const root = q('#timeline');
@@ -792,11 +895,11 @@ function bindEvents() {
     };
     heatGrid.addEventListener('mouseover', event => {
       const found = heatItem(event.target);
-      if (found) showHeatTooltip({ ...event, target: found.cell }, found.item);
+      if (found) showHeatTooltip(event, found.item);
     });
     heatGrid.addEventListener('focusin', event => {
       const found = heatItem(event.target);
-      if (found) showHeatTooltip({ ...event, target: found.cell }, found.item);
+      if (found) showHeatTooltip(event, found.item);
     });
     heatGrid.addEventListener('mouseout', hideHeatTooltip);
     heatGrid.addEventListener('focusout', hideHeatTooltip);
