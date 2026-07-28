@@ -150,6 +150,7 @@ def perform_heartbeat(recent_messages: list[dict]) -> Optional[str]:
         _HEARTBEAT_SYSTEM,
         user_name=get_user_name(),
         snapshot=persona_snapshot,
+        scene="proactive",
     )
     user_text = f"{_HEARTBEAT_USER}\n\n{checklist_text}\n\n【最近对话记录】\n{conversation_text[:4000]}"
 

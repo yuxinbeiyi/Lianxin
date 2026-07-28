@@ -18,7 +18,7 @@ class TreeHoleReplyWorker(QThread):
     def run(self) -> None:
         try:
             from gui.time_capsule.database import TimeCapsuleDatabase
-            from brain.persona.runtime import active_assistant_name, capture_persona_snapshot
+            from brain.persona.runtime import active_assistant_name, capture_persona_snapshot, compose_scene_prompt
 
             db = TimeCapsuleDatabase(self.database_path, migrate_legacy=False)
             note_id = int(self.job.get("note_id", 0) or 0)
@@ -35,11 +35,19 @@ class TreeHoleReplyWorker(QThread):
 
             persona = capture_persona_snapshot()
             assistant_name = active_assistant_name(persona)
-            prompt = (
-                f"你是{assistant_name}。主人把下面这段话放进了只属于你们的树洞。\n"
-                "请写一段温柔、克制、真诚的纸条背面回应，像你真的读到了这张纸条。\n"
-                "不要分析、说教、复述规则或使用标题，控制在80到220个中文字符。\n\n"
+            try:
+                from config import get_user_name
+                user_name = get_user_name()
+            except Exception:
+                user_name = "主人"
+            legacy_prompt = (
+                f"你是{assistant_name}。{user_name}把下面这段话放进了只属于你们的树洞。\n"
+                "请写一段纸条背面回应，像你真的读到了这张纸条。\n"
+                "不要分析、说教、复述规则或使用标题，控制在40到180个中文字符。\n\n"
                 f"纸条：{str(note.get('content', ''))[:1200]}"
+            )
+            prompt = compose_scene_prompt(
+                legacy_prompt, user_name=user_name, snapshot=persona, scene="tree_hole",
             )
             agent = self.agent
             if agent is None:

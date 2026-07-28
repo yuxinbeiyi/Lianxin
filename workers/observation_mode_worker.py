@@ -333,7 +333,8 @@ class ObservationModeWorker(QThread):
                 "- 每次描述角度不同，不重复说法"
             )
             system_prompt = compose_scene_prompt(
-                legacy_system, user_name=get_user_name(), snapshot=snapshot
+                legacy_system, user_name=get_user_name(), snapshot=snapshot,
+                scene="proactive",
             )
             client = OpenAI(api_key=api_key, base_url=base_url)
             resp = client.chat.completions.create(

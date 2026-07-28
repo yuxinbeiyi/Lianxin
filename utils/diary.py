@@ -275,7 +275,8 @@ def _build_diary_prompt(messages: List[Dict], persona_snapshot=None) -> str:
 """
     grounding_rules += "\nEvery source_event_id must be copied from the input records. Never invent an ID.\n"
     return compose_scene_prompt(
-        legacy_prompt + grounding_rules, user_name=name, snapshot=persona_snapshot
+        legacy_prompt + grounding_rules, user_name=name, snapshot=persona_snapshot,
+        scene="time_capsule",
     )
 
 def _parse_diary_json(response_text: str) -> Optional[Dict]:

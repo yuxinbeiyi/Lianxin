@@ -40,6 +40,14 @@ class PersonaStore:
             default_path = self.profile_path(DEFAULT_PERSONA_ID)
             if not default_path.exists():
                 self._write_profile(build_default_persona(), backup=False)
+            else:
+                # 仅迁移官方默认档案的已知旧外貌描述，绝不覆盖用户自建人格。
+                try:
+                    current = self._read_profile_path(default_path)
+                    if current.is_builtin and "冷灰色瞳孔" in current.appearance:
+                        self._write_profile(build_default_persona(), backup=True)
+                except (PersonaStoreError, PersonaValidationError, ValueError):
+                    pass
             if not self.state_path.exists():
                 self.write_state({
                     "schema_version": PERSONA_SCHEMA_VERSION,

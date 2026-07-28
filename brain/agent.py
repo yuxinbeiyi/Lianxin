@@ -219,7 +219,7 @@ class AgentCore:
     def __init__(self, session_id: int = None, user_desc: str = None,
                  disable_tools: bool = False, track_emotion: bool = True,
                  source_channel: str = "desktop", participant_id: str = "",
-                 owner_scope: bool = True):
+                 owner_scope: bool = True, scene: str = "main_chat"):
         
         self._cancel_event = threading.Event()
         self._active_workflow_run_id = 0
@@ -256,6 +256,7 @@ class AgentCore:
         # 但仍应让问候、道歉、夸奖等真实互动影响情感状态。
         self._track_emotion = track_emotion
         self._source_channel = source_channel
+        self._scene = str(scene or "main_chat")
         self._participant_id = str(participant_id)
         self._owner_scope = bool(owner_scope)
         self._active_memory_trace_id = ""
@@ -864,7 +865,9 @@ class AgentCore:
 
         try:
             from brain.persona import PersonaPromptComposer
+            from brain.persona.scenes import scene_policy
             scene_parts = []
+            scene_parts.append(scene_policy(getattr(self, "_scene", "main_chat")))
             if self._user_desc:
                 scene_parts.append(f"【当前对话对象】\n{self._user_desc}")
             if not self._use_local:

@@ -71,6 +71,37 @@ def split_semantic_text(
     return [item for item in merged if item]
 
 
+def split_conversation_text(text: str, *, max_segments: int = 3) -> list[str]:
+    """Split casual chat into a few short bubbles without touching structured output."""
+    text = (text or "").strip()
+    if not text:
+        return []
+    if "```" in text or any(marker in text for marker in ("\n1.", "\n- ", "\n|", "{")):
+        return [text]
+    explicit = [line.strip() for line in text.splitlines() if line.strip()]
+    pieces = explicit if len(explicit) > 1 else _split_complete_sentences(text)
+    result: list[str] = []
+    current = ""
+    for piece in pieces:
+        piece = piece.strip()
+        if not piece:
+            continue
+        if not current:
+            current = piece
+        elif len(current) + len(piece) <= 46:
+            current += piece
+        else:
+            result.append(current)
+            current = piece
+    if current:
+        result.append(current)
+    if len(result) <= max_segments:
+        return result
+    head = result[:max_segments - 1]
+    head.append("".join(result[max_segments - 1:]))
+    return head
+
+
 def _split_complete_sentences(text: str) -> list[str]:
     parts = re.split(r"([。！？!?]+)", text)
     sentences: list[str] = []

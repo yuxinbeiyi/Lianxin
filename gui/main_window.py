@@ -1421,7 +1421,10 @@ class MainWindow(QMainWindow):
                 self._segment_sender.cancel()
                 self._segment_sender = None
 
-        self._segment_sender = SegmentSender(display_text, self._chat_widget, self._speaker, self)
+        self._segment_sender = SegmentSender(
+            display_text, self._chat_widget, self._speaker, self,
+            conversational=self._should_send_as_conversation(display_text),
+        )
 
         def on_segment_finished():
             self._segment_sender = None
@@ -1468,6 +1471,15 @@ class MainWindow(QMainWindow):
         self._segment_sender.finished.connect(lambda: self._input_panel.set_mute_visible(False))
 
         self._segment_sender.start()
+
+    @staticmethod
+    def _should_send_as_conversation(text: str) -> bool:
+        """Only casual, compact replies get chat-like multi-bubble pacing."""
+        value = str(text or "").strip()
+        if not value or len(value) > 220 or "```" in value:
+            return False
+        structured_markers = ("\n1.", "\n- ", "\n|", "{", "def ", "Traceback")
+        return not any(marker in value for marker in structured_markers)
 
 
 
@@ -4022,11 +4034,13 @@ class SegmentSender(QObject):
     finished = pyqtSignal()
     cancelled = pyqtSignal()
 
-    def __init__(self, full_text: str, chat_widget, speaker, parent=None):
+    def __init__(self, full_text: str, chat_widget, speaker, parent=None,
+                 conversational: bool = False):
         super().__init__(parent)
         self._full_text = full_text.strip()
         self._chat_widget = chat_widget
         self._speaker = speaker
+        self._conversational = bool(conversational)
         self._segments = self._split_text()
         self._index = 0
         self._timer = QTimer(self)
@@ -4037,7 +4051,9 @@ class SegmentSender(QObject):
         self._cancelled = False
 
     def _split_text(self):
-        from utils.text_segmentation import split_semantic_text
+        from utils.text_segmentation import split_conversation_text, split_semantic_text
+        if self._conversational:
+            return split_conversation_text(self._full_text)
         return split_semantic_text(self._full_text)
 
     def start(self):
@@ -4078,7 +4094,7 @@ class SegmentSender(QObject):
         if self._cancelled or self._index >= len(self._segments):
             self.finished.emit()
             return
-        delay = random.randint(3000, 10000)
+        delay = random.randint(450, 1100) if self._conversational else random.randint(3000, 10000)
         self._timer.start(delay)
 
     def cancel(self):

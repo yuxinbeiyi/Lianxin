@@ -34,23 +34,25 @@ def compose_scene_prompt(
     *,
     user_name: str,
     snapshot: PersonaSnapshot | None,
+    scene: str = "main_chat",
 ) -> str:
     """启用人格时用统一人格替换旧身份；关闭时逐字保留旧模板语义。"""
     legacy = legacy_template.replace("{user_name}", user_name)
     if snapshot is None or not snapshot.enabled:
         return legacy
 
-    scene = legacy.strip()
+    scene_key = scene
+    scene_text = legacy.strip()
     for prefix in _LEGACY_IDENTITY_PREFIXES:
-        if scene.startswith(prefix):
-            scene = scene[len(prefix):].lstrip(" ，,\n")
+        if scene_text.startswith(prefix):
+            scene_text = scene_text[len(prefix):].lstrip(" ，,\n")
             break
-    scene = scene.replace("莲心", snapshot.profile.assistant_name)
+    scene_text = scene_text.replace("莲心", snapshot.profile.assistant_name)
+    from brain.persona.scenes import scene_policy
     compiled = PersonaPromptComposer.compose(
         snapshot,
         user_name=user_name,
         core_policy="",
-        scene_policy=scene,
+        scene_policy=f"{scene_policy(scene_key)}\n\n{scene_text}",
     )
     return compiled.text
-

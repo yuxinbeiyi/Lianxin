@@ -224,7 +224,7 @@ class AvatarInteractionController(QObject):
                 "禁止出现“你拍我”“你怎么拍我”“被你拍到”“你摸我”或“被你摸头”等"
                 "把莲心写成被互动对象的表达。"
             )
-            tone = "摸头应是温柔陪伴或安慰；拍一拍可以是轻松提醒、调皮或关心。"
+            tone = "摸头应是温柔陪伴或安慰；拍一拍可以是调戏玩笑或关心。"
         else:
             action_description = (
                 f"{user_name}刚刚摸了摸莲心的头像。"
@@ -232,7 +232,7 @@ class AvatarInteractionController(QObject):
                 else f"{user_name}刚刚拍了拍莲心的头像。"
             )
             prohibited = "不要把动作方向写反，也不要编造莲心主动拍了对方。"
-            tone = "可以自然回应被互动的感受，保持轻松、亲近和克制。"
+            tone = "可以自然回应被互动的感受，保持调戏和玩笑感。"
         return (
             "事实不可改变：\n"
             f"- 发起者：{'莲心' if self._last_actor == 'assistant' else user_name}\n"

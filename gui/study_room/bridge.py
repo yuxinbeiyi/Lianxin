@@ -247,7 +247,7 @@ class StudyRoomBridge(QObject):
         focus_minutes = max(1, min(180, int(focus_minutes)))
         break_minutes = max(0, min(60, int(break_minutes)))
         self.timer.start_focus(focus_minutes * 60, break_minutes * 60, task_name, task_repeat)
-        self.companion_message.emit("专注已经开始了。我会在这里陪你，把注意力留给眼前这一件事。")
+        self.companion_message.emit("先把注意力留给眼前这一件事。别急着演年度失踪，我在这儿盯着。")
 
     @pyqtSlot()
     def toggle_pause(self):
@@ -263,7 +263,7 @@ class StudyRoomBridge(QObject):
         if phase == "focus" and elapsed > 0:
             self.db.add_focus_session(self._task_id, self.timer.task_name, started_at, elapsed, False)
         self._emit_tasks_and_stats()
-        self.companion_message.emit("这一段先到这里也没关系，能够开始并坚持一会儿，本身就是积累。")
+        self.companion_message.emit("这一段先到这里。别急着给自己判失败，能回来继续才算本事。")
 
     @pyqtSlot(str, int, int, bool, result=int)
     def add_task(self, title, estimate_minutes=25, break_minutes=5, repeat_enabled=False):
@@ -284,7 +284,7 @@ class StudyRoomBridge(QObject):
     def complete_task(self, task_id):
         if self.db.complete_task(int(task_id)):
             self._emit_tasks_and_stats()
-            self.companion_message.emit("这件事已经好好收进今天的完成清单了。")
+            self.companion_message.emit("这件事收进完成清单了。看吧，你也不是只会把计划写得很好看。")
 
     @pyqtSlot(int)
     def delete_task(self, task_id):
@@ -301,7 +301,7 @@ class StudyRoomBridge(QObject):
             max(0, min(60, int(break_minutes))), bool(repeat_enabled),
         )
         self._emit_tasks_and_stats()
-        self.companion_message.emit("任务配置已更新，开始专注时会使用新的时长。")
+        self.companion_message.emit("任务配置更新了。下次开始前别再临时和时间讨价还价。")
 
     @pyqtSlot()
     def refresh_statistics(self):
@@ -327,7 +327,7 @@ class StudyRoomBridge(QObject):
         self._settings.setValue("show_completion", bool(show_completion))
         self._settings.setValue("animations", bool(animations))
         self._settings.sync()
-        self.companion_message.emit("自习室设置已保存，之后开始专注时会使用新的偏好。")
+        self.companion_message.emit("自习室设置保存好了。之后就按这套节奏来，别半路赖账。")
 
     @pyqtSlot()
     def minimize_window(self):
@@ -368,9 +368,9 @@ class StudyRoomBridge(QObject):
                 "duration": duration,
                 "repeat_enabled": self.timer.repeat_enabled,
             }))
-            self.companion_message.emit("辛苦啦，这段时间你确实专注在重要的事情上。接下来可以喝口水，再决定是否继续。")
+            self.companion_message.emit("居然真的专注完了。先喝口水，剩下的等你缓过来再决定。")
         else:
-            self.companion_message.emit("休息结束了。准备好之后，再慢慢回到下一段专注吧。")
+            self.companion_message.emit("休息时间到了。准备好就回来，前辈我还记着下一段呢。")
 
     def shutdown(self):
         if self._closed:

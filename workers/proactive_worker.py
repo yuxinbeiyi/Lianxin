@@ -72,11 +72,11 @@ _SHOULDER_EXPLORE_SYSTEM = """你是莲心，一个聪明、温柔但偶尔有�
 6. 长度控制在 1~3 句话之内。"""
 
 
-def _format_prompt(template: str, snapshot=None) -> str:
+def _format_prompt(template: str, snapshot=None, scene: str = "proactive") -> str:
     """将模板中的 {user_name} 替换为全局设置中的用户称呼。"""
     name = _get_user_name()
     return compose_scene_prompt(
-        template, user_name=name, snapshot=snapshot
+        template, user_name=name, snapshot=snapshot, scene=scene
     )
 
 

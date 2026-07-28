@@ -219,7 +219,7 @@ class SlackWorker(QThread):
         }
         template = prompts.get(self._action, _SLACK_RANDOM_QUESTION)
         return compose_scene_prompt(
-            template, user_name=user_name, snapshot=snapshot
+            template, user_name=user_name, snapshot=snapshot, scene="proactive"
         )
 
     def _generate(self) -> str:

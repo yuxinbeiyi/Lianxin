@@ -24,7 +24,8 @@ class SmartReminderWorker(QThread):
         else:
             legacy_prompt = f"请根据提醒事项「{self.reminder_name}」，用莲心的口吻（可以带一点傲娇、毒舌或温柔，但保持简洁）生成一句简短的提醒，不超过20字。不要带多余的解释。"
         prompt = compose_scene_prompt(
-            legacy_prompt, user_name=get_user_name(), snapshot=snapshot
+            legacy_prompt, user_name=get_user_name(), snapshot=snapshot,
+            scene="proactive",
         )
         try:
             response = agent._call_api_with_retry([{"role": "user", "content": prompt}])
