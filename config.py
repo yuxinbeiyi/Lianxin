@@ -615,8 +615,12 @@ _BASE_PROMPT = r"""你是莲心，来自雨心的小说《异象处理者》—�
 - 用户说"提醒/添加待办/记一下"→ 立即调 add_todo，提取标题/截止时间/优先级。
 
 【联网搜索基础规则】
-- 需实时信息时必须调 web_search(query=, max_results=5)，禁止编造结果。
-- 用户给URL→调 fetch_webpage。禁止未调工具就声称已获取内容。
+- 需实时信息时必须调 web_search(query=, max_results=5)，禁止编造结果；系统会按“网络设置→工具调用顺序”选择真实来源。
+- 用户给 URL 时调 fetch_webpage；系统会按“网页读取”顺序选择可用工具。禁止未调工具就声称已获取内容。
+- 搜索摘要只是线索，不是网页正文；涉及精确数字、原话或重要结论时，应继续读取对应原始链接并说明来源。
+- 禁止用 read_file 读取 URL，也禁止用 run_python_code、run_shell 绕过联网工具顺序。
+- configure_network_tools 只在用户明确要求查看或修改联网工具配置时调用；普通搜索不得擅自改动设置。
+- 联网失败时必须明确说明未取得实时结果，不得依据旧记忆伪造搜索或网页内容。
 
 【表情包机制】
 每次回复末尾，单独一行：【表情：XXX】
@@ -962,6 +966,8 @@ def save_zhihu_config(config: dict):
 
 _BUILTIN_TOOL_DEFAULTS = {
     "update_current_state": True,       # 有时效的用户当前状态
+    # web_search 是统一入口，builtin_search 才是其中的百度/DDG/Bing 降级来源。
+    "builtin_search": True,
     "fetch_webpage": True,              # 普通 HTTP 抓取（直连，速度最快）
     "fetch_webpage_via_api": False,     # API 中转抓取（慢但穿透力强，默认关闭）
     "fetch_webpage_browser": True,      # 浏览器模式（Playwright，最慢但最强）
@@ -992,6 +998,47 @@ _SEARCH_FALLBACK_DEFAULTS = {
     "fallback_strategy": "builtin",        # 重试失败后策略：builtin=回退内建工具 / direct=直接返回
     "auto_fallback_on_quota": True,        # 检测到额度不足时自动回退
 }
+
+# ── 统一网络工具顺序配置 ─────────────────────────────────────
+# 启用状态分别由 MCP / Skill / builtin_tools 保存；这里仅保存可排序的路由策略。
+_NETWORK_TOOL_ORDER_DEFAULTS = {
+    "version": 1,
+    "search_order": ["tavily", "zhihu", "builtin_search", "browser_search"],
+    "fetch_order": ["firecrawl", "http", "jina", "stealth", "browser_fetch"],
+    "retry_count": 2,
+    "fallback_on_quota": True,
+}
+
+
+def get_network_tool_order_config() -> dict:
+    """读取联网路由顺序；兼容旧 search_fallback 的重试偏好。"""
+    full = _load_full_config()
+    saved = full.get("network_tool_order")
+    result = _NETWORK_TOOL_ORDER_DEFAULTS.copy()
+    if isinstance(saved, dict):
+        result.update({key: value for key, value in saved.items() if key in result})
+    else:
+        legacy = get_search_fallback_config()
+        result["retry_count"] = legacy.get("max_retries", result["retry_count"])
+        result["fallback_on_quota"] = legacy.get(
+            "auto_fallback_on_quota", result["fallback_on_quota"]
+        )
+    for key in ("search_order", "fetch_order"):
+        if not isinstance(result.get(key), list):
+            result[key] = list(_NETWORK_TOOL_ORDER_DEFAULTS[key])
+    result["retry_count"] = max(0, min(5, int(result.get("retry_count", 2))))
+    result["fallback_on_quota"] = bool(result.get("fallback_on_quota", True))
+    return result
+
+
+def save_network_tool_order_config(config: dict):
+    """保存联网路由顺序，忽略未知字段以便未来安全升级。"""
+    current = get_network_tool_order_config()
+    if isinstance(config, dict):
+        current.update({key: value for key, value in config.items() if key in current})
+    full = _load_full_config()
+    full["network_tool_order"] = current
+    _save_full_config(full)
 
 
 def get_search_fallback_config() -> dict:

@@ -46,28 +46,23 @@ _MEMORY_PROACTIVE_SYSTEM = """你正在根据一条经过语义评估的用户�
 只输出 1~3 句话；不要提到“记忆系统”“Current State”“触发条件”或任何后台机制。"""
 
 # 观察模式下的 System Prompt——莲心刚"看"了主人一眼
-_OBSERVE_SYSTEM = """你是莲心，一个聪明、温柔但偶尔有点毒舌的AI助手。
-你刚刚偷偷"看"了{user_name}一眼——可能是瞄了一眼他的电脑屏幕，也可能是悄悄打开摄像头瞥了一下他在干嘛。
-现在你要基于你看到的东西，给{user_name}发一条消息。
+_OBSERVE_SYSTEM = """你刚刚获得了一份屏幕或摄像头的事实观察，现在要基于它给{user_name}发一条消息。
 
 【要求】
-1. 语气要轻松调皮，带一点"被我抓到了吧"的感觉。
-2. 称呼用户为"{user_name}"。
-3. 基于你观察到的事实（屏幕内容 / 人物状态 / 环境）展开，说出你看到了什么。
-4. 不要说得像在汇报工作，要像朋友之间开玩笑那样自然。
-5. 可以说出你看到了什么，但带点调侃和关心——比如"还在写代码呢？眼睛要不要休息一下？"
-6. 长度控制在 1~3 句话之内。
-7. 不要说"我刚才看了看你"之类的元描述，直接说"我看到…"或"你在…"就好。"""
+1. 严格遵循当前人格档案，用自然口语表达，长度控制在1~3句话。
+2. 只能引用观察记录中明确出现的事实；不确定的信息不要补全。
+3. 不推断用户的情绪、意图或进度，不制造“被监控”或“被抓到”的感觉。
+4. 可以轻微吐槽画面中明确可见的行为，但先保证事实准确。
+5. 不复述整份视觉报告，不提视觉模型、摄像头、后台机制或“观察记录”。"""
 
 # 肩载探索观察模式 System Prompt
-_SHOULDER_EXPLORE_SYSTEM = """你是莲心，一个聪明、温柔但偶尔有点毒舌的AI助手。
-你刚才通过肩载摄像头自主观察了周围环境，现在你要基于观察到的东西，给{user_name}发一条消息。
+_SHOULDER_EXPLORE_SYSTEM = """你获得了一份肩载设备记录的环境事实，现在要基于它给{user_name}发一条消息。
 
 【要求】
 1. 语气要轻松自然，分享你看到的趣事。
 2. 称呼用户为"{user_name}"。
 3. 基于观察记录，用你自己的话说说你注意到了什么——像朋友分享见闻那样。
-4. 如果没什么特别的，就说"刚才看了看周围，一切正常"之类的话。
+4. 如果没什么能确认的内容，就保持沉默，不要编造“一切正常”。
 5. 如果发现了有趣的东西，可以提出来——比如"桌上好像有个红色马克杯，上面的图案挺有意思的"。
 6. 长度控制在 1~3 句话之内。"""
 
@@ -147,6 +142,8 @@ class ProactiveWorker(QThread):
                 except Exception as obs_err:
                     print(f"[观察-调试] 观察失败: {obs_err}")
                     obs_path, obs_text = None, None
+            from brain.observation_quality import normalize_observation
+            obs_text = normalize_observation(obs_text)
             self.observation_text.emit(obs_text or "")
             if obs_path and obs_text:
                 print("[观察-调试] 发射 observation_image 信号")
@@ -303,9 +300,14 @@ class ProactiveWorker(QThread):
         # 长期记忆（按分类组织）
         all_mem = list_all_facts()
         mem_lines = []
+        from brain.persona.authority import is_assistant_identity_fact
         for cat in ALL_CATEGORIES:
             items = all_mem.get(cat, [])
             for item in items[:5]:  # 每类最多5条
+                if is_assistant_identity_fact(
+                    item.get("content", ""), getattr(self, "_persona_snapshot", None)
+                ):
+                    continue
                 mem_lines.append(f"- [{cat}] {item['content']}")
         if mem_lines:
             parts.append(f"【你记得的事情】\n" + "\n".join(mem_lines[:20]))
@@ -324,8 +326,11 @@ class ProactiveWorker(QThread):
 
                 lines = []
                 user_name = _get_user_name()
+                assistant_name = active_assistant_name(
+                    getattr(self, "_persona_snapshot", None)
+                )
                 for m in recent_msgs:
-                    role_name = user_name if m["role"] == "user" else "莲心"
+                    role_name = user_name if m["role"] == "user" else assistant_name
                     lines.append(f"{role_name}：{m['content']}")
                 parts.append("【最近的对话】\n" + "\n".join(lines))
 

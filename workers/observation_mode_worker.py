@@ -287,12 +287,8 @@ class ObservationModeWorker(QThread):
     def _analyze_image(self, path: str) -> str:
         """调用 SiliconFlow 视觉 API 分析图片内容。"""
         from brain.vision import describe_image
-        prompt = (
-            "请详细描述这张画面里的内容。注意观察——"
-            "画面中有什么人物、物体、场景、颜色、动作、文字等。"
-            "尽量关注细节，比如物品的位置、状态、颜色、人物表情动作。"
-        )
-        result = describe_image(path, prompt=prompt)
+        from brain.observation_quality import OBSERVATION_PROMPT, normalize_observation
+        result = normalize_observation(describe_image(path, prompt=OBSERVATION_PROMPT))
         print(f"[观察模式] 👁 分析完成 ({len(result)} 字)")
         return result
 
@@ -323,14 +319,13 @@ class ObservationModeWorker(QThread):
             )
             snapshot = capture_persona_snapshot()
             legacy_system = (
-                "你是莲心，刚刚通过肩载摄像头看了一眼周围环境。\n"
-                "用可爱简短的语气说一句话。要求：\n"
+                "你获得了一份肩载设备记录的环境事实。\n"
+                "按照当前人格，用自然简短的语气说一句话。要求：\n"
                 "- 控制在 300 字以内，越短越好\n"
-                "- 保留视觉识别的核心内容（人物/物体/场景/动作）\n"
-                "- 语气活泼好奇，可以加颜文字 (｀・ω・´)\n"
+                "- 只能使用记录中明确存在的人物/物体/场景/动作\n"
+                "- 不推断用户情绪、意图和身份，不确定的信息保持不确定\n"
                 f"- 称呼用户为'{get_user_name()}'\n"
-                "- 直接说看到的内容，不要'我看到了'开头\n"
-                "- 每次描述角度不同，不重复说法"
+                "- 不复述报告，不提摄像头、视觉模型或后台机制"
             )
             system_prompt = compose_scene_prompt(
                 legacy_system, user_name=get_user_name(), snapshot=snapshot,
@@ -360,10 +355,12 @@ class ObservationModeWorker(QThread):
             # LLM 返回了空内容 → 降级
             print("[观察模式] LLM 返回空，降级使用原始描述")
             # 给原始描述加个简短的前缀，让它看起来不像是"直接输出"
-            return f"我看到啦——{_truncate(description)}"
+            from brain.observation_quality import observation_preview
+            return observation_preview(description) or ""
         except Exception as e:
             print(f"[观察模式] LLM 生成失败 ({e})，降级使用原始描述")
-            return f"我看到啦——{_truncate(description)}"
+            from brain.observation_quality import observation_preview
+            return observation_preview(description) or ""
 
     def _send_observation(self, photo_path: str, message: str):
         """发送图片+文字到 QQ，带打字速度延迟。"""

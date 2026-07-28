@@ -7,6 +7,7 @@
 Worker 在工具调用间隙处理并报告进度。
 """
 import queue
+import threading
 from PyQt5.QtCore import QThread, pyqtSignal
 from brain.agent import AgentCore
 
@@ -31,6 +32,7 @@ class AgentWorker(QThread):
     tool_round_start = pyqtSignal(int)                          # round_num
     tool_called    = pyqtSignal(str, str, int)                  # name, args_json, round_num
     tool_result    = pyqtSignal(str, str, bool, int, float)     # name, preview, is_error, round_num, elapsed_ms
+    tool_enable_requested = pyqtSignal(str, str, str, object)   # key, display_name, reason, request
     observation_image = pyqtSignal(str, str)  # 观察图片 (path, desc) 用于气泡显示
     checklist_proposed = pyqtSignal(list)     # 后台提取的待办列表 [{"title":...,"due_time":...,"priority":...}]
     error_occurred = pyqtSignal(str)
@@ -105,10 +107,21 @@ class AgentWorker(QThread):
                     if obs["path"]:
                         self.observation_image.emit(obs["path"], obs["desc"])
 
+            def on_tool_enable_request(tool_key, display_name, reason):
+                """工作线程等待主线程完成 Yes/No，最多等待两分钟。"""
+                request = type("ToolEnableRequest", (), {})()
+                request.event = threading.Event()
+                request.approved = False
+                self.tool_enable_requested.emit(tool_key, display_name, reason, request)
+                if not request.event.wait(timeout=120):
+                    return False
+                return bool(request.approved)
+
             response = self.agent.chat(
                 self.message,
                 on_tool_call=on_tool_call,
                 on_tool_result=on_tool_result,
+                on_tool_enable_request=on_tool_enable_request,
                 on_round_start=on_round_start,
                 forced_tool=self.forced_tool,
                 disable_tools=self.disable_tools,

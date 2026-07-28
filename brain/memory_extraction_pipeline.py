@@ -659,6 +659,9 @@ def validate_extraction_contract(payload: object) -> dict:
         if head_type not in ENTITY_TYPES or tail_type not in ENTITY_TYPES:
             graph_fallback_required = True
             continue
+        from brain.persona.authority import is_assistant_identity_fact
+        if is_assistant_identity_fact(f"{head} {relation} {tail}"):
+            continue
         quintuples.append((head, head_type, relation, tail, tail_type))
     return {
         "contract_version": str(payload.get("contract_version", "") or ""),
@@ -736,6 +739,10 @@ class LLMExtractionProcessor:
             category = str(memory.get("category", "knowledge"))
             content = str(memory.get("content", "") or "").strip()
             if not content or category not in ALL_CATEGORIES:
+                continue
+            from brain.persona.authority import is_assistant_identity_fact
+            if is_assistant_identity_fact(content):
+                # 助手自身设定属于人格枢控，不得混入用户长期记忆。
                 continue
             source_ids, confidence, occurred_at = normalize_memory_provenance(
                 memory, batch.rows

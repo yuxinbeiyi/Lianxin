@@ -22,7 +22,11 @@ from config import (
 )
 from brain.tools import TOOL_DEFINITIONS, execute_tool, set_cross_session_context
 from brain.skill_manager import get_active_tool_definitions, get_active_knowledge
-from brain.tool_router import filter_builtin_tools, build_tool_catalog, match_categories, detect_tool_request, CATEGORY_ORDER, is_diary_request
+from brain.tool_router import (
+    filter_builtin_tools, build_tool_catalog, match_categories,
+    detect_tool_request, get_activation_tool_names, CATEGORY_ORDER, is_diary_request,
+    select_contextual_external_tools,
+)
 from memory.history_manager import HistoryManager
 from brain.context_compressor import (
     build_fallback_summary,
@@ -225,6 +229,9 @@ class AgentCore:
         self._active_workflow_run_id = 0
         self._workflow_retry_of_run_id = 0
         self._prepared_document_context = ""
+        self._request_tool_audit: list[dict] = []
+        self._recent_tool_audit: list[dict] = []
+        self._tool_audit_lock = threading.Lock()
 
         # 每次实例化都从文件读取最新配置，支持热重载
         cfg = get_api_config()
@@ -391,7 +398,8 @@ class AgentCore:
             interrupt_queue=None,
             on_interrupt=None,
             on_progress=None,
-            response_guard=None) -> str:
+            response_guard=None,
+            on_tool_enable_request=None) -> str:
         """
         处理用户消息并返回 AI 回复。
 
@@ -560,7 +568,8 @@ class AgentCore:
                                                           on_interrupt, on_progress, user_message,
                                                           on_round_start=on_round_start,
                                                           persona_snapshot=persona_snapshot,
-                                                          persona_transition=persona_transition)
+                                                          persona_transition=persona_transition,
+                                                          on_tool_enable_request=on_tool_enable_request)
         except Exception as exc:
             if workflow_store and workflow_run_id:
                 workflow_store.finish_run(workflow_run_id, status="failed", error=str(exc))
@@ -591,6 +600,10 @@ class AgentCore:
         else:
             # 没有标签 → 原样返回
             display_response = response_text
+        from brain.persona.output_policy import sanitize_persona_output
+        display_response = sanitize_persona_output(display_response, persona_snapshot)
+        # 历史也使用已收口正文，避免违规格式在下一轮被模型继续模仿。
+        response_text = display_response + (f"\n【表情：{emotion}】" if emotion else "")
         self._last_emotion = emotion  # 供 GUI 读取，用于选图
         self._last_raw_response = response_text  # 保留以备他用
 
@@ -1262,7 +1275,8 @@ class AgentCore:
 
 
 
-    def _execute_tool_calls_parallel(self, tool_calls, messages, on_tool_call=None, on_tool_result=None):
+    def _execute_tool_calls_parallel(self, tool_calls, messages, on_tool_call=None, on_tool_result=None,
+                                     on_tool_enable_request=None):
         """资源感知的工具并行执行。
 
         同一轮 LLM 返回的多个工具调用按资源组分类：
@@ -1311,6 +1325,59 @@ class AgentCore:
                     "role": "tool", "tool_call_id": tc.id,
                     "content": f"参数解析失败，原始参数: {raw_args}。请修正 JSON 格式后重试。",
                 })
+                continue
+
+            if name == "request_enable_tool":
+                from brain.tool_enablement import enable_target, resolve_disabled_target
+                target = resolve_disabled_target(args.get("tool_name", ""))
+                reason = str(args.get("reason", "") or "").strip()
+                if target is None:
+                    result = "该工具当前不是已停用的可授权目标，不能请求启用。"
+                    approved = False
+                elif on_tool_enable_request is None:
+                    result = f"{target.display_name} 当前已停用；此会话无法弹出授权确认。"
+                    approved = False
+                else:
+                    try:
+                        approved = bool(on_tool_enable_request(target.key, target.display_name, reason))
+                    except Exception as exc:
+                        logger.warning("工具启用授权请求失败: %s", exc)
+                        approved = False
+                    if approved and enable_target(target):
+                        self._request_enabled_tool_names.update(target.tool_names)
+                        result = f"用户已同意启用 {target.display_name}，请立即使用它继续当前任务。"
+                    elif approved:
+                        result = f"{target.display_name} 未能启用，请使用现有工具继续或说明原因。"
+                    else:
+                        result = f"用户没有同意启用 {target.display_name}，请使用现有工具继续，不要再次请求。"
+                event = {"name": name, "args": args, "result": result,
+                         "is_error": not approved, "authorized": approved}
+                with self._tool_audit_lock:
+                    self._request_tool_audit.append(event)
+                    self._recent_tool_audit = (self._recent_tool_audit + [event])[-20:]
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+                if on_tool_result:
+                    on_tool_result(name, result, not approved, 0.0)
+                continue
+
+            from brain.request_tool_policy import authorize_tool_call
+            with self._tool_audit_lock:
+                audit_snapshot = list(self._request_tool_audit)
+            allowed, denial = authorize_tool_call(
+                name, args, getattr(self, "_current_request_text", ""), audit_snapshot
+            )
+            if not allowed:
+                event = {"name": name, "args": args, "result": denial,
+                         "is_error": True, "authorized": False}
+                with self._tool_audit_lock:
+                    self._request_tool_audit.append(event)
+                    self._recent_tool_audit = (self._recent_tool_audit + [event])[-20:]
+                print(f"  [请求策略] 已阻止 {name}: {denial}", flush=True)
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id, "content": denial,
+                })
+                if on_tool_result:
+                    on_tool_result(name, denial, True, 0.0)
                 continue
 
             call_key = (name, json.dumps(args, ensure_ascii=False, sort_keys=True))
@@ -1422,6 +1489,11 @@ class AgentCore:
                 except Exception: pass
             if on_tool_result:
                 on_tool_result(name, result, is_error, elapsed_ms)
+            event = {"name": name, "args": dict(args), "result": str(result),
+                     "is_error": is_error, "authorized": True}
+            with self._tool_audit_lock:
+                self._request_tool_audit.append(event)
+                self._recent_tool_audit = (self._recent_tool_audit + [event])[-20:]
             idx = parsed_order[id(item["tc"])]
             results[idx] = result
 
@@ -1795,10 +1867,20 @@ class AgentCore:
                                interrupt_queue=None, on_interrupt=None,
                                on_progress=None, user_message: str = "",
                                on_round_start=None, persona_snapshot=None,
-                               persona_transition: str = "") -> str:
+                               persona_transition: str = "",
+                               on_tool_enable_request=None) -> str:
 
        
         _t0 = time.time()
+        self._current_request_text = str(user_message or "")
+        # 部分测试与轻量 Worker 会用 __new__ 构造 Agent；运行态字段在这里兜底。
+        if not hasattr(self, "_tool_audit_lock"):
+            self._tool_audit_lock = threading.Lock()
+        if not hasattr(self, "_recent_tool_audit"):
+            self._recent_tool_audit = []
+        with self._tool_audit_lock:
+            self._request_tool_audit = []
+        self._request_enabled_tool_names: set[str] = set()
         messages = self._build_request_system_messages(persona_snapshot)
         if _recent_assistant_repetition(self.history, user_message):
             messages.append({
@@ -1810,6 +1892,7 @@ class AgentCore:
                 ),
             })
         _text_protocol_retry_count = 0
+        _web_verification_retry_count = 0
 
         def _guarded_progress(text: str):
             """流式阶段即阻止内部工具协议进入界面。"""
@@ -1822,6 +1905,14 @@ class AgentCore:
 
         # ── 注入实时时间信息（自适应精度：间隔>15分钟用分钟级，否则小时级） ──
         messages.append(self._build_realtime_message())
+        with self._tool_audit_lock:
+            recent_audit = list(self._recent_tool_audit[-8:])
+        if recent_audit:
+            audit_lines = ["【本会话真实工具记录】只能据此声称工具是否调用或配置是否生效。"]
+            for event in recent_audit:
+                status = "失败" if event.get("is_error") else "成功"
+                audit_lines.append(f"- {event.get('name', '')}: {status}；{str(event.get('result', ''))[:240]}")
+            messages.append({"role": "system", "content": "\n".join(audit_lines)})
         if getattr(self, "_prepared_document_context", ""):
             messages.append({"role": "system", "content": self._prepared_document_context})
 
@@ -1885,7 +1976,7 @@ class AgentCore:
                 )
                 working_context = format_working_memory_context(working_topic)
                 if working_context:
-                    messages.append({"role": "system", "content": working_context})
+                    messages.append({"role": "system", "content": working_context[:1800]})
                     if self._active_memory_trace_id:
                         from brain.memory_diagnostics import record_memory_event
                         record_memory_event(
@@ -1946,15 +2037,23 @@ class AgentCore:
             pass
 
         # ── 记忆 RAG 注入：向量检索相关长期记忆 ──
+        from brain.request_tool_policy import is_external_lookup_request
+        _skip_memory_rag = is_external_lookup_request(last_user_msg if last_user_msg else user_message)
         if not self._use_local and self._owner_scope:
             try:
                 from brain.memory_rag import search_similar, format_rag_context
-                memories = search_similar(
+                memories = [] if _skip_memory_rag else search_similar(
                     last_user_msg if last_user_msg else user_message,
                     top_k=3, threshold=0.5
                 )
+                memories = [
+                    item for item in memories
+                    if float(item[1].get("semantic_similarity", item[0]) or 0.0) >= 0.15
+                ]
+                from brain.persona.authority import filter_persona_memories
+                memories = filter_persona_memories(memories, persona_snapshot)
                 if memories:
-                    rag_text = format_rag_context(memories)
+                    rag_text = format_rag_context(memories)[:2400]
                     messages.append({"role": "system", "content": rag_text})
                     if self._active_memory_trace_id:
                         from brain.memory_diagnostics import record_memory_event
@@ -1981,9 +2080,9 @@ class AgentCore:
             # ── 图谱发现自动注入：遍历"用户"节点，发现关联实体和关系 ──
             try:
                 from brain.graph_memory import get_graph_summary_for_user
-                graph_summary = get_graph_summary_for_user(depth=2)
+                graph_summary = "" if _skip_memory_rag else get_graph_summary_for_user(depth=2)
                 if graph_summary:
-                    messages.append({"role": "system", "content": graph_summary})
+                    messages.append({"role": "system", "content": graph_summary[:1600]})
                     if self._active_memory_trace_id:
                         from brain.memory_diagnostics import record_memory_event
                         record_memory_event(self._active_memory_trace_id, "graph_memory_injected",
@@ -2021,14 +2120,23 @@ class AgentCore:
 
             # 筛选内置工具：核心 + 命中领域
             filtered_builtin = filter_builtin_tools(TOOL_DEFINITIONS, _msg_for_match)
-            # 技能/MCP 工具按需注入（不默认加载，模型主动点名后才注入）
-            all_tools = filtered_builtin
+            recent_external_context = "\n".join(
+                str(item.get("content", "")) for item in self.history[-6:]
+            )
+            contextual_mcp_tools = select_contextual_external_tools(
+                mcp_tools, _msg_for_match, recent_external_context
+            )
+            # 明确点名或承接上一轮建议时，MCP 在首轮即可调用。
+            all_tools = filtered_builtin + contextual_mcp_tools
 
             # 用户禁用的工具过滤
             from config import get_builtin_tool_config
             builtin_cfg = get_builtin_tool_config()
             disabled_tool_names = {name for name, enabled in builtin_cfg.items() if not enabled}
             runtime_disabled_names = set(disabled_tool_names)
+            # fetch_webpage 是统一路由入口；具体 HTTP/Firecrawl 提供方是否启用
+            # 由 NetworkToolRouter 判断，不能因为内置 HTTP 被关闭就移除入口。
+            runtime_disabled_names.discard("fetch_webpage")
             if getattr(self, "_request_memory_writes_blocked", False):
                 runtime_disabled_names.update(_MEMORY_WRITE_TOOLS)
             if not getattr(self, "_owner_scope", True):
@@ -2038,6 +2146,9 @@ class AgentCore:
                     t for t in all_tools
                     if t.get("function", {}).get("name", "") not in runtime_disabled_names
                 ]
+
+            from brain.tool_enablement import TOOL_ENABLE_REQUEST_DEFINITION, format_disabled_targets
+            all_tools.append(TOOL_ENABLE_REQUEST_DEFINITION)
 
             # 注入工具目录（技能/MCP 标为 📋，模型主动点名后才注入）
             _skill_names = [t.get("function", {}).get("name", "?") for t in skill_tools]
@@ -2049,6 +2160,32 @@ class AgentCore:
                 disabled_tool_names=runtime_disabled_names,
             )
             messages.append({"role": "system", "content": catalog_text})
+            disabled_targets = format_disabled_targets()
+            if disabled_targets:
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "【已停用能力】以下能力不能直接调用。若用户当前任务确实需要其中之一，"
+                        "必须调用 request_enable_tool 请求界面授权；未经同意不得声称已启用。\n"
+                        + disabled_targets
+                    ),
+                })
+            try:
+                from brain.mcp.mcp_registry import get_disabled_mcp_names
+                disabled_mcp = set(get_disabled_mcp_names())
+                mentioned_disabled = [name for name in disabled_mcp if name.lower() in _msg_for_match.lower()]
+                if mentioned_disabled:
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "用户点名的 MCP 服务当前在能力中枢中已停用："
+                            + "、".join(sorted(mentioned_disabled))
+                            + "。若当前任务确实需要它，调用 request_enable_tool 请求用户授权；"
+                            "不得假装已经调用。"
+                        ),
+                    })
+            except Exception:
+                pass
             if is_diary_request(_msg_for_match):
                 try:
                     from gui.time_capsule.diary_reader import build_diary_context
@@ -2203,6 +2340,11 @@ class AgentCore:
         _urgent_limit_triggered = False        # 收尾提示只发一次
         _empty_length_retry_count = 0          # 空正文 + length 只恢复一次，避免无限重试
 
+        from brain.request_tool_policy import extract_urls
+        if (extract_urls(_msg_for_match)
+                and any(t.get("function", {}).get("name") == "fetch_webpage" for t in all_tools)):
+            forced_tool = "fetch_webpage"
+
         # ── 三层熔断器状态 ──
         _content_drought_count = 0           # 连续无文本回复计数
         _same_tool_streak_name = None        # 当前连续同工具名
@@ -2213,9 +2355,11 @@ class AgentCore:
         CONTENT_DROUGHT_MAX = 3              # 连续无文本N轮→熔断
         SAME_TOOL_STORM_MAX = 3              # 同工具连续N轮→强制干预
         NO_PROGRESS_MAX = 3                  # 工具名集合连续相同N轮→熔断
-        SEARCH_FATIGUE_MAX = 4               # 连续搜索/读取N轮→强制收尾
+        SEARCH_FATIGUE_MAX = 3               # 连续搜索/读取N轮→强制收尾
 
         _search_fatigue_count = 0            # 连续搜索轮计数
+        _evidence_signatures: set[tuple[int, str]] = set()
+        _no_new_evidence_count = 0
         _SEARCH_READ_TOOLS = {
             "search_files_everything", "search_graph_memory", "search_conversation_history",
             "search_cross_session",
@@ -2419,6 +2563,44 @@ class AgentCore:
                         ),
                     })
                     continue
+                from brain.request_tool_policy import (
+                    NETWORK_READ_TOOLS, extract_urls, has_successful_network_change,
+                    has_successful_tool_call, network_change_requested,
+                    requires_verified_web_content,
+                )
+                with self._tool_audit_lock:
+                    request_audit = list(self._request_tool_audit)
+
+                # 用户要求核验正文时，搜索摘要不能被当作正文证据。
+                if (requires_verified_web_content(_msg_for_match)
+                        and not has_successful_tool_call(request_audit, {"fetch_webpage"})):
+                    candidate_urls = extract_urls(_msg_for_match)
+                    if not candidate_urls:
+                        for event in request_audit:
+                            if event.get("name") in NETWORK_READ_TOOLS:
+                                candidate_urls.extend(extract_urls(event.get("result", "")))
+                    candidate_urls = list(dict.fromkeys(candidate_urls))
+                    fetch_available = any(
+                        t.get("function", {}).get("name") == "fetch_webpage" for t in all_tools
+                    )
+                    if candidate_urls and fetch_available and _web_verification_retry_count < 1:
+                        _web_verification_retry_count += 1
+                        forced_tool = "fetch_webpage"
+                        messages.append({
+                            "role": "system",
+                            "content": (
+                                "正文核验尚未完成。必须调用 fetch_webpage 读取下面的原始页面，"
+                                "不能用搜索摘要代替正文：" + candidate_urls[0]
+                            ),
+                        })
+                        continue
+                    return "我目前只取得了搜索摘要，没有成功读取原始正文，因此不能声称已经完成正文核实。"
+
+                # 配置修改是有副作用的操作，未成功时禁止用自然语言宣称已经生效。
+                if (network_change_requested(_msg_for_match)
+                        and not has_successful_network_change(request_audit)):
+                    return "联网工具配置没有修改成功，因此我没有把它当成已停用或已调整；本轮后续搜索也已停止。"
+
                 if contains_textual_tool_protocol(content):
                     _text_protocol_retry_count += 1
                     print(
@@ -2435,33 +2617,34 @@ class AgentCore:
                                 "工具完成后再用自然语言回答；不要继续输出 function(...) 或 JSON 调用文本。"
                             ),
                         })
-                        messages.append({
-                            "role": "system",
-                            "content": (
-                                "【协议纠错】上一条输出把工具调用写成了普通文本，"
-                                "该内容已被系统丢弃且不会执行。工具调用阶段已经结束。"
-                                "现在必须仅根据已有工具结果生成最终自然语言回答；"
-                                "禁止输出 <tool_call>、<function>、<parameter>、JSON调用或代码块。"
-                            ),
-                        })
                         continue
-                    return (
-                        "（工具结果已经取得，但模型连续输出了异常的内部调用协议。"
-                        "系统已阻止其显示，请让我重新总结现有结果。）"
-                    )
-                # 工具激活重试：模型暗示需要未加载的工具（仅触发一次）
+                    return "这次没有成功执行所需工具，请稍后重试。"
+                # 工具激活重试：只补充当前语义类别或模型明确点名的工具。
                 if (not self._use_local and not _full_tools_injected
                         and detect_tool_request(content or "")):
                     _full_tools_injected = True
-                    print("[工具激活] 检测到模型需要未激活工具，全量注入重试", flush=True)
-                    loaded_categories = set(CATEGORY_ORDER)  # 全部激活
-                    _seen_tool_names = set()
-                    all_tools = []
+                    requested_names = get_activation_tool_names(content or "", _msg_for_match)
+                    _response_lower = str(content or "").lower()
+                    requested_names.update(
+                        item.get("function", {}).get("name", "")
+                        for item in skill_tools + mcp_tools
+                        if item.get("function", {}).get("name", "").lower() in _response_lower
+                    )
+                    requested_names.discard("")
+                    print(f"[工具激活] 按需补充 {len(requested_names)} 个工具定义", flush=True)
+                    loaded_categories.update(match_categories(f"{_msg_for_match}\n{content or ''}"))
+                    _seen_tool_names = {
+                        item.get("function", {}).get("name", "") for item in all_tools
+                    }
+                    _tool_count_before_activation = len(_seen_tool_names)
                     for _tool in TOOL_DEFINITIONS + skill_tools + mcp_tools:
                         _tool_name = _tool.get("function", {}).get("name", "")
-                        if _tool_name and _tool_name not in _seen_tool_names:
+                        if (_tool_name in requested_names
+                                and _tool_name not in _seen_tool_names):
                             _seen_tool_names.add(_tool_name)
                             all_tools.append(_tool)
+                    from brain.request_tool_policy import filter_definitions_for_request
+                    all_tools = filter_definitions_for_request(all_tools, _msg_for_match)
                     if runtime_disabled_names:
                         all_tools = [t for t in all_tools
                                      if t.get("function", {}).get("name", "") not in runtime_disabled_names]
@@ -2471,16 +2654,28 @@ class AgentCore:
                         skill_tool_names=_skill_names if _skill_names else None,
                         mcp_tool_names=_mcp_names if _mcp_names else None,
                         disabled_tool_names=runtime_disabled_names,
-                        skill_mcp_active=True,
+                        skill_mcp_active=False,
                     )
                     for i in range(len(messages) - 1, -1, -1):
                         if messages[i].get("content", "").startswith("【工具目录】"):
                             messages[i] = {"role": "system", "content": catalog_text}
                             break
-                    continue
+                    if len(all_tools) > _tool_count_before_activation:
+                        continue
                 if finish == "length" and not str(content or "").strip():
                     return "刚才的回复在生成时被截断了，我还没有拿到完整结果。请再发送一次，我会继续处理。"
-                return content or "刚才没有生成出可显示的内容，请再发送一次。"
+                final_content = content or "刚才没有生成出可显示的内容，请再发送一次。"
+                if any(token in _msg_for_match for token in ("给来源", "附来源", "来源链接", "给出来源")):
+                    source_urls = extract_urls(final_content)
+                    if not source_urls:
+                        for event in request_audit:
+                            if event.get("name") in NETWORK_READ_TOOLS:
+                                source_urls.extend(extract_urls(str(event.get("args", {}))))
+                                source_urls.extend(extract_urls(event.get("result", "")))
+                    source_urls = list(dict.fromkeys(source_urls))[:5]
+                    if source_urls and not extract_urls(final_content):
+                        final_content += "\n来源：" + "\n".join(source_urls)
+                return final_content
             elif finish == "tool_calls":
                 from types import SimpleNamespace
                 # 外层用 dict（兼容 messages 列表中其他代码的 .get() 访问）
@@ -2522,7 +2717,20 @@ class AgentCore:
                     messages,
                     on_tool_call=on_tool_call,
                     on_tool_result=on_tool_result,
+                    on_tool_enable_request=on_tool_enable_request,
                 )
+
+                # 用户授权成功后无需重开会话：将刚启用的真实定义补入同一任务的下一轮。
+                if self._request_enabled_tool_names:
+                    refreshed_defs = TOOL_DEFINITIONS + get_all_mcp_tool_definitions()
+                    existing_names = {item.get("function", {}).get("name", "") for item in all_tools}
+                    for definition in refreshed_defs:
+                        tool_name = definition.get("function", {}).get("name", "")
+                        if tool_name in self._request_enabled_tool_names and tool_name not in existing_names:
+                            all_tools.append(definition)
+                            existing_names.add(tool_name)
+                    runtime_disabled_names.difference_update(self._request_enabled_tool_names)
+                    self._request_enabled_tool_names.clear()
 
                 if forced_tool:
                     forced_tool = None
@@ -2539,6 +2747,23 @@ class AgentCore:
                     last_round_summaries.append(round_summary)
                     if len(last_round_summaries) > DEAD_LOOP_THRESHOLD:
                         last_round_summaries.pop(0)
+
+                # 只有新增且可用的工具结果才算取得进展；错误、拒绝和重复结果
+                # 连续出现时，比单纯按工具名判断更早熔断。
+                _usable_evidence = []
+                for value in new_summaries:
+                    lowered_value = str(value or "").lower()
+                    if not any(marker in lowered_value for marker in (
+                        "错误", "失败", "已阻止", "禁止", "没有已启用", "未知工具",
+                        "参数解析失败", "重复调用", "network request failed",
+                    )):
+                        _usable_evidence.append((len(value), value[:120]))
+                _new_evidence = any(item not in _evidence_signatures for item in _usable_evidence)
+                _evidence_signatures.update(_usable_evidence)
+                if _new_evidence:
+                    _no_new_evidence_count = 0
+                elif new_summaries:
+                    _no_new_evidence_count += 1
 
                 # ── 死循环检测（调用指纹对比） ──────────
                 # 对比工具调用指纹而非结果文本，避免 get_current_time 等时间变化工具干扰
@@ -2626,6 +2851,9 @@ class AgentCore:
                 elif _search_fatigue_count >= SEARCH_FATIGUE_MAX:
                     _breaker_reason = f"连续{SEARCH_FATIGUE_MAX}轮都在搜索/读取，无实质产出"
                     _search_fatigue_count = 0
+                elif _all_search_read and _no_new_evidence_count >= 2:
+                    _breaker_reason = "连续2轮搜索/读取没有获得新证据"
+                    _no_new_evidence_count = 0
 
                 if _breaker_reason:
                     print(f"  [熔断器] {_breaker_reason}，下一轮强制 tool_choice=none", flush=True)

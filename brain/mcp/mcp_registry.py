@@ -16,6 +16,7 @@ MCP_REGISTRY: Dict[str, Any] = {}
 MANIFEST_CACHE: Dict[str, Dict] = {}
 _all_mcp_tool_defs: list = []
 _disabled_mcp: set = set()
+_mcp_config_loaded = False
 
 _MCP_DIR = Path(__file__).resolve().parent.parent.parent / "mcp_servers"
 
@@ -38,7 +39,7 @@ def _get_config_path() -> Path:
 
 def _load_mcp_config():
     """从文件加载禁用的 MCP 列表"""
-    global _disabled_mcp
+    global _disabled_mcp, _mcp_config_loaded
     try:
         cfg_path = _get_config_path()
         if cfg_path.exists():
@@ -46,6 +47,12 @@ def _load_mcp_config():
             _disabled_mcp = set(data.get("disabled_mcp", []))
     except Exception:
         _disabled_mcp = set()
+    _mcp_config_loaded = True
+
+
+def _ensure_mcp_config_loaded():
+    if not _mcp_config_loaded:
+        _load_mcp_config()
 
 def save_mcp_config():
     """保存当前 MCP 禁用列表到文件（与技能共用 skill_config.json）"""
@@ -253,6 +260,7 @@ def is_mcp_tool(tool_name: str) -> Optional[str]:
 
 
 def unload_all():
+    global _mcp_config_loaded
     for _name, agent in MCP_REGISTRY.items():
         try:
             agent.cleanup()
@@ -262,10 +270,12 @@ def unload_all():
     MANIFEST_CACHE.clear()
     _all_mcp_tool_defs.clear()
     _disabled_mcp.clear()
+    _mcp_config_loaded = False
 
 
 def toggle_mcp_enabled(name: str) -> bool:
     """切换 MCP 启用状态，返回 True=已启用 False=已停用"""
+    _ensure_mcp_config_loaded()
     if name in _disabled_mcp:
         _disabled_mcp.discard(name)
         _rebuild_tool_cache()
@@ -279,12 +289,15 @@ def toggle_mcp_enabled(name: str) -> bool:
 
 
 def is_mcp_enabled(name: str) -> bool:
+    _ensure_mcp_config_loaded()
     return name not in _disabled_mcp
 
 
 def get_enabled_mcp_names() -> list:
+    _ensure_mcp_config_loaded()
     return [n for n in MCP_REGISTRY if n not in _disabled_mcp]
 
 
 def get_disabled_mcp_names() -> list:
+    _ensure_mcp_config_loaded()
     return list(_disabled_mcp)

@@ -99,6 +99,11 @@ class PersonaPromptComposer:
         for index, content in enumerate(dynamic_context, start=1):
             if content and content.strip():
                 layers.append(PromptLayer(f"动态上下文 {index}", content.strip()))
+        from brain.persona.authority import persona_authority_policy
+        layers.append(PromptLayer(
+            "人格档案权威边界",
+            persona_authority_policy(snapshot.profile.assistant_name),
+        ))
         # 核心策略单独成层并置于最后，未来 UI 无法通过编辑人格删除它。
         if core_policy.strip():
             layers.append(PromptLayer("不可编辑的系统规则", core_policy.strip()))
@@ -107,4 +112,3 @@ class PersonaPromptComposer:
             persona_revision=snapshot.revision,
             layers=tuple(layers),
         )
-

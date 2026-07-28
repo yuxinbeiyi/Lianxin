@@ -727,9 +727,9 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "web_search",
             "description": (
-                "使用 DuckDuckGo 搜索引擎进行联网搜索，获取实时信息。"
+                "按网络设置中的优先顺序使用 Tavily、知乎搜索、内建聚合或浏览器搜索获取实时信息。"
                 "当用户询问新闻、天气、实时事件、最新资讯、需要查找资料或无法用本地知识回答的问题时，调用此工具。"
-                "返回结果包含标题、链接和摘要。"
+                "返回带来源域名和原始链接的搜索证据；摘要不是网页正文，重要结论应继续读取链接。"
             ),
             "parameters": {
                 "type": "object",
@@ -1165,6 +1165,33 @@ TOOL_DEFINITIONS = [
                     "limit": {"type": "integer", "description": "最多返回消息数，默认20，最大50"}
                 },
                 "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "configure_network_tools",
+            "description": (
+                "查看或调整联网搜索/网页读取工具的启停状态和优先顺序。"
+                "修改配置属于副作用操作，只有用户明确要求时才能调用；普通联网请求不要调用。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["status", "enable", "disable", "move", "reset"],
+                        "description": "查看、启用、禁用、移动或恢复默认"
+                    },
+                    "kind": {
+                        "type": "string", "enum": ["search", "fetch"],
+                        "description": "搜索工具或网页读取工具"
+                    },
+                    "tool_id": {"type": "string", "description": "工具 ID；status/reset 可省略"},
+                    "position": {"type": "integer", "description": "move 的目标位置，从 0 开始"}
+                },
+                "required": ["action"]
             }
         }
     },
@@ -2136,6 +2163,10 @@ TOOL_DEFINITIONS = [
 
 def read_file(path: str) -> str:
     """读取文件第 0 块内容（开头 _CHUNK_SIZE 字符）。"""
+    if str(path or "").lower().startswith(("http://", "https://")):
+        # 防御性兼容：正常情况下请求级白名单不会让模型对 URL 调用
+        # read_file；旧会话或第三方模型仍这样调用时，直接走统一网络路由。
+        return fetch_webpage(path)
     return read_file_chunk(path, chunk_index=0)
 
 
@@ -2477,6 +2508,12 @@ def save_memory(fact: str, category: str | None = None) -> str:
     fact = fact.strip()
     if not fact:
         return "记忆内容不能为空。"
+    from brain.persona.authority import is_assistant_identity_fact
+    if is_assistant_identity_fact(fact):
+        return (
+            "这条内容描述的是莲心自身的人格或外貌设定，不能写入用户长期记忆。"
+            "请在人格中枢修改当前人格档案；当前人格档案会作为唯一权威来源。"
+        )
 
     # 自动追加记录日期
     today = datetime.now().strftime("%Y-%m-%d")
@@ -3064,8 +3101,8 @@ def run_command(command: str) -> str:
 
 # ==================== 联网搜索工具函数 ====================
 
-def web_search(query: str, max_results: int = 5) -> str:
-    """联网搜索，优先 Tavily → 知乎 → 百度 → DDG → Bing → 浏览器。智能代理：先直连，不通自动切代理。"""
+def _legacy_web_search(query: str, max_results: int = 5) -> str:
+    """旧版硬编码搜索实现，保留作紧急诊断参考，不参与正常路由。"""
     import urllib.parse
     import requests
     from bs4 import BeautifulSoup
@@ -3336,7 +3373,7 @@ def web_search(query: str, max_results: int = 5) -> str:
 
 # ==================== 网页内容提取工具函数 ====================
 
-def fetch_webpage(url: str, max_length: int = 3000) -> str:
+def _legacy_fetch_webpage(url: str, max_length: int = 3000) -> str:
     """获取网页文本内容，返回纯文本（最多 max_length 字符）"""
     try:
         import requests
@@ -3435,7 +3472,7 @@ def fetch_webpage(url: str, max_length: int = 3000) -> str:
         return f"处理网页时出错：{e}"
 
 
-def fetch_webpage_via_api(url: str, max_length: int = 3000) -> str:
+def _legacy_fetch_webpage_via_api(url: str, max_length: int = 3000) -> str:
     try:
         import requests
         from requests.adapters import HTTPAdapter
@@ -3853,7 +3890,7 @@ def format_document(content: str, output_path: str, use_template: bool = True) -
 
 # ==================== TLS 指纹伪装网页提取工具函数 ====================
 
-def fetch_webpage_stealth(url: str, max_length: int = 3000) -> str:
+def _legacy_fetch_webpage_stealth(url: str, max_length: int = 3000) -> str:
     """
     使用 curl_cffi 的 Chrome 指纹伪装获取网页内容。
     比 requests 更能绕过反爬，比 Playwright 快得多。
@@ -3901,7 +3938,7 @@ def fetch_webpage_stealth(url: str, max_length: int = 3000) -> str:
         return f"获取网页失败（stealth 模式）：{e}"
 
 
-def fetch_webpage_browser(url: str, max_length: int = 3000) -> str:
+def _legacy_fetch_webpage_browser(url: str, max_length: int = 3000) -> str:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -3953,6 +3990,39 @@ def fetch_webpage_browser(url: str, max_length: int = 3000) -> str:
             return f"网页内容（浏览器模式）如下：\n\n{text}"
     except Exception as e:
         return f"浏览器获取网页失败：{e}"
+
+
+def web_search(query: str, max_results: int = 5) -> str:
+    """统一联网搜索入口，顺序由“网络设置 → 工具调用顺序”决定。"""
+    from brain.network_router import search_web
+    return search_web(query, max_results)
+
+
+def _routed_fetch(url: str, max_length: int = 3000) -> str:
+    from brain.network_router import fetch_url
+    return fetch_url(url, max_length, {
+        "http": _legacy_fetch_webpage,
+        "jina": _legacy_fetch_webpage_via_api,
+        "stealth": _legacy_fetch_webpage_stealth,
+        "browser": _legacy_fetch_webpage_browser,
+    })
+
+
+def fetch_webpage(url: str, max_length: int = 3000) -> str:
+    """统一网页读取入口；保留名称以兼容已有 Function Calling。"""
+    return _routed_fetch(url, max_length)
+
+
+def fetch_webpage_via_api(url: str, max_length: int = 3000) -> str:
+    return _routed_fetch(url, max_length)
+
+
+def fetch_webpage_stealth(url: str, max_length: int = 3000) -> str:
+    return _routed_fetch(url, max_length)
+
+
+def fetch_webpage_browser(url: str, max_length: int = 3000) -> str:
+    return _routed_fetch(url, max_length)
 
 
 
@@ -5574,6 +5644,12 @@ TOOL_EXECUTORS = {
     "write_docx": lambda inp: write_docx(inp["file_path"], inp["content"]),
     "format_document": lambda inp: format_document(inp["content"], inp["output_path"], inp.get("use_template", True)),
     "web_search": lambda inp: web_search(inp.get("query", ""), inp.get("max_results", 5)),
+    "configure_network_tools": lambda inp: __import__(
+        "brain.network_router", fromlist=["configure_tools"]
+    ).configure_tools(
+        inp.get("action", "status"), inp.get("kind", "search"),
+        inp.get("tool_id", ""), inp.get("position"),
+    ),
     "fetch_webpage": lambda inp: fetch_webpage(inp["url"], inp.get("max_length", 3000)),
     "fetch_webpage_browser": lambda inp: fetch_webpage_browser(inp["url"], inp.get("max_length", 3000)),
     "fetch_webpage_via_api": lambda inp: fetch_webpage_via_api(inp["url"], inp.get("max_length", 3000)),

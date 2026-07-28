@@ -50,6 +50,9 @@ CATEGORY_TOOLS: Dict[str, Set[str]] = {
     "web": {
         "web_search", "fetch_webpage", "fetch_webpage_browser",
         "fetch_webpage_via_api", "fetch_webpage_stealth",
+        "configure_network_tools",
+    },
+    "bilibili": {
         "bilibili_search", "bilibili_add_tag", "bilibili_list_tags",
     },
     "office": {
@@ -89,8 +92,11 @@ CATEGORY_KEYWORDS: Dict[str, List[str]] = {
     ],
     "web": [
         "搜索", "网页", "网络", "上网", "查一下", "百度", "谷歌",
-        "bilibili", "B站", "视频", "fetch", "抓取", "链接",
+        "fetch", "抓取", "链接", "网址", "http://", "https://",
         "帮我搜", "查查", "最新", "新闻", "search", "web", "internet",
+    ],
+    "bilibili": [
+        "bilibili", "b站", "哔哩哔哩", "b站标签", "b站视频",
     ],
     "office": [
         "excel", "表格", "word", "文档", "docx", "xlsx",
@@ -142,6 +148,7 @@ TOOL_DESCRIPTIONS: Dict[str, str] = {
     "fetch_webpage_browser": "浏览器提取网页",
     "fetch_webpage_via_api": "Jina解析网页",
     "fetch_webpage_stealth": "TLS伪装提取",
+    "configure_network_tools": "查看或调整联网工具顺序与启停状态",
     "bilibili_search": "B站搜索视频",
     "bilibili_add_tag": "添加B站标签",
     "bilibili_list_tags": "查看B站标签",
@@ -177,6 +184,7 @@ CATEGORY_NAMES: Dict[str, str] = {
     "file": "文件操作",
     "code": "代码开发",
     "web": "网页搜索",
+    "bilibili": "B站互动",
     "office": "办公文档",
     "media": "图像媒体",
     "auto": "系统自动化",
@@ -185,7 +193,7 @@ CATEGORY_NAMES: Dict[str, str] = {
 }
 
 # 按目录显示顺序
-CATEGORY_ORDER = ["file", "code", "web", "office", "media", "auto", "todo", "weather"]
+CATEGORY_ORDER = ["file", "code", "web", "bilibili", "office", "media", "auto", "todo", "weather"]
 
 
 def match_categories(user_message: str) -> Set[str]:
@@ -246,8 +254,51 @@ def filter_builtin_tools(all_tools: List[dict], user_message: str) -> List[dict]
         筛选后的工具列表（仅核心+命中领域）
     """
     active = get_active_tool_names(user_message)
-    return [t for t in all_tools
-            if t.get("function", {}).get("name", "") in active]
+    selected = [t for t in all_tools
+                if t.get("function", {}).get("name", "") in active]
+    from brain.request_tool_policy import filter_definitions_for_request
+    return filter_definitions_for_request(selected, user_message)
+
+
+def select_contextual_external_tools(definitions: List[dict], current_text: str,
+                                     recent_context: str = "") -> List[dict]:
+    """只在当前请求点名服务，或明确承接上一轮服务建议时注入 MCP。"""
+    current = str(current_text or "").lower()
+    recent = str(recent_context or "").lower()
+    continuation = any(token in current for token in (
+        "那就用", "就用你推荐的", "用它试试", "开始试试", "执行测试", "跑一下",
+        "go ahead", "try it",
+    ))
+    selected = []
+    for item in definitions:
+        name = item.get("function", {}).get("name", "").lower()
+        parts = name.split("__", 2)
+        service = parts[1] if len(parts) >= 3 and parts[0] == "mcp" else ""
+        if service and (service in current or (continuation and service in recent)):
+            selected.append(item)
+    return selected
+
+
+def get_activation_tool_names(response_text: str, request_text: str = "") -> Set[str]:
+    """只激活模型明确点名或当前语义类别需要的工具，禁止全量展开。"""
+    text = str(response_text or "")
+    categories = match_categories(f"{request_text}\n{text}")
+    names: Set[str] = set()
+    for category in categories:
+        names.update(CATEGORY_TOOLS.get(category, set()))
+
+    # 工具目录会让模型知道名称；只有正文明确点名时才补充该定义。
+    all_known = set(CORE_TOOLS)
+    for tools in CATEGORY_TOOLS.values():
+        all_known.update(tools)
+    lowered = text.lower()
+    names.update(name for name in all_known if name.lower() in lowered)
+
+    from brain.request_tool_policy import request_tool_allowlist
+    allowlist = request_tool_allowlist(request_text)
+    if allowlist is not None:
+        names.intersection_update(allowlist)
+    return names
 
 
 def build_tool_catalog(loaded_categories: Set[str],
@@ -324,6 +375,10 @@ def detect_tool_request(response_text: str) -> bool:
 
     import re
 
+    # 长回答已经形成完整答复，其中的“没有权限”等自然语言不能触发工具重试。
+    if len(response_text) >= 100:
+        return False
+
     # 明确表达缺少工具（短回复才可能是工具缺失，长回复中可能是正常语气）
     missing_patterns = [
         "我没有这个工具", "我没有对应的工具", "没有这个功能",
@@ -345,9 +400,6 @@ def detect_tool_request(response_text: str) -> bool:
 
     # 表达了工具使用意图（但短回复才可能真的是被工具限制截断，
     # 长回复说明模型已经完成回答了，不应重试）
-    if len(response_text) >= 100:
-        return False
-
     intent_keywords = [
         "让我搜索", "我来搜索", "帮你搜索", "搜一下",
         "让我查", "我来查", "帮你查", "查一下",

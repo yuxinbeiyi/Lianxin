@@ -80,12 +80,9 @@ def analyze_observation(image_path: str, source_name: str = "截图") -> str:
     print(f"[观察-调试] analyze_observation: {source_name}, path={image_path}")
     try:
         from brain.vision import describe_image
-        prompt = (
-            "请详细描述这张画面里的内容，包括人物动作、面部表情、"
-            "屏幕显示内容、桌面环境等所有你观察到的细节。"
-        )
+        from brain.observation_quality import OBSERVATION_PROMPT, normalize_observation
         print("[观察-调试] analyze_observation: 调用 describe_image...")
-        result = describe_image(image_path, prompt=prompt)
+        result = normalize_observation(describe_image(image_path, prompt=OBSERVATION_PROMPT))
         print(f"[观察-调试] analyze_observation: 完成, len={len(result)}")
         return result
     except Exception as e:

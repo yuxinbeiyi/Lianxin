@@ -84,13 +84,16 @@ class ProactivePresentationController:
         self._last_slack_action = action or ""
 
     def handle_observation_result(self, desc: str):
+        from brain.observation_quality import normalize_observation
+        desc = normalize_observation(desc)
         if desc:
             self._scheduler.set_last_observation(desc)
             self._remember_observation(desc)
 
     def _remember_observation(self, desc: str):
         """Keep observation results available for an immediate follow-up question."""
-        content = self._clean_text(desc)
+        from brain.observation_quality import observation_preview
+        content = observation_preview(self._clean_text(desc), 360)
         if not content:
             return
         now = time.monotonic()
@@ -107,6 +110,8 @@ class ProactivePresentationController:
 
     def handle_observation_image(self, img_path: str, desc: str):
         try:
+            from brain.observation_quality import normalize_observation, observation_preview
+            desc = normalize_observation(desc)
             self.clear_observation_tip()
             self._observations_dir.mkdir(parents=True, exist_ok=True)
             ts = int(time.monotonic() * 1000)
@@ -130,7 +135,7 @@ class ProactivePresentationController:
                 pass
 
             self._remember_observation(desc)
-            summary = desc[:100] + "..." if len(desc) > 100 else desc
+            summary = observation_preview(desc, 180)
             self._chat_widget.add_image_message(
                 str(dst), desc=summary, full_text=desc, is_ai=True
             )

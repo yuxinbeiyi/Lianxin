@@ -455,6 +455,7 @@ class MainWindow(QMainWindow):
         self._agent_worker.tool_round_start.connect(self._chat_widget.start_tool_round)
         self._agent_worker.tool_called.connect(self._on_tool_called)
         self._agent_worker.tool_result.connect(self._on_tool_result)
+        self._agent_worker.tool_enable_requested.connect(self._on_tool_enable_requested)
         self._agent_worker.observation_image.connect(self._on_observation_image)
         self._agent_worker.checklist_proposed.connect(self._on_checklist_proposed)
         self._agent_worker.error_occurred.connect(self._on_error)
@@ -1246,6 +1247,7 @@ class MainWindow(QMainWindow):
             self._agent_worker.tool_round_start.connect(self._chat_widget.start_tool_round)
             self._agent_worker.tool_called.connect(self._on_tool_called)
             self._agent_worker.tool_result.connect(self._on_tool_result)
+            self._agent_worker.tool_enable_requested.connect(self._on_tool_enable_requested)
             self._agent_worker.observation_image.connect(self._on_observation_image)
             self._agent_worker.error_occurred.connect(self._on_error)
             self._agent_worker.start()
@@ -1317,6 +1319,7 @@ class MainWindow(QMainWindow):
         self._agent_worker.tool_round_start.connect(self._chat_widget.start_tool_round)
         self._agent_worker.tool_called.connect(self._on_tool_called)
         self._agent_worker.tool_result.connect(self._on_tool_result)
+        self._agent_worker.tool_enable_requested.connect(self._on_tool_enable_requested)
         self._agent_worker.observation_image.connect(self._on_observation_image)
         self._agent_worker.error_occurred.connect(self._on_error)
         self._duty_scheduler.set_agent_busy(True)
@@ -1340,6 +1343,28 @@ class MainWindow(QMainWindow):
             tool_name, preview, is_error, round_num, elapsed_ms)
         status = "❌" if is_error else "✅"
         self._task_progress.set_subtitle(f"{status} {tool_name} → {preview}")
+
+    def _on_tool_enable_requested(self, tool_key: str, display_name: str,
+                                  reason: str, request):
+        """主线程中的用户确认；工作线程会等待 event 后继续工具循环。"""
+        try:
+            details = str(reason or "完成当前任务需要该能力。").strip()
+            reply = QMessageBox.question(
+                self,
+                "工具授权",
+                f"莲心想要你允许她启用“{display_name}”工具。\n\n"
+                f"原因：{details}\n\n"
+                "同意后，莲心会继续当前任务。",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            request.approved = reply == QMessageBox.Yes
+            if request.approved:
+                self._chat_widget.add_system_tip(f"已允许莲心启用：{display_name}")
+            else:
+                self._chat_widget.add_system_tip(f"未允许启用：{display_name}")
+        finally:
+            request.event.set()
 
 
     def _on_progress_update(self, text: str):
@@ -3330,7 +3355,6 @@ class MainWindow(QMainWindow):
         self._alarm_timer.stop()
         if hasattr(self, '_auto_task_scheduler'):
             self._auto_task_scheduler.stop()
-            self._auto_task_scheduler.wait()
         self._countdown_timer.stop()
         self._todo_reminder_timer.stop()
         self._stop_autostart_net_poll()
@@ -3348,11 +3372,11 @@ class MainWindow(QMainWindow):
             self._voice_duplex.stop()
             self._voice_duplex = None
         
-        for worker in (self._agent_worker, self._voice_worker,
-                    self._speaker_worker):
-            if worker and worker.isRunning():
-                worker.quit()
-                worker.wait(2000)
+        from utils.shutdown import stop_qthreads
+        stop_qthreads((
+            getattr(self, "_auto_task_scheduler", None),
+            self._agent_worker, self._voice_worker, self._speaker_worker,
+        ), total_timeout_ms=250)
 
         self._speaker.stop()
 

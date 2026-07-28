@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QFrame, QMessageBox, QTabWidget,
     QWidget, QFormLayout, QCheckBox, QSpinBox, QButtonGroup, QRadioButton,
+    QGroupBox, QListWidget, QListWidgetItem, QAbstractItemView,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont
@@ -16,6 +17,7 @@ from config import (
     get_firecrawl_config, save_firecrawl_config,
     get_zhihu_config, save_zhihu_config,
     get_search_fallback_config, save_search_fallback_config,
+    get_network_tool_order_config, save_network_tool_order_config,
     get_proxy_config, save_proxy_config,
     get_builtin_tool_config, save_builtin_tool_config,
     get_bilibili_config, save_bilibili_config,
@@ -93,7 +95,7 @@ class NetworkSettingsDialog(QDialog):
         # ── Tab 4: 重试与回退 ─────────────────────────────
         tab_fallback = QWidget()
         self._build_tab_fallback(tab_fallback)
-        tabs.addTab(tab_fallback, "⚙️ 重试回退")
+        tabs.addTab(tab_fallback, "⚙️ 工具调用顺序")
 
         # ── Tab 5: 代理设置 ─────────────────────────────
         tab_proxy = QWidget()
@@ -296,75 +298,95 @@ class NetworkSettingsDialog(QDialog):
         self._zhihu_key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
         self._show_zh_btn.setText("隐藏" if checked else "显示")
 
-    # ── 重试与回退 ────────────────────────────────────────
+    # ── 工具调用顺序 ──────────────────────────────────────
     def _build_tab_fallback(self, parent: QWidget):
         layout = QVBoxLayout(parent)
         layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(12)
+        layout.setSpacing(8)
 
         desc = QLabel(
-            "配置 MCP 搜索（Tavily/Firecrawl）失败后的重试和回退策略。\n"
-            "- 重试：同一请求失败后自动重试几次，偶发网络问题可以自动恢复\n"
-            "- 回退：重试全部失败后，是改用内建工具，还是基于已有信息直接回答\n"
-            "- 额度检测：免费额度用完时自动切换，不用手动改配置"
+            "从上到下就是实际优先级。拖动整行排序；取消勾选即禁止该工具参与联网路由。\n"
+            "搜索来源负责找信息；网页读取仅在已有 URL 时将正文转换为可阅读内容。"
         )
         desc.setWordWrap(True)
         desc.setFont(QFont("Microsoft YaHei UI", 9))
         desc.setStyleSheet("color: #666; background: #F5F5FF; padding: 8px; border-radius: 4px;")
         layout.addWidget(desc)
 
+        search_group = QGroupBox("搜索来源（关键词搜索）")
+        search_layout = QVBoxLayout(search_group)
+        self._search_order_list = self._build_order_list("search")
+        search_layout.addWidget(self._search_order_list)
+        layout.addWidget(search_group)
+
+        fetch_group = QGroupBox("网页读取（已有 URL 后）")
+        fetch_layout = QVBoxLayout(fetch_group)
+        self._fetch_order_list = self._build_order_list("fetch")
+        fetch_layout.addWidget(self._fetch_order_list)
+        layout.addWidget(fetch_group)
+
+        restore_row = QHBoxLayout()
+        restore_row.addStretch()
+        restore_btn = QPushButton("恢复默认排序")
+        restore_btn.setToolTip("恢复推荐顺序和默认启用状态，不会清除 API Key、代理或 Cookie。")
+        restore_btn.clicked.connect(self._restore_network_defaults)
+        restore_row.addWidget(restore_btn)
+        layout.addLayout(restore_row)
+
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight)
-        form.setSpacing(10)
+        form.setSpacing(6)
 
         self._search_max_retries_spin = QSpinBox()
         self._search_max_retries_spin.setRange(0, 5)
         self._search_max_retries_spin.setSuffix(" 次")
-        form.addRow("MCP 最大重试次数：", self._search_max_retries_spin)
-
-        strategy_widget = QWidget()
-        strategy_vbox = QVBoxLayout(strategy_widget)
-        strategy_vbox.setContentsMargins(0, 4, 0, 4)
-        strategy_vbox.setSpacing(6)
-        self._search_strategy_group = QButtonGroup(strategy_widget)
-        self._search_strategy_builtin = QRadioButton("回退到内建搜索工具（web_search/fetch_webpage）")
-        self._search_strategy_direct = QRadioButton("基于已有信息直接回答")
-        self._search_strategy_group.addButton(self._search_strategy_builtin)
-        self._search_strategy_group.addButton(self._search_strategy_direct)
-        strategy_vbox.addWidget(self._search_strategy_builtin)
-        strategy_vbox.addWidget(self._search_strategy_direct)
-        form.addRow("重试失败后策略：", strategy_widget)
+        form.addRow("临时失败重试次数：", self._search_max_retries_spin)
 
         self._search_auto_fallback_check = QCheckBox("启用")
-        form.addRow("额度不足自动回退：", self._search_auto_fallback_check)
+        form.addRow("额度不足自动换下一个：", self._search_auto_fallback_check)
 
         layout.addLayout(form)
-
-        # ── 内建工具开关 ────────────────────────────────
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("background-color: #E0E0E8; max-height: 1px;")
-        layout.addWidget(sep)
-
-        builtin_label = QLabel("内建网页抓取工具（勾选=可用，取消=禁止LLM调用）")
-        builtin_label.setFont(QFont("Microsoft YaHei UI", 9, QFont.Bold))
-        builtin_label.setStyleSheet("color: #3A3A5C;")
-        layout.addWidget(builtin_label)
-
-        self._bt_fetch_webpage = QCheckBox("fetch_webpage — 普通HTTP抓取，直连速度快")
-        self._bt_fetch_webpage.setChecked(True)
-        layout.addWidget(self._bt_fetch_webpage)
-
-        self._bt_fetch_via_api = QCheckBox("fetch_webpage_via_api — API中转抓取，速度慢但穿透力强")
-        layout.addWidget(self._bt_fetch_via_api)
-
-        self._bt_fetch_browser = QCheckBox("fetch_webpage_browser — 浏览器模式Playwright，最慢")
-        layout.addWidget(self._bt_fetch_browser)
-
-        self._bt_fetch_stealth = QCheckBox("fetch_webpage_stealth — 反反爬模式，额外伪装头")
-        layout.addWidget(self._bt_fetch_stealth)
-
         layout.addStretch()
+
+    def _build_order_list(self, kind: str):
+        widget = QListWidget()
+        widget.setObjectName(f"network_{kind}_order")
+        widget.setDragDropMode(QAbstractItemView.InternalMove)
+        widget.setDefaultDropAction(Qt.MoveAction)
+        widget.setSelectionMode(QAbstractItemView.SingleSelection)
+        widget.setMinimumHeight(116)
+        widget.setToolTip("拖动整行调整优先级；勾选表示允许该工具参与联网路由。")
+        return widget
+
+    @staticmethod
+    def _list_order(widget: QListWidget):
+        return [widget.item(index).data(Qt.UserRole) for index in range(widget.count())]
+
+    def _load_order_list(self, widget: QListWidget, kind: str):
+        from brain.network_router import tool_catalog
+        cfg = get_network_tool_order_config()
+        catalog = {item["id"]: item for item in tool_catalog(kind)}
+        ids = [item for item in cfg.get(f"{kind}_order", []) if item in catalog]
+        ids += [item for item in catalog if item not in ids]
+        widget.clear()
+        for tool_id in ids:
+            info = catalog[tool_id]
+            item = QListWidgetItem(f"{info['name']}  ·  {info['state']}")
+            item.setData(Qt.UserRole, tool_id)
+            item.setToolTip(info["description"] + "\n当前状态：" + info["state"])
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled)
+            item.setCheckState(Qt.Checked if info["checked"] else Qt.Unchecked)
+            widget.addItem(item)
+
+    def _restore_network_defaults(self):
+        from brain.network_router import FETCH_IDS, SEARCH_IDS, set_tool_enabled
+        for tool_id in (*SEARCH_IDS, *FETCH_IDS):
+            set_tool_enabled(tool_id, True)
+        save_network_tool_order_config({
+            "search_order": list(SEARCH_IDS), "fetch_order": list(FETCH_IDS),
+            "retry_count": 2, "fallback_on_quota": True,
+        })
+        self._load_config()
 
     # ── 代理设置 ─────────────────────────────────────────
     def _build_tab_proxy(self, parent: QWidget):
@@ -525,26 +547,17 @@ class NetworkSettingsDialog(QDialog):
         zh_cfg = get_zhihu_config()
         self._zhihu_key_edit.setText(zh_cfg.get("access_secret", ""))
 
-        cfg = get_search_fallback_config()
-        self._search_max_retries_spin.setValue(cfg.get("max_retries", 2))
+        cfg = get_network_tool_order_config()
+        self._search_max_retries_spin.setValue(cfg.get("retry_count", 2))
 
         proxy_cfg = get_proxy_config()
         self._proxy_enabled_cb.setChecked(proxy_cfg.get("enabled", False))
         self._proxy_http_edit.setText(proxy_cfg.get("http_proxy", ""))
         self._proxy_https_edit.setText(proxy_cfg.get("https_proxy", ""))
         self._proxy_noproxy_edit.setText(proxy_cfg.get("no_proxy", ""))
-        if cfg.get("fallback_strategy", "builtin") == "builtin":
-            self._search_strategy_builtin.setChecked(True)
-        else:
-            self._search_strategy_direct.setChecked(True)
-        self._search_auto_fallback_check.setChecked(cfg.get("auto_fallback_on_quota", True))
-
-        # 内建工具开关
-        builtin = get_builtin_tool_config()
-        self._bt_fetch_webpage.setChecked(builtin.get("fetch_webpage", True))
-        self._bt_fetch_via_api.setChecked(builtin.get("fetch_webpage_via_api", False))
-        self._bt_fetch_browser.setChecked(builtin.get("fetch_webpage_browser", True))
-        self._bt_fetch_stealth.setChecked(builtin.get("fetch_webpage_stealth", True))
+        self._search_auto_fallback_check.setChecked(cfg.get("fallback_on_quota", True))
+        self._load_order_list(self._search_order_list, "search")
+        self._load_order_list(self._fetch_order_list, "fetch")
 
         bl_cfg = get_bilibili_config()
         self._bl_sess_edit.setText(bl_cfg.get("sessdata", ""))
@@ -558,23 +571,22 @@ class NetworkSettingsDialog(QDialog):
         save_tavily_config({"api_key": self._tv_key_edit.text().strip()})
         save_firecrawl_config({"api_key": self._fc_key_edit.text().strip()})
         save_zhihu_config({"access_secret": self._zhihu_key_edit.text().strip()})
-        save_search_fallback_config({
-            "max_retries": self._search_max_retries_spin.value(),
-            "fallback_strategy": "builtin" if self._search_strategy_builtin.isChecked() else "direct",
-            "auto_fallback_on_quota": self._search_auto_fallback_check.isChecked(),
+        from brain.network_router import set_tool_enabled
+        for widget in (self._search_order_list, self._fetch_order_list):
+            for index in range(widget.count()):
+                item = widget.item(index)
+                set_tool_enabled(item.data(Qt.UserRole), item.checkState() == Qt.Checked)
+        save_network_tool_order_config({
+            "search_order": self._list_order(self._search_order_list),
+            "fetch_order": self._list_order(self._fetch_order_list),
+            "retry_count": self._search_max_retries_spin.value(),
+            "fallback_on_quota": self._search_auto_fallback_check.isChecked(),
         })
         save_proxy_config({
             "enabled":     self._proxy_enabled_cb.isChecked(),
             "http_proxy":  self._proxy_http_edit.text().strip(),
             "https_proxy": self._proxy_https_edit.text().strip(),
             "no_proxy":    self._proxy_noproxy_edit.text().strip(),
-        })
-
-        save_builtin_tool_config({
-            "fetch_webpage":           self._bt_fetch_webpage.isChecked(),
-            "fetch_webpage_via_api":   self._bt_fetch_via_api.isChecked(),
-            "fetch_webpage_browser":   self._bt_fetch_browser.isChecked(),
-            "fetch_webpage_stealth":   self._bt_fetch_stealth.isChecked(),
         })
 
         save_bilibili_config({

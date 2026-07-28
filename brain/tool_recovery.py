@@ -8,22 +8,14 @@ import logging
 
 logger = logging.getLogger("ToolRecovery")
 
-# 重试配置（哪些工具需要重试）
+# 联网工具已由 network_router 根据用户设置完成重试与降级。这里不能再套一层
+# 固定恢复链，否则会重复请求，并可能绕过“工具调用顺序”的启停配置。
 RETRY_CONFIG = {
-    "web_search":             {"max_retries": 2, "backoff": 1.5},
-    "fetch_webpage":          {"max_retries": 1, "backoff": 2.0},
-    "fetch_webpage_via_api":  {"max_retries": 1, "backoff": 2.0},
-    "fetch_webpage_browser":  {"max_retries": 0},
-    "fetch_webpage_stealth":  {"max_retries": 0},
-    # 默认：不重试
+    # 其他非联网工具如需恢复，可在这里单独登记。
 }
 
 # 降级映射（当前工具失败后尝试哪个替代工具）
-DEGRADE_MAP = {
-    "web_search":             "fetch_webpage",
-    "fetch_webpage":          "fetch_webpage_via_api",
-    "fetch_webpage_via_api":  "fetch_webpage_browser",
-}
+DEGRADE_MAP = {}
 
 
 def execute_with_recovery(

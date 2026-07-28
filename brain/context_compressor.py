@@ -200,7 +200,8 @@ def merge_summaries_bounded(
 
 _TEXT_TOOL_PROTOCOL_RE = re.compile(
     r"<\s*/?\s*(?:tool(?:_call)?|function|parameter)\b|"
-    r"<\s*(?:function|parameter)\s*=",
+    r"<\s*(?:function|parameter)\s*=|"
+    r"<\s*[｜|]\s*DSML\s*[｜|]\s*(?:tool_calls?|invoke|parameter)?",
     re.IGNORECASE,
 )
 
@@ -223,6 +224,7 @@ def contains_textual_tool_protocol(content: Any) -> bool:
         or "<tool" in lowered
         or "<function" in lowered
         or "<parameter" in lowered
+        or "dsml" in lowered and ("tool_call" in lowered or "<｜" in text)
         or _TEXT_FUNCTION_CALL_RE.match(text) is not None
     )
 

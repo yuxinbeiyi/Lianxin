@@ -243,11 +243,19 @@ class DutyScheduler(QObject):
         QTimer.singleShot(0, self._tick)
 
     def stop(self):
+        """在共享的短超时内停止职责线程，避免退出时按职责累计卡顿。"""
         self._master_timer.stop()
+        self._paused = True
+        workers = [duty._worker for duty in self._duties.values() if duty._worker]
+        from utils.shutdown import stop_qthreads
+        survivors = stop_qthreads(workers, total_timeout_ms=250)
+        survivor_ids = {id(worker) for worker in survivors}
         for duty in self._duties.values():
-            if duty._worker and duty._worker.isRunning():
-                duty._worker.quit()
-                duty._worker.wait(2000)
+            if duty._worker and id(duty._worker) in survivor_ids:
+                duty.status.detail_text = "应用退出中：后台调用将在完成后自行释放"
+            else:
+                duty.status.is_running = False
+        return survivors
 
     def pause(self):
         self._paused = True
