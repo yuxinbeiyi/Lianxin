@@ -116,6 +116,11 @@ def activate_skill(name: str) -> str:
 
     _active_skills.add(name)
     _disabled_skills.discard(name)  # 手动激活时移出禁用列表
+    try:
+        from brain.capability_knowledge import invalidate_capability_knowledge_cache
+        invalidate_capability_knowledge_cache()
+    except Exception:
+        pass
     return f"技能「{name}」已激活。"
 
 
@@ -130,6 +135,11 @@ def deactivate_skill(name: str) -> str:
 
     _active_skills.discard(name)
     _disabled_skills.add(name)
+    try:
+        from brain.capability_knowledge import invalidate_capability_knowledge_cache
+        invalidate_capability_knowledge_cache()
+    except Exception:
+        pass
     return f"技能「{name}」已停用。"
 
 

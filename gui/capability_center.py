@@ -532,6 +532,11 @@ class CapabilityCenter(QDialog):
             print(f"[能力中心] MCP 刷新失败: {e}")
 
         self._last_refresh = datetime.now()
+        try:
+            from brain.capability_knowledge import invalidate_capability_knowledge_cache
+            invalidate_capability_knowledge_cache()
+        except Exception:
+            pass
         self._refresh_all()
         self._refresh_btn.setText("🔄 刷新")
         self._refresh_btn.setEnabled(True)

@@ -94,6 +94,7 @@ class ProactiveWorker(QThread):
                  bilibili_ignore_cooldown: bool = False,
                  memory_cue: dict = None,
                  emotional_motive: dict = None,
+                 growth_request: dict = None,
                  persona_snapshot=None,
                  parent=None):
         super().__init__(parent)
@@ -108,6 +109,7 @@ class ProactiveWorker(QThread):
         self._bilibili_ignore_cooldown = bilibili_ignore_cooldown
         self._memory_cue = memory_cue or None
         self._emotional_motive = emotional_motive or None
+        self._growth_request = growth_request or None
         self._persona_snapshot = persona_snapshot
 
     def run(self):
@@ -262,6 +264,13 @@ class ProactiveWorker(QThread):
                 "【本次主动联系动机】\n"
                 + str(self._emotional_motive.get("reason", "有自然的联系意愿"))
                 + "。这只是内在动机，不是必须打扰对方的命令。"
+            )
+        if self._growth_request:
+            parts.append(
+                "【本次可选主动诉求】\n"
+                + str(self._growth_request.get("instruction", ""))
+                + " 理由：" + str(self._growth_request.get("reason_summary", "用户已允许此类联系"))
+                + " 必须明确允许对方跳过；不要表达成真实痛苦、义务或情感绑架。"
             )
 
         # 观察结果（如果有）

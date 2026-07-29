@@ -6026,6 +6026,31 @@ def execute_tool(name: str, tool_input: dict, *, invocation_mode: str = "auto",
             except Exception:
                 pass
 
+# Read-only runtime capability lookup.  CapabilityCenter reads the same catalog.
+CAPABILITY_QUERY_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": "query_capabilities",
+        "description": (
+            "仅当用户明确询问莲心会什么、有哪些功能、能否支持某项操作时调用。"
+            "查询当前实时能力目录，区分可直接使用、已停用和当前不可用。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "想了解的能力或操作；可为空。"},
+                "category": {"type": "string", "description": "可选能力分类。"},
+                "limit": {"type": "integer", "description": "返回条数，默认 20，最大 50。"},
+            },
+            "required": [],
+        },
+    },
+}
+TOOL_DEFINITIONS.append(CAPABILITY_QUERY_DEFINITION)
+TOOL_EXECUTORS["query_capabilities"] = lambda inp: __import__(
+    "brain.capability_knowledge", fromlist=["format_capability_query"]
+).format_capability_query(inp.get("query", ""), inp.get("category", ""), inp.get("limit", 20))
+
 # ── 初始化工具注册中心（模块导入时自动注册所有工具）─────────
 try:
     from brain.tool_registry import init_tool_registry

@@ -532,6 +532,15 @@ class AgentCore:
         # 每轮请求只获取一次不可变人格快照。后续工具循环始终复用该快照，
         # 即使用户此时在界面切换人格，也只影响下一条新请求。
         persona_snapshot, persona_transition = self._prepare_persona_request()
+        self._latest_growth_event = None
+        if persona_snapshot is not None and persona_snapshot.enabled:
+            try:
+                from brain.persona.growth import get_persona_growth_service
+                self._latest_growth_event = get_persona_growth_service().observe_feedback(
+                    persona_snapshot.profile.id, user_message
+                )
+            except Exception:
+                pass
 
         trace_id = ""
         trace_started = time.perf_counter()
@@ -955,7 +964,14 @@ class AgentCore:
         route = route or getattr(self, "_request_route", None)
         compact = bool(route and route.mode == RequestMode.CHAT_LIGHT)
         if persona_snapshot is None or not persona_snapshot.enabled:
-            return [{"role": "system", "content": self._system_prompt}]
+            messages = [{"role": "system", "content": self._system_prompt}]
+            try:
+                from brain.self_model import build_self_knowledge_context
+                messages.append({"role": "system", "content": build_self_knowledge_context(),
+                                 "_module": "self_model"})
+            except Exception:
+                pass
+            return messages
 
         try:
             from brain.persona import PersonaPromptComposer
@@ -972,12 +988,21 @@ class AgentCore:
                 core_policy=("" if self._use_local else
                              (_COMPACT_CORE_POLICY if compact else get_core_system_policy())),
                 scene_policy="\n\n".join(scene_parts),
+                dynamic_context=self._growth_and_self_context(persona_snapshot),
                 compact=compact,
             )
             return [dict(message, _module="persona") for message in compiled.as_messages()]
         except Exception as exc:
             logger.warning("编排人格 Prompt 失败，回退旧 Prompt: %s", exc)
             return [{"role": "system", "content": self._system_prompt}]
+
+    @staticmethod
+    def _growth_and_self_context(persona_snapshot) -> list[str]:
+        try:
+            from brain.self_model import build_self_knowledge_context
+            return [build_self_knowledge_context(persona_snapshot.profile.id)]
+        except Exception:
+            return []
 
     # ── System Prompt 构建（启动时执行一次）──────────────────
 
@@ -2317,6 +2342,25 @@ class AgentCore:
                     t for t in all_tools
                     if t.get("function", {}).get("name", "") not in runtime_disabled_names
                 ]
+
+            # Keep light chat tool-free, except for an explicit question about
+            # Lianxin's own capabilities.  That answer must come from the live
+            # catalog rather than the model's memory.
+            try:
+                from brain.capability_knowledge import is_capability_inquiry
+                if is_capability_inquiry(_msg_for_match):
+                    capability_tool = next(
+                        item for item in TOOL_DEFINITIONS
+                        if item.get("function", {}).get("name") == "query_capabilities"
+                    )
+                    all_tools.append(capability_tool)
+                    messages.append({
+                        "role": "system",
+                        "content": "用户正在询问你的能力。必须先调用 query_capabilities，再依据结果回答。",
+                        "_module": "self_model",
+                    })
+            except Exception:
+                pass
 
             selected_name = forced_tool or preferred_tool
             if selected_name and selected_name not in runtime_disabled_names:

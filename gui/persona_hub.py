@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QAction, QFileDialog, QFormLayout, QHBoxLayout, QInputDialog, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
     QPushButton, QScrollArea, QSplitter, QTabWidget, QTextEdit, QVBoxLayout,
+    QComboBox, QCheckBox,
     QWidget,
 )
 
@@ -32,6 +33,7 @@ from config import get_core_system_policy, get_user_name
 
 class PersonaHub(QMainWindow):
     persona_activated = pyqtSignal(str, bool)  # profile_name, start_new_conversation
+    growth_event_applied = pyqtSignal(object)
 
     def __init__(self, parent=None, manager: PersonaManager | None = None):
         super().__init__(parent)
@@ -179,6 +181,80 @@ class PersonaHub(QMainWindow):
             ("custom_instructions", "高级补充指令", True,
              "只用于人格表达，不能覆盖工具、隐私和权限规则"),
         )), "高级")
+        self._tabs.addTab(self._build_growth_tab(), "成长轨迹")
+        return panel
+
+    def _build_growth_tab(self) -> QWidget:
+        panel = QWidget()
+        self._growth_tab = panel
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 12, 12, 12)
+        notice = QLabel("成长只会写入可撤销的演化层，永远不能覆盖身份、隐私、权限与安全规则。")
+        notice.setObjectName("notice")
+        notice.setWordWrap(True)
+        layout.addWidget(notice)
+        self._growth_summary = QLabel()
+        self._growth_summary.setWordWrap(True)
+        layout.addWidget(self._growth_summary)
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("自动成长"))
+        self._growth_mode = QComboBox()
+        self._growth_mode.addItem("关闭", "off")
+        self._growth_mode.addItem("每次确认", "confirm")
+        self._growth_mode.addItem("低风险自动成长", "low_risk_auto")
+        self._growth_mode.currentIndexChanged.connect(self._save_growth_settings)
+        controls.addWidget(self._growth_mode)
+        self._allow_requests = QCheckBox("允许主动诉求")
+        self._allow_photo_invites = QCheckBox("允许照片邀请")
+        self._allow_requests.toggled.connect(self._save_growth_settings)
+        self._allow_photo_invites.toggled.connect(self._save_growth_settings)
+        controls.addWidget(self._allow_requests)
+        controls.addWidget(self._allow_photo_invites)
+        self._growth_filter = QComboBox()
+        self._growth_filter.addItem("全部记录", "")
+        for label, value in (("待确认", "pending"), ("已生效", "applied"), ("已撤销", "reverted"), ("已忽略", "dismissed"), ("已过期", "expired")):
+            self._growth_filter.addItem(label, value)
+        self._growth_filter.currentIndexChanged.connect(self._refresh_growth)
+        controls.addWidget(self._growth_filter)
+        controls.addStretch()
+        layout.addLayout(controls)
+        self._growth_list = QListWidget()
+        self._growth_list.currentItemChanged.connect(self._on_growth_selected)
+        layout.addWidget(self._growth_list, 1)
+        self._growth_detail = QTextEdit()
+        self._growth_detail.setReadOnly(True)
+        self._growth_detail.setMinimumHeight(130)
+        layout.addWidget(self._growth_detail)
+        actions = QHBoxLayout()
+        self._growth_apply_btn = QPushButton("采纳变化")
+        self._growth_revert_btn = QPushButton("撤销变化")
+        self._growth_rollback_btn = QPushButton("回退到此版本")
+        self._growth_preview_btn = QPushButton("预览效果")
+        self._growth_pause_btn = QPushButton("暂停成长 7 天")
+        self._growth_export_btn = QPushButton("导出记录")
+        self._growth_clear_btn = QPushButton("清空此人格记录")
+        self._proactive_why_btn = QPushButton("为什么最近联系我？")
+        self._proactive_reduce_btn = QPushButton("减少这类消息")
+        self._proactive_stop_btn = QPushButton("停止这类消息")
+        self._growth_dismiss_btn = QPushButton("忽略候选")
+        for button, slot in (
+            (self._growth_apply_btn, self._apply_growth),
+            (self._growth_revert_btn, self._revert_growth),
+            (self._growth_rollback_btn, self._rollback_growth_version),
+            (self._growth_preview_btn, self._preview_growth),
+            (self._growth_pause_btn, self._pause_growth),
+            (self._growth_export_btn, self._export_growth),
+            (self._growth_clear_btn, self._clear_growth),
+            (self._proactive_why_btn, self._show_proactive_reason),
+            (self._proactive_reduce_btn, self._reduce_proactive_kind),
+            (self._proactive_stop_btn, self._stop_proactive_kind),
+            (self._growth_dismiss_btn, self._dismiss_growth),
+        ):
+            button.clicked.connect(slot)
+            actions.addWidget(button)
+        actions.addStretch()
+        layout.addLayout(actions)
+        self._load_growth_settings()
         return panel
 
     def _make_form_tab(self, specs) -> QWidget:
@@ -261,6 +337,174 @@ class PersonaHub(QMainWindow):
         self._delete_btn.setEnabled(profile.id != DEFAULT_PERSONA_ID)
         self._restore_btn.setEnabled(profile.id == DEFAULT_PERSONA_ID)
         self._update_preview()
+        self._refresh_growth()
+
+    def _growth_service(self):
+        from brain.persona.growth import get_persona_growth_service
+        return get_persona_growth_service()
+
+    def _load_growth_settings(self):
+        settings = self._growth_service().settings()
+        self._growth_mode.blockSignals(True)
+        self._allow_requests.blockSignals(True)
+        self._allow_photo_invites.blockSignals(True)
+        self._growth_mode.setCurrentIndex(max(0, self._growth_mode.findData(settings["mode"])))
+        self._allow_requests.setChecked(bool(settings["allow_proactive_requests"]))
+        self._allow_photo_invites.setChecked(bool(settings["allow_photo_invites"]))
+        self._growth_mode.blockSignals(False)
+        self._allow_requests.blockSignals(False)
+        self._allow_photo_invites.blockSignals(False)
+
+    def _save_growth_settings(self):
+        if not hasattr(self, "_growth_mode"):
+            return
+        self._growth_service().save_settings({
+            "mode": self._growth_mode.currentData(),
+            "allow_proactive_requests": self._allow_requests.isChecked(),
+            "allow_photo_invites": self._allow_photo_invites.isChecked(),
+        })
+
+    def _refresh_growth(self, select_id: int = 0):
+        if self._current_profile is None or not hasattr(self, "_growth_list"):
+            return
+        events = self._growth_service().store.list(self._current_profile.id)
+        selected_status = self._growth_filter.currentData() if hasattr(self, "_growth_filter") else ""
+        if selected_status:
+            events = [event for event in events if event.status == selected_status]
+        summary = self._growth_service().summary(self._current_profile.id)
+        active = summary["counts"].get("applied", 0)
+        paused = "成长已暂停" if self._growth_service().growth_is_paused() else "成长开启"
+        self._growth_summary.setText(f"当前生效 {active} 项 · 本周变化 {summary['weekly_changes']} 次 · 采纳率 {summary['adoption_rate']:.0%} · {paused}")
+        self._growth_list.blockSignals(True)
+        self._growth_list.clear()
+        selected = None
+        states = {"pending": "待确认", "applied": "已生效", "reverted": "已撤销", "dismissed": "已忽略", "expired": "已过期"}
+        for event in events:
+            item = QListWidgetItem(f"{states.get(event.status, event.status)} · {event.title}")
+            item.setData(Qt.UserRole, event.id)
+            self._growth_list.addItem(item)
+            if event.id == select_id:
+                selected = item
+        self._growth_list.blockSignals(False)
+        if selected:
+            self._growth_list.setCurrentItem(selected)
+        elif self._growth_list.count():
+            self._growth_list.setCurrentRow(0)
+        else:
+            self._growth_detail.setPlainText("还没有成长记录。莲心会先基于明确、可解释的互动反馈形成候选变化。")
+
+    def _selected_growth_event(self):
+        item = self._growth_list.currentItem() if hasattr(self, "_growth_list") else None
+        if item is None or self._current_profile is None:
+            return None
+        event_id = int(item.data(Qt.UserRole) or 0)
+        return next((event for event in self._growth_service().store.list(self._current_profile.id)
+                     if event.id == event_id), None)
+
+    def _on_growth_selected(self, *_):
+        event = self._selected_growth_event()
+        if event is None:
+            return
+        self._growth_detail.setPlainText(
+            f"{event.title}\n\n变化：{event.detail}\n"
+            f"之前：{event.old_value or '未设置'}\n之后：{event.proposed_value or event.detail}\n"
+            f"字段：{event.field or '旧版记录'}\n风险：{event.risk}\n\n依据：{event.evidence or '无'}"
+            f"\n置信度：{event.confidence:.0%}\n独立依据：{event.evidence_count} 次\n状态：{event.status}\n版本：{event.version_id or '尚未生效'}\n创建于：{event.created_at}"
+        )
+        self._growth_apply_btn.setEnabled(event.status == "pending")
+        self._growth_dismiss_btn.setEnabled(event.status == "pending")
+        self._growth_revert_btn.setEnabled(event.status == "applied")
+        self._growth_rollback_btn.setEnabled(event.status == "applied" and event.version_id > 0)
+        self._growth_preview_btn.setEnabled(bool(event.field))
+
+    def _apply_growth(self):
+        event = self._selected_growth_event()
+        if event is None:
+            return
+        updated = self._growth_service().store.set_status(event.id, "applied")
+        if updated:
+            self._refresh_growth(updated.id)
+            self.growth_event_applied.emit(updated)
+
+    def _revert_growth(self):
+        event = self._selected_growth_event()
+        if event is None:
+            return
+        updated = self._growth_service().store.set_status(event.id, "reverted")
+        if updated:
+            self._refresh_growth(updated.id)
+            self.growth_event_applied.emit(updated)
+
+    def _rollback_growth_version(self):
+        event = self._selected_growth_event()
+        if event is None or event.version_id <= 0:
+            return
+        self._growth_service().store.rollback_to_version(self._current_profile.id, event.version_id)
+        self._refresh_growth(event.id)
+
+    def _preview_growth(self):
+        event = self._selected_growth_event()
+        if event is None:
+            return
+        examples = {
+            "response_length": "示例问题：帮我解释这个概念。\n采纳后会按“简洁/详细”偏好调整篇幅。",
+            "response_structure": "示例问题：我该怎么处理？\n采纳后会先给结论，再补充必要依据。",
+            "interaction_tone": "示例问题：今天有点累。\n采纳后会减少表情，保持更克制的表达。",
+        }
+        QMessageBox.information(self, "成长效果预览", examples.get(event.field, event.detail))
+
+    def _pause_growth(self):
+        self._growth_service().pause_growth(24 * 7)
+        self._refresh_growth()
+
+    def _export_growth(self):
+        if self._current_profile is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "导出成长记录", "persona_growth.json", "JSON (*.json)")
+        if path:
+            from pathlib import Path
+            Path(path).write_text(self._growth_service().export_events(self._current_profile.id), encoding="utf-8")
+
+    def _clear_growth(self):
+        if self._current_profile is None:
+            return
+        if QMessageBox.question(self, "清空成长记录", "将删除该人格全部成长记录和版本，是否继续？") == QMessageBox.Yes:
+            self._growth_service().clear_events(self._current_profile.id)
+            self._refresh_growth()
+
+    def _proactive_kind(self) -> str:
+        reason = self._growth_service().settings().get("last_proactive_reason", {}) or {}
+        return str(reason.get("kind") or "curiosity")
+
+    def _show_proactive_reason(self):
+        reason = self._growth_service().settings().get("last_proactive_reason", {}) or {}
+        if not reason:
+            QMessageBox.information(self, "主动联系依据", "最近没有由成长偏好触发的主动诉求。")
+            return
+        QMessageBox.information(self, "主动联系依据",
+                                f"类型：{reason.get('kind', '未知')}\n来源：{reason.get('source', '未知')}\n说明：{reason.get('summary', '无')}")
+
+    def _reduce_proactive_kind(self):
+        self._growth_service().record_proactive_result(self._proactive_kind(), "reject")
+        QMessageBox.information(self, "已调整", "已减少这类主动消息；再次拒绝同类消息会自动停止。")
+
+    def _stop_proactive_kind(self):
+        kind = self._proactive_kind()
+        settings = self._growth_service().settings()
+        rejected = dict(settings.get("proactive_rejections", {}) or {})
+        rejected[kind] = 2
+        self._growth_service().save_settings({"proactive_rejections": rejected})
+        QMessageBox.information(self, "已停止", "已停止这类主动消息，可随时在此重新开启相关偏好。")
+
+    def _dismiss_growth(self):
+        event = self._selected_growth_event()
+        if event is not None:
+            self._growth_service().store.set_status(event.id, "dismissed")
+            self._refresh_growth(event.id)
+
+    def show_growth_event(self, event_id: int):
+        self._tabs.setCurrentWidget(self._growth_tab)
+        self._refresh_growth(int(event_id or 0))
 
     def _on_profile_changed(self, current, previous):
         if current is None or self._loading:

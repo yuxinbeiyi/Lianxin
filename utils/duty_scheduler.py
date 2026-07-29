@@ -628,6 +628,29 @@ class ProactiveDuty(Duty):
             if observe_mode and state.is_shoulder_available():
                 observe_mode = "shoulder_explore"
             last_obs = ps.get_last_observation()
+            growth_request = None
+            if behavior == "normal":
+                try:
+                    from brain.persona.growth import get_persona_growth_service
+                    from brain.persona.runtime import capture_persona_snapshot
+                    current_persona = capture_persona_snapshot()
+                    if current_persona and current_persona.enabled:
+                        growth_request = get_persona_growth_service().next_proactive_request(
+                            current_persona.profile.id
+                        )
+                        if growth_request:
+                            get_persona_growth_service().record_proactive_result(
+                                growth_request.get("kind", "curiosity"), "sent"
+                            )
+                            get_persona_growth_service().save_settings({
+                                "last_proactive_reason": {
+                                    "kind": growth_request.get("kind", "curiosity"),
+                                    "source": growth_request.get("reason_source", ""),
+                                    "summary": growth_request.get("reason_summary", ""),
+                                }
+                            })
+                except Exception:
+                    pass
             worker = ProactiveWorker(
                 hm,
                 observation_mode=observe_mode,
@@ -635,6 +658,7 @@ class ProactiveDuty(Duty):
                 camera_index=ps.camera_index,
                 camera_wait=ps.camera_wait,
                 emotional_motive=emotion_motive,
+                growth_request=growth_request,
                 persona_snapshot=emotion_persona,
             )
         return worker

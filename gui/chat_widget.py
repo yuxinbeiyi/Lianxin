@@ -108,6 +108,7 @@ class ChatWidget(QScrollArea):
     avatar_clicked = pyqtSignal(str)
     avatar_long_pressed = pyqtSignal(str)
     avatar_context_requested = pyqtSignal(str)
+    growth_event_requested = pyqtSignal(int)
     def __init__(self, parent=None):
         super().__init__(parent)
         self._last_message_time: datetime | None = None
@@ -402,6 +403,36 @@ class ChatWidget(QScrollArea):
         self._schedule_layout_refresh()
         self._scroll_to_bottom()  
         return label  # 返回引用，供调用方后续 hide()
+
+    def add_growth_event(self, event) -> QLabel:
+        """插入可追溯的人格成长时间线节点。"""
+        status_text = {
+            "pending": "莲心注意到了一件关于自己的变化。",
+            "applied": "莲心似乎有所成长了，人格枢控已更新。",
+            "reverted": "莲心收回了一项此前的成长变化。",
+            "dismissed": "莲心放下了一项尚未确认的变化。",
+        }.get(getattr(event, "status", ""), "莲心的人格状态发生了更新。")
+        title = str(getattr(event, "title", "人格成长"))
+        label = QLabel(
+            f"✦ {status_text}  <a href='growth:{int(getattr(event, 'id', 0))}'>查看：{title}</a>"
+        )
+        label.setAlignment(Qt.AlignCenter)
+        label.setTextFormat(Qt.RichText)
+        label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        label.setOpenExternalLinks(False)
+        label.setStyleSheet(
+            "color: #B6A6E8; background: rgba(66, 52, 104, 120); "
+            "border: 1px solid #65568F; border-radius: 6px; padding: 6px 12px;"
+        )
+        label.linkActivated.connect(
+            lambda link: self.growth_event_requested.emit(
+                int(link.split(":", 1)[1]) if link.startswith("growth:") else 0
+            )
+        )
+        self._layout.insertWidget(self._layout.count() - 1, label)
+        self._schedule_layout_refresh()
+        self._scroll_to_bottom()
+        return label
 
     def add_mooyu_data_sources(self, sources: list):
         """在聊天区域插入摸鱼数据来源卡片（橙色 🐟 主题）。

@@ -280,11 +280,21 @@ def toggle_mcp_enabled(name: str) -> bool:
         _disabled_mcp.discard(name)
         _rebuild_tool_cache()
         save_mcp_config()
+        try:
+            from brain.capability_knowledge import invalidate_capability_knowledge_cache
+            invalidate_capability_knowledge_cache()
+        except Exception:
+            pass
         return True
     else:
         _disabled_mcp.add(name)
         _rebuild_tool_cache()
         save_mcp_config()
+        try:
+            from brain.capability_knowledge import invalidate_capability_knowledge_cache
+            invalidate_capability_knowledge_cache()
+        except Exception:
+            pass
         return False
 
 

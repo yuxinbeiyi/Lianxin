@@ -906,6 +906,7 @@ class MainWindow(QMainWindow):
         self._chat_widget.avatar_clicked.connect(self._on_avatar_clicked)
         self._chat_widget.avatar_long_pressed.connect(self._on_avatar_long_pressed)
         self._chat_widget.avatar_context_requested.connect(self._on_avatar_context)
+        self._chat_widget.growth_event_requested.connect(self._show_growth_event)
         from gui.avatar_interaction import AvatarInteractionController
         self._avatar_interaction = AvatarInteractionController(self._agent, self._accompany_stats, self)
         self._avatar_interaction.thinking_started.connect(self._on_avatar_interaction_thinking)
@@ -1406,6 +1407,10 @@ class MainWindow(QMainWindow):
 
     def _on_ai_response(self, text: str):
         self._watchdog_resolved = True  # 防止看门狗 cleanup 重复添加系统提示
+        growth_event = getattr(self._agent, "_latest_growth_event", None)
+        if growth_event is not None:
+            self._chat_widget.add_growth_event(growth_event)
+            self._agent._latest_growth_event = None
         self._agent_watchdog.stop()
         self._stop_watchdog_check_timer()
         from brain.task_tracker import get_task_tracker
@@ -2206,12 +2211,21 @@ class MainWindow(QMainWindow):
         if self._persona_hub is None:
             self._persona_hub = PersonaHub(self)
             self._persona_hub.persona_activated.connect(self._on_persona_activated)
+            self._persona_hub.growth_event_applied.connect(self._on_growth_event_applied)
         if self._persona_hub.isMinimized():
             self._persona_hub.showNormal()
         else:
             self._persona_hub.show()
         self._persona_hub.raise_()
         self._persona_hub.activateWindow()
+
+    def _show_growth_event(self, event_id: int):
+        self._show_persona_hub()
+        if self._persona_hub is not None:
+            self._persona_hub.show_growth_event(event_id)
+
+    def _on_growth_event_applied(self, event):
+        self._chat_widget.add_growth_event(event)
 
     def _on_persona_activated(self, profile_name: str, start_new_conversation: bool):
         """人格从下一条请求生效；可选创建干净的新会话。"""

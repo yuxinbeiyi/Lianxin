@@ -989,6 +989,11 @@ def save_builtin_tool_config(config: dict):
     full = _load_full_config()
     full["builtin_tools"] = config
     _save_full_config(full)
+    try:
+        from brain.capability_knowledge import invalidate_capability_knowledge_cache
+        invalidate_capability_knowledge_cache()
+    except Exception:
+        pass
 
 
 # ── 网络搜索重试回退配置 ─────────────────────────────────
