@@ -38,11 +38,13 @@ class AgentWorker(QThread):
     error_occurred = pyqtSignal(str)
 
     def __init__(self, agent: AgentCore, message: str, parent=None,
-                 forced_tool: str = None, disable_tools: bool = False):
+                 forced_tool: str = None, preferred_tool: str = None,
+                 disable_tools: bool = False):
         super().__init__(parent)
         self.agent         = agent
         self.message       = message
         self.forced_tool   = forced_tool
+        self.preferred_tool = preferred_tool
         self.disable_tools = disable_tools
         self.interrupt_queue: queue.Queue = queue.Queue()
 
@@ -124,6 +126,7 @@ class AgentWorker(QThread):
                 on_tool_enable_request=on_tool_enable_request,
                 on_round_start=on_round_start,
                 forced_tool=self.forced_tool,
+                preferred_tool=self.preferred_tool,
                 disable_tools=self.disable_tools,
                 interrupt_queue=self.interrupt_queue,
                 on_interrupt=self._process_interrupt,

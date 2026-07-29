@@ -8,16 +8,18 @@ from PyQt5.QtWidgets import (
     QCheckBox, QGridLayout, QSizePolicy, QComboBox, QMessageBox,
     QFileDialog,
 )
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
 
 
 class CapabilityCenter(QDialog):
+    tool_requested = pyqtSignal(str, str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("🧩 能力中枢")
-        self.setMinimumSize(700, 560)
-        self.resize(750, 600)
+        self.setMinimumSize(820, 620)
+        self.resize(960, 700)
         self.setStyleSheet("""
             QDialog {
                 background-color: #FFFFFF;
@@ -116,10 +118,10 @@ class CapabilityCenter(QDialog):
         self._refresh_btn.setCursor(Qt.PointingHandCursor)
         self._refresh_btn.setStyleSheet("""
             QPushButton {
-                background-color: #E8C85A; color: #2C2C2C;
-                border-radius: 6px; border: 1px solid #D0B040;
+                background-color: #2F6F62; color: #FFFFFF;
+                border-radius: 6px; border: 1px solid #24584E;
             }
-            QPushButton:hover { background-color: #DDB840; }
+            QPushButton:hover { background-color: #3C8273; }
         """)
         self._refresh_btn.clicked.connect(self._on_refresh)
         header.addWidget(self._refresh_btn)
@@ -137,7 +139,7 @@ class CapabilityCenter(QDialog):
         self._search_edit.setStyleSheet("""
             QLineEdit {
                 border: 1px solid #D0D0E0; border-radius: 8px;
-                padding: 6px 12px; background: #FFF8DC; color: #2C2C2C;
+                padding: 6px 12px; background: #F6F7F8; color: #2C2C2C;
             }
             QLineEdit:focus { border-color: #6C7BFF; }
         """)
@@ -145,9 +147,40 @@ class CapabilityCenter(QDialog):
         search_row.addWidget(self._search_edit)
         root.addLayout(search_row)
 
-        # 选项卡
+        # 选项卡：用户先看能力，再看使用情况；技术来源统一放到扩展管理。
         self._tabs = QTabWidget()
         self._tabs.setStyleSheet("")
+
+        self._tool_tab = QWidget()
+        tool_wrapper = QVBoxLayout(self._tool_tab)
+        tool_wrapper.setContentsMargins(0, 0, 0, 0)
+        library_filters = QHBoxLayout()
+        self._category_filter = QComboBox()
+        self._category_filter.addItem("全部分类")
+        self._source_filter = QComboBox()
+        self._source_filter.addItems(["全部来源", "莲心内置", "Skills", "MCP"])
+        self._category_filter.currentTextChanged.connect(self._load_tools)
+        self._source_filter.currentTextChanged.connect(self._load_tools)
+        library_filters.addWidget(self._category_filter)
+        library_filters.addWidget(self._source_filter)
+        library_filters.addStretch()
+        tool_wrapper.addLayout(library_filters)
+        self._tool_scroll = self._make_scroll_area()
+        self._tool_layout = QVBoxLayout(self._tool_scroll.widget())
+        self._tool_layout.setContentsMargins(0, 0, 0, 0)
+        self._tool_layout.setSpacing(6)
+        self._tool_layout.addStretch()
+        tool_wrapper.addWidget(self._tool_scroll)
+        self._tabs.addTab(self._tool_tab, "能力库")
+
+        self._usage_tab = QWidget()
+        self._build_usage_tab()
+        self._tabs.addTab(self._usage_tab, "使用情况")
+
+        self._extensions_tab = QWidget()
+        extensions_layout = QVBoxLayout(self._extensions_tab)
+        extensions_layout.setContentsMargins(0, 0, 0, 0)
+        self._extension_tabs = QTabWidget()
 
         self._skill_tab = QWidget()
         self._skill_scroll = self._make_scroll_area()
@@ -158,7 +191,7 @@ class CapabilityCenter(QDialog):
         skill_wrapper = QVBoxLayout(self._skill_tab)
         skill_wrapper.setContentsMargins(0, 0, 0, 0)
         skill_wrapper.addWidget(self._skill_scroll)
-        self._tabs.addTab(self._skill_tab, "📦 Skills")
+        self._extension_tabs.addTab(self._skill_tab, "Skills")
 
         self._mcp_tab = QWidget()
         self._mcp_scroll = self._make_scroll_area()
@@ -169,26 +202,17 @@ class CapabilityCenter(QDialog):
         mcp_wrapper = QVBoxLayout(self._mcp_tab)
         mcp_wrapper.setContentsMargins(0, 0, 0, 0)
         mcp_wrapper.addWidget(self._mcp_scroll)
-        self._tabs.addTab(self._mcp_tab, "⚡ MCP 服务")
-
-        self._tool_tab = QWidget()
-        self._tool_scroll = self._make_scroll_area()
-        self._tool_layout = QVBoxLayout(self._tool_scroll.widget())
-        self._tool_layout.setContentsMargins(0, 0, 0, 0)
-        self._tool_layout.setSpacing(8)
-        self._tool_layout.addStretch()
-        tool_wrapper = QVBoxLayout(self._tool_tab)
-        tool_wrapper.setContentsMargins(0, 0, 0, 0)
-        tool_wrapper.addWidget(self._tool_scroll)
-        self._tabs.addTab(self._tool_tab, "🛠️ 内置工具")
+        self._extension_tabs.addTab(self._mcp_tab, "MCP 服务")
 
         self._install_tab = QWidget()
         self._build_install_tab()
-        self._tabs.addTab(self._install_tab, "➕ 安装插件")
+        self._extension_tabs.addTab(self._install_tab, "安装插件")
 
         self._log_tab = QWidget()
         self._build_log_tab()
-        self._tabs.addTab(self._log_tab, "📋 日志")
+        self._extension_tabs.addTab(self._log_tab, "日志")
+        extensions_layout.addWidget(self._extension_tabs)
+        self._tabs.addTab(self._extensions_tab, "扩展管理")
 
         root.addWidget(self._tabs)
 
@@ -201,6 +225,99 @@ class CapabilityCenter(QDialog):
         container.setStyleSheet("background: transparent;")
         scroll.setWidget(container)
         return scroll
+
+    def _build_usage_tab(self):
+        layout = QVBoxLayout(self._usage_tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+        controls = QHBoxLayout()
+        self._usage_range = QComboBox()
+        self._usage_range.addItems(["今天", "近 7 天", "近 30 天", "全部时间"])
+        self._usage_range.setCurrentText("近 30 天")
+        self._usage_range.currentTextChanged.connect(self._load_usage)
+        controls.addWidget(self._usage_range)
+        controls.addStretch()
+        reset_btn = QPushButton("清空统计")
+        reset_btn.clicked.connect(self._reset_usage)
+        controls.addWidget(reset_btn)
+        layout.addLayout(controls)
+
+        self._usage_overview = QLabel()
+        self._usage_overview.setWordWrap(True)
+        self._usage_overview.setStyleSheet(
+            "background: #F3F6F5; border: 1px solid #D9E2DF; border-radius: 6px; padding: 10px;"
+        )
+        layout.addWidget(self._usage_overview)
+        self._usage_scroll = self._make_scroll_area()
+        self._usage_layout = QVBoxLayout(self._usage_scroll.widget())
+        self._usage_layout.setContentsMargins(0, 0, 0, 0)
+        self._usage_layout.setSpacing(5)
+        self._usage_layout.addStretch()
+        layout.addWidget(self._usage_scroll)
+
+    def _load_usage(self, *_):
+        if not hasattr(self, "_usage_layout"):
+            return
+        while self._usage_layout.count() > 1:
+            item = self._usage_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        ranges = {"今天": 1, "近 7 天": 7, "近 30 天": 30, "全部时间": None}
+        days = ranges.get(self._usage_range.currentText(), 30)
+        from brain.capability_catalog import list_capabilities
+        from brain.tool_usage import get_tool_usage_store
+        store = get_tool_usage_store()
+        capabilities = {item.name: item for item in list_capabilities()}
+        summaries = store.summaries(capabilities, days=days)
+        overview = store.overview(days=days)
+        unused = sum(1 for item in summaries.values() if not item.call_count)
+        self._usage_overview.setText(
+            f"调用 {overview['call_count']} 次    "
+            f"成功率 {overview['success_rate'] * 100:.0f}%    "
+            f"平均耗时 {overview['avg_duration_ms']:.0f}ms    "
+            f"使用过 {overview['used_tool_count']} 项    从未使用 {unused} 项"
+        )
+        used = sorted(
+            (item for item in summaries.values() if item.call_count),
+            key=lambda item: (-item.call_count, item.tool_name),
+        )
+        if not used:
+            empty = QLabel("这个时间范围内还没有工具调用。")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setStyleSheet("color: #8A9299; padding: 36px;")
+            self._usage_layout.insertWidget(self._usage_layout.count() - 1, empty)
+            return
+        for summary in used:
+            descriptor = capabilities.get(summary.tool_name)
+            display = descriptor.display_name if descriptor else summary.tool_name
+            provider = descriptor.provider_name if descriptor else "未知来源"
+            row = QFrame()
+            row.setStyleSheet(
+                "QFrame { background: #FAFBFC; border: 1px solid #DDE2E7; border-radius: 5px; }"
+            )
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(10, 7, 10, 7)
+            label = QLabel(f"{display}\n{summary.tool_name} · {provider}")
+            label.setStyleSheet("color: #30363B;")
+            row_layout.addWidget(label, 1)
+            stats = QLabel(
+                f"{summary.call_count} 次  ·  {summary.success_rate * 100:.0f}%  ·  "
+                f"{summary.avg_duration_ms:.0f}ms"
+            )
+            stats.setStyleSheet("color: #5C6770;")
+            row_layout.addWidget(stats)
+            self._usage_layout.insertWidget(self._usage_layout.count() - 1, row)
+
+    def _reset_usage(self):
+        answer = QMessageBox.question(
+            self, "清空工具统计", "确定清空本地保存的全部工具使用统计吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        from brain.tool_usage import get_tool_usage_store
+        get_tool_usage_store().reset()
+        self._load_usage()
+        self._load_tools()
 
     # ── 统计卡片 ────────────────────────────────────────
 
@@ -233,7 +350,7 @@ class CapabilityCenter(QDialog):
             card = QFrame()
             card.setStyleSheet("""
                 QFrame {
-                    background: #FFF8DC; border: 1px solid #E0D0A0;
+                    background: #F6F7F8; border: 1px solid #DDE2E7;
                     border-radius: 10px;
                 }
             """)
@@ -262,7 +379,7 @@ class CapabilityCenter(QDialog):
         card = QFrame()
         card.setStyleSheet("""
             QFrame {
-                background: #FFF8DC; border: 1px solid #E0D0A0;
+                background: #F6F7F8; border: 1px solid #DDE2E7;
                 border-radius: 10px;
             }
         """)
@@ -348,7 +465,7 @@ class CapabilityCenter(QDialog):
         params = tool_info.get("parameters", {})
 
         frame = QFrame()
-        frame.setStyleSheet("background: #FFF8DC; border-radius: 6px; padding: 4px; border: 1px solid #E8D8A0;")
+        frame.setStyleSheet("background: #F6F7F8; border-radius: 6px; padding: 4px; border: 1px solid #DDE2E7;")
         fl = QVBoxLayout(frame)
         fl.setContentsMargins(8, 4, 8, 4)
         fl.setSpacing(2)
@@ -493,8 +610,8 @@ class CapabilityCenter(QDialog):
             layout.insertWidget(layout.count() - 1, card)
 
         if not skills:
-            empty.setAlignment(Qt.AlignCenter)
             empty = QLabel("暂无技能。\n将 SKILL.md 放入 skills/ 目录即可自动发现。")
+            empty.setAlignment(Qt.AlignCenter)
             empty.setStyleSheet("color: #888; padding: 40px;")
             layout.insertWidget(layout.count() - 1, empty)
 
@@ -610,96 +727,161 @@ class CapabilityCenter(QDialog):
 
     # ── 内置工具加载 ─────────────────────────────────────
 
-    def _load_tools(self):
+    def _load_tools(self, *_):
         layout = self._tool_layout
         while layout.count() > 1:
             item = layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        try:
-            from brain.tool_registry import get_tool_registry
-            reg = get_tool_registry()
-            by_cat = reg.get_by_category()
-        except Exception:
-            empty = QLabel("工具注册中心暂不可用。")
+        from brain.capability_catalog import CATEGORY_ORDER, list_capabilities
+        from brain.tool_usage import get_tool_usage_store
+
+        capabilities = list_capabilities()
+        summaries = get_tool_usage_store().summaries(item.name for item in capabilities)
+        categories = [cat for cat in CATEGORY_ORDER if any(item.category == cat for item in capabilities)]
+        current_category = self._category_filter.currentText()
+        if self._category_filter.count() != len(categories) + 1:
+            self._category_filter.blockSignals(True)
+            self._category_filter.clear()
+            self._category_filter.addItem("全部分类")
+            self._category_filter.addItems(categories)
+            index = self._category_filter.findText(current_category)
+            self._category_filter.setCurrentIndex(max(0, index))
+            self._category_filter.blockSignals(False)
+
+        category_filter = self._category_filter.currentText()
+        source_filter = self._source_filter.currentText()
+        if category_filter != "全部分类":
+            capabilities = [item for item in capabilities if item.category == category_filter]
+        if source_filter == "莲心内置":
+            capabilities = [item for item in capabilities if item.source_kind == "builtin"]
+        elif source_filter == "Skills":
+            capabilities = [item for item in capabilities if item.source_kind == "skill"]
+        elif source_filter == "MCP":
+            capabilities = [item for item in capabilities if item.source_kind == "mcp"]
+
+        if not capabilities:
+            empty = QLabel("当前筛选条件下没有能力。")
             empty.setAlignment(Qt.AlignCenter)
             empty.setStyleSheet("color: #AAA; padding: 40px;")
             layout.insertWidget(layout.count() - 1, empty)
             return
 
-        if not by_cat:
-            empty = QLabel("暂无内置工具。发送消息让莲心调用工具后，统计将在此显示。")
-            empty.setAlignment(Qt.AlignCenter)
-            empty.setStyleSheet("color: #AAA; padding: 40px;")
-            layout.insertWidget(layout.count() - 1, empty)
-            return
-
-        for cat, tools in by_cat.items():
-            # 分类标题
+        for cat in categories:
+            tools = [item for item in capabilities if item.category == cat]
+            if not tools:
+                continue
             cat_label = QLabel(cat)
             cat_label.setFont(QFont("Microsoft YaHei UI", 11, QFont.Bold))
             cat_label.setStyleSheet("color: #4A4A6A; padding: 8px 4px 2px 4px;")
-            cat_label.setProperty("card_type", "tool_cat")
-            cat_label.setProperty("tool_names", " ".join(t.name for t in tools))
+            cat_label.setProperty("card_type", "capability_category")
+            cat_label.setProperty("tool_names", " ".join(
+                f"{item.name} {item.display_name} {item.description}" for item in tools
+            ))
             layout.insertWidget(layout.count() - 1, cat_label)
 
-            for ts in tools:
-                card = self._make_tool_card(ts)
+            for descriptor in tools:
+                card = self._make_tool_card(descriptor, summaries[descriptor.name])
                 layout.insertWidget(layout.count() - 1, card)
 
-    def _make_tool_card(self, ts):
-        """为单个工具创建统计卡片。"""
+    def _make_tool_card(self, descriptor, summary):
+        """Create a compact capability row with status, usage and chat handoff."""
         card = QFrame()
         card.setStyleSheet("""
             QFrame {
-                background: #FFF8DC; border: 1px solid #E8E0C0;
-                border-radius: 8px;
+                background: #FAFBFC; border: 1px solid #DDE2E7;
+                border-radius: 6px;
             }
         """)
         card.setProperty("card_type", "builtin_tool")
-        card.setProperty("tool_name", ts.name)
+        card.setProperty("tool_name", descriptor.name)
+        card.setProperty("search_text", descriptor.searchable_text)
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
-        layout = QHBoxLayout(card)
-        layout.setContentsMargins(12, 6, 12, 6)
-        layout.setSpacing(10)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(4)
+        top = QHBoxLayout()
+        name_lbl = QLabel(descriptor.display_name)
+        name_lbl.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        top.addWidget(name_lbl)
+        tech = QLabel(descriptor.name)
+        tech.setFont(QFont("Consolas", 8))
+        tech.setStyleSheet("color: #737A82;")
+        top.addWidget(tech)
+        top.addStretch()
+        status_color = "#267A55" if descriptor.available and descriptor.enabled else "#A4493D"
+        status = QLabel(f"{descriptor.status} · {descriptor.provider_name}")
+        status.setStyleSheet(f"color: {status_color};")
+        top.addWidget(status)
+        layout.addLayout(top)
 
-        # 名称
-        name_lbl = QLabel(ts.name)
-        name_lbl.setFont(QFont("Consolas", 10, QFont.Bold))
-        name_lbl.setStyleSheet("color: #2C2C2C; background: transparent;")
-        layout.addWidget(name_lbl)
+        desc = QLabel(descriptor.description or "暂无说明")
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #4D555D;")
+        layout.addWidget(desc)
 
-        layout.addStretch()
-
-        # 调用次数
-        count_lbl = QLabel(f"📊 {ts.call_count}")
-        count_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-        count_lbl.setStyleSheet("color: #6C7BFF; background: transparent;")
-        layout.addWidget(count_lbl)
-
-        # 成功率
-        if ts.call_count > 0:
-            rate = ts.success_rate * 100
-            rate_color = "#27AE60" if rate >= 90 else "#E67E22" if rate >= 50 else "#E74C3C"
-            rate_lbl = QLabel(f"✅ {rate:.0f}%")
-            rate_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-            rate_lbl.setStyleSheet(f"color: {rate_color}; background: transparent;")
-            layout.addWidget(rate_lbl)
-
-            # 平均耗时
-            avg = ts.avg_duration_ms
-            if avg >= 1000:
-                dur_text = f"⏱ {avg/1000:.1f}s"
-            else:
-                dur_text = f"⏱ {avg:.0f}ms"
-            dur_lbl = QLabel(dur_text)
-            dur_lbl.setFont(QFont("Microsoft YaHei UI", 9))
-            dur_lbl.setStyleSheet("color: #888; background: transparent;")
-            layout.addWidget(dur_lbl)
+        bottom = QHBoxLayout()
+        rate = summary.success_rate * 100
+        metrics = QLabel(
+            f"调用 {summary.call_count} 次"
+            + (f" · 成功率 {rate:.0f}% · 平均 {summary.avg_duration_ms:.0f}ms" if summary.call_count else "")
+        )
+        metrics.setStyleSheet("color: #737A82;")
+        bottom.addWidget(metrics)
+        bottom.addStretch()
+        favorite = QPushButton("★" if descriptor.favorite else "☆")
+        favorite.setFixedSize(30, 26)
+        favorite.setToolTip("收藏或取消收藏")
+        favorite.clicked.connect(lambda _=False, name=descriptor.name: self._toggle_tool_favorite(name))
+        bottom.addWidget(favorite)
+        toggle_btn = QPushButton("停用" if descriptor.enabled else "启用")
+        toggle_btn.setToolTip(
+            "切换此内置工具" if descriptor.source_kind == "builtin" else "切换整个能力来源"
+        )
+        toggle_btn.clicked.connect(
+            lambda _=False, item=descriptor: self._toggle_capability(item)
+        )
+        bottom.addWidget(toggle_btn)
+        use_btn = QPushButton("在对话中使用")
+        use_btn.setEnabled(descriptor.available and descriptor.enabled)
+        use_btn.clicked.connect(
+            lambda _=False, name=descriptor.name: self._request_tool_for_chat(name)
+        )
+        bottom.addWidget(use_btn)
+        layout.addLayout(bottom)
 
         return card
+
+    def _toggle_tool_favorite(self, name: str):
+        from brain.capability_catalog import toggle_favorite
+        toggle_favorite(name)
+        self._load_tools()
+        self._load_usage()
+
+    def _request_tool_for_chat(self, name: str):
+        self.tool_requested.emit(name, "preferred")
+        self.hide()
+
+    def _toggle_capability(self, descriptor):
+        if descriptor.source_kind == "builtin":
+            from config import get_builtin_tool_config, save_builtin_tool_config
+            config = get_builtin_tool_config()
+            config[descriptor.name] = not descriptor.enabled
+            save_builtin_tool_config(config)
+        elif descriptor.source_kind == "mcp":
+            from brain.mcp.mcp_registry import is_mcp_enabled, toggle_mcp_enabled
+            if is_mcp_enabled(descriptor.provider_id) == descriptor.enabled:
+                toggle_mcp_enabled(descriptor.provider_id)
+        elif descriptor.source_kind == "skill":
+            from brain.skill_manager import activate_skill, deactivate_skill, save_skill_config
+            if descriptor.enabled:
+                deactivate_skill(descriptor.provider_id)
+            else:
+                activate_skill(descriptor.provider_id)
+            save_skill_config()
+        self._refresh_all()
 
     def _rebuild_stats(self, mcp_connected=0):
         from brain.skill_manager import _skill_registry, _active_skills
@@ -710,9 +892,9 @@ class CapabilityCenter(QDialog):
         mcp_count = len(MCP_REGISTRY)
         mcp_enabled_count = sum(1 for n in MCP_REGISTRY if is_mcp_enabled(n))
 
-        tool_count = sum(len(getattr(a, "_tools", [])) for a in MCP_REGISTRY.values())
-        for s in _skill_registry.values():
-            tool_count += len(s.get("tool_definitions", []))
+        from brain.capability_catalog import list_capabilities
+        capabilities = list_capabilities()
+        tool_count = len(capabilities)
 
         if not hasattr(self, "_stat_labels") or not self._stat_labels:
             self._build_stats(skill_count, active_count, mcp_count, mcp_enabled_count, tool_count)
@@ -721,6 +903,10 @@ class CapabilityCenter(QDialog):
         self._stat_labels["skill"].setText(f"{active_count}/{skill_count}")
         self._stat_labels["mcp"].setText(f"{mcp_enabled_count}/{mcp_count}")
         self._stat_labels["tool"].setText(f"{tool_count}")
+        available_count = sum(1 for item in capabilities if item.enabled and item.available)
+        self._stat_cards["tool"]["card"].setToolTip(
+            f"可用 {available_count}/{tool_count}\n包含莲心内置、Skills 与 MCP 工具"
+        )
 
         active_names = [n for n in _active_skills]
         inactive_names = [n for n in _skill_registry if n not in _active_skills]
@@ -765,7 +951,7 @@ class CapabilityCenter(QDialog):
         self._install_path.setStyleSheet("""
             QLineEdit {
                 border: 2px dashed #D0D0E0; border-radius: 8px;
-                padding: 10px 14px; background: #FFF8DC; color: #2C2C2C;
+                padding: 10px 14px; background: #F6F7F8; color: #2C2C2C;
             }
             QLineEdit:focus { border-color: #6C7BFF; }
         """)
@@ -838,7 +1024,7 @@ class CapabilityCenter(QDialog):
         self._install_log.setMaximumHeight(120)
         self._install_log.setStyleSheet("""
             QTextEdit {
-                background: #FFF8DC; border: 1px solid #E0D0A0;
+                background: #F6F7F8; border: 1px solid #DDE2E7;
                 border-radius: 8px; padding: 8px; color: #2C2C2C;
             }
         """)
@@ -1051,10 +1237,10 @@ class CapabilityCenter(QDialog):
             if item and item.widget():
                 w = item.widget()
                 ct = w.property("card_type") or ""
-                if ct == "tool_cat":
+                if ct == "capability_category":
                     names = w.property("tool_names") or ""
                     visible = kw in names.lower() if kw else True
                     w.setVisible(visible)
                 elif ct == "builtin_tool":
-                    name = w.property("tool_name") or ""
-                    w.setVisible(kw in name.lower() if kw else True)
+                    search_text = w.property("search_text") or w.property("tool_name") or ""
+                    w.setVisible(kw in search_text.lower() if kw else True)

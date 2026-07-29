@@ -472,6 +472,7 @@ class AgentCore:
             on_tool_call=None, on_tool_result=None,
             on_round_start=None,
             forced_tool: str = None,
+            preferred_tool: str = None,
             disable_tools: bool = False,
             interrupt_queue=None,
             on_interrupt=None,
@@ -642,7 +643,7 @@ class AgentCore:
         effective_disable = disable_tools or self._disable_tools or self._use_local
         try:
             response_text = self._function_calling_loop(on_tool_call, on_tool_result, forced_tool,
-                                                          effective_disable, interrupt_queue,
+                                                          preferred_tool, effective_disable, interrupt_queue,
                                                           on_interrupt, on_progress, user_message,
                                                           on_round_start=on_round_start,
                                                           persona_snapshot=persona_snapshot,
@@ -1616,7 +1617,11 @@ class AgentCore:
                     getattr(self, "_active_workflow_run_id", 0),
                     step_key=str(item["tc"].id or ""),
                 ):
-                    result = _exec(name, args)
+                    invocation_mode = (
+                        "forced" if name == getattr(self, "_manual_forced_tool", None) else
+                        "preferred" if name == getattr(self, "_manual_preferred_tool", None) else "auto"
+                    )
+                    result = _exec(name, args, invocation_mode=invocation_mode)
 
                 preview = result[:200].replace("\n", " ") + ("..." if len(result) > 200 else "")
                 print(f"  [工具结果] {name} → {preview}\n", flush=True)
@@ -2008,6 +2013,7 @@ class AgentCore:
 
 
     def _function_calling_loop(self, on_tool_call=None, on_tool_result=None, forced_tool: str = None,
+                               preferred_tool: str = None,
                                disable_tools: bool = False,
                                interrupt_queue=None, on_interrupt=None,
                                on_progress=None, user_message: str = "",
@@ -2025,10 +2031,14 @@ class AgentCore:
             self._recent_tool_audit = []
         if not hasattr(self, "_tool_session_state"):
             self._tool_session_state = ToolSessionState()
+        manual_forced_tool = forced_tool
+        manual_preferred_tool = preferred_tool
+        self._manual_forced_tool = manual_forced_tool
+        self._manual_preferred_tool = manual_preferred_tool
         route = classify_request(
             user_message,
             recent_messages=getattr(self, "history", [])[-6:],
-            forced_tool=forced_tool,
+            forced_tool=forced_tool or preferred_tool,
             session_state=self._tool_session_state,
         )
         self._tool_session_state.begin(route, user_message)
@@ -2307,6 +2317,28 @@ class AgentCore:
                     t for t in all_tools
                     if t.get("function", {}).get("name", "") not in runtime_disabled_names
                 ]
+
+            selected_name = forced_tool or preferred_tool
+            if selected_name and selected_name not in runtime_disabled_names:
+                existing_names = {
+                    item.get("function", {}).get("name", "") for item in all_tools
+                }
+                if selected_name not in existing_names:
+                    for definition in TOOL_DEFINITIONS + skill_tools + mcp_tools:
+                        if definition.get("function", {}).get("name", "") == selected_name:
+                            all_tools.append(definition)
+                            break
+
+            if preferred_tool and any(
+                item.get("function", {}).get("name", "") == preferred_tool for item in all_tools
+            ):
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        f"用户在界面中建议本轮优先使用工具 {preferred_tool}。"
+                        "如果它适合当前任务，请优先调用；若不适合，可选择其他工具并说明。"
+                    ),
+                })
 
             from brain.tool_enablement import TOOL_ENABLE_REQUEST_DEFINITION
             if not route.is_light:

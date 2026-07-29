@@ -5850,16 +5850,12 @@ def _bilibili_list_tags_tool() -> str:
 def _execute_tool_impl(name: str, tool_input: dict) -> str:
     """根据工具名称调用对应的执行函数。调用前检查防御模式。
     支持错误恢复链：网络类工具失败后自动重试+降级。"""
-    t0 = time.perf_counter()
-    success = True
-    retries = 0
     try:
         # 情感门控必须位于所有工具路由之前，避免 MCP 工具绕过统一检查。
         try:
             from brain.emotional import get_manager as _get_emotion_mgr
             _allowed, _reason = _get_emotion_mgr().check_tool_allowed(name)
             if not _allowed:
-                success = False
                 return f"[拒绝] {_reason}"
         except Exception:
             pass
@@ -5869,12 +5865,10 @@ def _execute_tool_impl(name: str, tool_input: dict) -> str:
                 from brain.mcp.mcp_bridge import wrap_as_sync
                 return wrap_as_sync(name, tool_input)
             except Exception as e:
-                success = False
                 return f"MCP工具调用失败: {e}"
 
         executor = TOOL_EXECUTORS.get(name)
         if not executor:
-            success = False
             return f"未知工具: {name}"
 
         # ── 错误恢复链 ──────────────────────────────────────
@@ -5900,23 +5894,11 @@ def _execute_tool_impl(name: str, tool_input: dict) -> str:
             else:
                 return executor(tool_input)
         except KeyError as ke:
-            success = False
             return f"参数错误：缺少必需参数 '{ke.args[0]}'，请检查工具定义后重新调用"
         except TypeError as te:
-            success = False
             return f"参数错误：{te}，请检查参数名和类型是否正确"
     except Exception:
-        success = False
         raise
-    finally:
-        elapsed = (time.perf_counter() - t0) * 1000
-        try:
-            from brain.tool_registry import record_tool_call
-            record_tool_call(name, success, elapsed)
-        except Exception:
-            pass
-
-
 _WORKFLOW_CACHE_TTL = {
     "web_search": 15 * 60,
     "fetch_webpage": 60 * 60,
@@ -5925,7 +5907,8 @@ _WORKFLOW_CACHE_TTL = {
 }
 
 
-def execute_tool(name: str, tool_input: dict) -> str:
+def execute_tool(name: str, tool_input: dict, *, invocation_mode: str = "auto",
+                 channel: str = "") -> str:
     """Execute one tool with persistent Workflow step audit and safe read cache."""
     import uuid
 
@@ -5934,6 +5917,7 @@ def execute_tool(name: str, tool_input: dict) -> str:
     store = None
     step_id = 0
     started = time.perf_counter()
+    usage_status = ""
     try:
         from brain.workflow import get_workflow_context, get_workflow_store
 
@@ -5949,6 +5933,7 @@ def execute_tool(name: str, tool_input: dict) -> str:
             )
             if store.is_cancel_requested(run_id):
                 result = "[CANCELLED] 工作流已取消"
+                usage_status = "cancelled"
                 store.finish_step(step_id, status="cancelled", output_preview=result)
                 return result
 
@@ -5957,6 +5942,7 @@ def execute_tool(name: str, tool_input: dict) -> str:
             cache_store = store or get_workflow_store()
             cached_result = cache_store.get_cache(name, tool_input)
             if cached_result is not None:
+                usage_status = "cached"
                 if step_id:
                     cache_store.finish_step(
                         step_id, status="success", output_preview=cached_result,
@@ -5965,10 +5951,9 @@ def execute_tool(name: str, tool_input: dict) -> str:
                 return cached_result
 
         result_text = str(_execute_tool_impl(name, tool_input) or "")
-        is_error = (
-            result_text.startswith(("[ERROR]", "[拒绝]", "错误", "工具执行错误", "未知工具"))
-            or "失败" in result_text[:80]
-        )
+        from brain.tool_usage import classify_tool_result
+        usage_status = classify_tool_result(result_text)
+        is_error = usage_status not in ("success", "cached")
         if ttl and not is_error:
             (store or get_workflow_store()).put_cache(name, tool_input, result_text, ttl_seconds=ttl)
         if step_id and store:
@@ -5993,12 +5978,53 @@ def execute_tool(name: str, tool_input: dict) -> str:
                     pass
         return result_text
     except Exception as exc:
+        usage_status = "failure"
         if step_id and store:
             store.finish_step(
                 step_id, status="failed", error=str(exc),
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
         raise
+    finally:
+        if usage_status:
+            try:
+                from brain.tool_usage import get_tool_usage_store
+
+                core_names = {
+                    item.get("function", {}).get("name", "") for item in TOOL_DEFINITIONS
+                }
+                if name.startswith("mcp__"):
+                    source_kind = "mcp"
+                    provider_id = name.split("__", 2)[1]
+                elif name in core_names:
+                    source_kind = "builtin"
+                    provider_id = "lianxin"
+                else:
+                    source_kind = "skill"
+                    provider_id = "skill"
+                    try:
+                        from brain.skill_manager import _skill_registry
+                        for skill_name, info in _skill_registry.items():
+                            names = {
+                                item.get("function", {}).get("name", "")
+                                for item in info.get("tool_definitions", [])
+                            }
+                            if name in names:
+                                provider_id = skill_name
+                                break
+                    except Exception:
+                        pass
+                context = getattr(_tool_context, "cross_session", {}) or {}
+                get_tool_usage_store().record(
+                    name, status=usage_status,
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                    source_kind=source_kind, provider_id=provider_id,
+                    invocation_mode=invocation_mode,
+                    session_id=context.get("session_id"), workflow_run_id=run_id or None,
+                    channel=channel or context.get("source_channel", ""),
+                )
+            except Exception:
+                pass
 
 # ── 初始化工具注册中心（模块导入时自动注册所有工具）─────────
 try:

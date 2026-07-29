@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QTextEdit, QCheckBox,
     QSizePolicy, QApplication, QDialog, QListWidget, QListWidgetItem,
     QLineEdit, QMenu, QAction, QTreeWidget, QTreeWidgetItem, QStackedWidget,
-    QLabel
+    QLabel, QButtonGroup, QComboBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint
 from PyQt5.QtGui import QFont, QKeyEvent, QDragEnterEvent, QDropEvent, QColor, QPixmap, QPalette
@@ -16,8 +16,10 @@ import tempfile
 import os
 import json
 from pathlib import Path
-from brain.tools import TOOL_DEFINITIONS
-from brain.skill_manager import get_active_tool_definitions
+from brain.capability_catalog import (
+    list_capabilities, load_favorites as _load_catalog_favorites,
+    save_favorites as _save_catalog_favorites, toggle_favorite,
+)
 from utils.paths import get_user_data_dir
 
 
@@ -35,24 +37,12 @@ FAVORITES_FILE = get_user_data_dir() / "favorite_tools.json"
 
 def load_favorites():
     """加载收藏的工具列表"""
-    try:
-        if FAVORITES_FILE.exists():
-            with open(FAVORITES_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return set(data.get("favorites", []))
-    except Exception:
-        pass
-    return set()
+    return _load_catalog_favorites()
 
 
 def save_favorites(favorites):
     """保存收藏的工具列表"""
-    try:
-        FAVORITES_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(FAVORITES_FILE, "w", encoding="utf-8") as f:
-            json.dump({"favorites": list(favorites)}, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    _save_catalog_favorites(favorites)
 
 
 class _InputBox(QTextEdit):
@@ -176,13 +166,15 @@ def get_tool_group(tool_name: str) -> str:
 class ToolSelectionDialog(QDialog):
     """工具选择弹窗（支持分组显示、滚动、搜索、收藏）"""
     tool_selected = pyqtSignal(object)
+    manage_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.selected_tool = None
+        self.selected_mode = "preferred"
         self.favorites = load_favorites()
         self.expanded_groups = set()  # 记录展开的分组名称
-        self.setWindowTitle("选择工具")
+        self.setWindowTitle("递给莲心")
         self.setModal(True)
         self.setMinimumWidth(450)
         self.setMinimumHeight(500)
@@ -248,6 +240,11 @@ class ToolSelectionDialog(QDialog):
             QPushButton:hover {
                 background-color: #347261;
             }
+            QPushButton:checked {
+                background-color: #3E8A73;
+                border: 2px solid #9AD8C7;
+                color: #FFFFFF;
+            }
             QPushButton#cancel_btn {
                 background-color: #3D3D5A;
                 color: #E0E0E0;
@@ -285,6 +282,10 @@ class ToolSelectionDialog(QDialog):
 
         # 选项区域
         opts_layout = QHBoxLayout()
+        self.quick_view = QComboBox()
+        self.quick_view.addItems(["推荐", "最近", "收藏", "全部"])
+        self.quick_view.currentTextChanged.connect(self._refresh_ui)
+        opts_layout.addWidget(self.quick_view)
         self.fav_only_cb = QCheckBox("⭐ 仅显示收藏（右键收藏工具）")
         self.fav_only_cb.stateChanged.connect(self._refresh_ui)
         self.group_cb = QCheckBox("📁 分组显示")
@@ -319,9 +320,23 @@ class ToolSelectionDialog(QDialog):
         # 按钮区域
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.setExclusive(True)
+        self.mode_buttons = {}
+        for mode, label in (("preferred", "建议使用"), ("forced", "强制使用")):
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.setChecked(mode == "preferred")
+            button.clicked.connect(lambda checked, value=mode: self._set_mode(value))
+            self.mode_group.addButton(button)
+            self.mode_buttons[mode] = button
+            btn_layout.addWidget(button)
         self.auto_btn = QPushButton("⚙️ 无工具（自动）")
-        self.auto_btn.clicked.connect(lambda: self._select_tool(None))
+        self.auto_btn.clicked.connect(lambda: self._select_tool(None, "auto"))
         btn_layout.addWidget(self.auto_btn)
+        manage_btn = QPushButton("能力中枢")
+        manage_btn.clicked.connect(self._open_capability_center)
+        btn_layout.addWidget(manage_btn)
         btn_layout.addStretch()
         self.cancel_btn = QPushButton("取消")
         self.cancel_btn.setObjectName("cancel_btn")
@@ -336,33 +351,49 @@ class ToolSelectionDialog(QDialog):
         self._refresh_ui()
 
     def _load_tools(self):
-        """从 TOOL_DEFINITIONS 及已激活技能加载工具"""
-        self.all_tools = []
-        for tool_def in TOOL_DEFINITIONS:
-            func_def = tool_def["function"]
-            tool_name = func_def["name"]
-            description = func_def.get("description", "")
-            is_favorite = tool_name in self.favorites
-            self.all_tools.append({
-                "name": tool_name,
-                "description": description,
-                "is_favorite": is_favorite,
-                "is_skill_tool": False,
-            })
-        # 加载已激活技能的工具
-        for tool_def in get_active_tool_definitions():
-            func_def = tool_def["function"]
-            tool_name = func_def["name"]
-            description = func_def.get("description", "")
-            is_favorite = tool_name in self.favorites
-            self.all_tools.append({
-                "name": tool_name,
-                "description": description,
-                "is_favorite": is_favorite,
-                "is_skill_tool": True,
-            })
+        """Load the unified built-in, Skill and MCP capability catalog."""
+        self.all_tools = [{
+            "name": item.name,
+            "display_name": item.display_name,
+            "description": item.description,
+            "category": item.category,
+            "source": item.provider_name,
+            "source_kind": item.source_kind,
+            "status": item.status,
+            "available": item.available and item.enabled,
+            "search_text": item.searchable_text,
+            "is_favorite": item.favorite,
+        } for item in list_capabilities()]
+        from brain.tool_usage import get_tool_usage_store
+        self.recent_tool_names = set(get_tool_usage_store().recent_tool_names(16))
+        self.recommended_tool_names = set()
+        user_text = self.parent()._input.toPlainText() if self.parent() and hasattr(self.parent(), "_input") else ""
+        if user_text.strip():
+            try:
+                from brain.tool_router import CATEGORY_TOOLS, match_categories
+                for category in match_categories(user_text):
+                    self.recommended_tool_names.update(CATEGORY_TOOLS.get(category, set()))
+            except Exception:
+                pass
+        if not self.recommended_tool_names:
+            self.recommended_tool_names = set(self.favorites) | set(self.recent_tool_names)
+        if not self.recommended_tool_names:
+            self.recommended_tool_names = {
+                "web_search", "read_file", "search_files_everything", "get_current_time",
+                "get_weather", "add_todo", "describe_image", "open_app",
+            }
         # 排序：收藏的在前，然后按名称排序（用于扁平列表）
         self.all_tools.sort(key=lambda x: (not x["is_favorite"], x["name"]))
+
+    def _included_in_quick_view(self, tool: dict) -> bool:
+        view = self.quick_view.currentText()
+        if view == "收藏":
+            return tool["is_favorite"]
+        if view == "最近":
+            return tool["name"] in self.recent_tool_names
+        if view == "推荐":
+            return tool["name"] in self.recommended_tool_names
+        return True
 
         # ---------- 分组树形视图 ----------
     def _build_group_tree(self):
@@ -387,11 +418,14 @@ class ToolSelectionDialog(QDialog):
 
         groups = {}
         for tool in self.all_tools:
+            if not self._included_in_quick_view(tool):
+                continue
             if show_fav_only and not tool["is_favorite"]:
                 continue
-            if keyword and not matches_keyword(tool["name"], tool["description"], keyword):
+            if (keyword and keyword not in tool["search_text"]
+                    and not matches_keyword(tool["name"], tool["description"], keyword)):
                 continue
-            group_name = "📦 技能工具" if tool.get("is_skill_tool") else get_tool_group(tool["name"])
+            group_name = tool["category"]
             groups.setdefault(group_name, []).append(tool)
 
         for group_name in sorted(groups.keys()):
@@ -405,8 +439,9 @@ class ToolSelectionDialog(QDialog):
 
             for tool in groups[group_name]:
                 star = "⭐ " if tool["is_favorite"] else "   "
-                tool_name_display = f"{star}{tool['name']}"
-                desc = tool["description"][:80]
+                state = "" if tool["available"] else f" · {tool['status']}"
+                tool_name_display = f"{star}{tool['display_name']}{state}"
+                desc = f"{tool['source']} · {tool['description']}"[:80]
                 if len(tool["description"]) > 80:
                     desc += "..."
 
@@ -451,13 +486,19 @@ class ToolSelectionDialog(QDialog):
 
         self.tool_list_flat.setUpdatesEnabled(False)
         for tool in self.all_tools:
+            if not self._included_in_quick_view(tool):
+                continue
             if show_fav_only and not tool["is_favorite"]:
                 continue
-            if keyword and not matches_keyword(tool["name"], tool["description"], keyword):
+            if (keyword and keyword not in tool["search_text"]
+                    and not matches_keyword(tool["name"], tool["description"], keyword)):
                 continue
 
             star = "⭐ " if tool["is_favorite"] else "   "
-            display_text = f"{star}{tool['name']}\n   {tool['description'][:80]}"
+            display_text = (
+                f"{star}{tool['display_name']}  ·  {tool['source']}  ·  {tool['status']}\n"
+                f"   {tool['description'][:80]}"
+            )
             if len(tool['description']) > 80:
                 display_text += "..."
 
@@ -579,11 +620,11 @@ class ToolSelectionDialog(QDialog):
     # ---------- 切换收藏 ----------
     def _toggle_favorite(self, tool_name: str):
         """切换收藏状态（供右键菜单调用）"""
-        if tool_name in self.favorites:
-            self.favorites.remove(tool_name)
-        else:
+        is_favorite = toggle_favorite(tool_name)
+        if is_favorite:
             self.favorites.add(tool_name)
-        save_favorites(self.favorites)
+        else:
+            self.favorites.discard(tool_name)
 
         # 更新 all_tools 中的收藏标记
         for tool in self.all_tools:
@@ -594,8 +635,21 @@ class ToolSelectionDialog(QDialog):
         # 刷新界面
         self._refresh_ui()
 
-    def _select_tool(self, tool_name):
+    def _set_mode(self, mode: str):
+        self.selected_mode = mode
+
+    def _open_capability_center(self):
+        self.manage_requested.emit()
+        self.reject()
+
+    def _select_tool(self, tool_name, mode=None):
+        if tool_name:
+            item = next((entry for entry in self.all_tools if entry["name"] == tool_name), None)
+            if item and not item["available"]:
+                return
         self.selected_tool = tool_name
+        if mode:
+            self.selected_mode = mode
         self.accept()
 
 
@@ -604,12 +658,14 @@ class InputPanel(QWidget):
     voice_clicked = pyqtSignal()
     clear_clicked = pyqtSignal()
     image_submitted = pyqtSignal(str)           # 旧接口保留，供外部使用
+    capability_center_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._voice_connected = False
         self._clear_connected = False
         self._selected_tool = None
+        self._selected_tool_mode = "auto"
         self._pending_images: list[str] = []    # 暂存的图片路径
         self._image_preview_widgets: list[QWidget] = []
         self._quote_text = ""
@@ -685,6 +741,31 @@ class InputPanel(QWidget):
         quote_layout.addWidget(self._quote_close)
         outer_layout.addWidget(self._quote_bar)
         # ── 引用条结束 ──
+
+        self._tool_chip = QWidget()
+        self._tool_chip.setObjectName("toolSelectionChip")
+        self._tool_chip.setVisible(False)
+        self._tool_chip.setStyleSheet("""
+            QWidget#toolSelectionChip {
+                background-color: rgba(40, 82, 72, 210);
+                border: 1px solid #75B8A8;
+                border-radius: 6px;
+                margin: 0 12px 4px 12px;
+            }
+            QLabel { color: #E7FFF6; border: none; }
+            QPushButton { color: #CFEDE4; background: transparent; border: none; }
+            QPushButton:hover { color: #FFFFFF; }
+        """)
+        chip_layout = QHBoxLayout(self._tool_chip)
+        chip_layout.setContentsMargins(10, 5, 6, 5)
+        self._tool_chip_label = QLabel()
+        chip_layout.addWidget(self._tool_chip_label, 1)
+        chip_close = QPushButton("×")
+        chip_close.setFixedSize(22, 22)
+        chip_close.setToolTip("移除本轮工具")
+        chip_close.clicked.connect(self.clear_selection)
+        chip_layout.addWidget(chip_close)
+        outer_layout.addWidget(self._tool_chip)
 
         # 主行：输入框 + 按钮
         main_layout = QHBoxLayout()
@@ -902,12 +983,20 @@ class InputPanel(QWidget):
         from utils.sound import play_sound
         play_sound("ToolBox1.mp3")
         dialog = ToolSelectionDialog(self)
+        dialog.manage_requested.connect(self.capability_center_requested.emit)
         if dialog.exec_() == QDialog.Accepted:
             self._selected_tool = dialog.selected_tool
+            self._selected_tool_mode = dialog.selected_mode if dialog.selected_tool else "auto"
             self._update_tool_button_style()
 
     def _update_tool_button_style(self):
         if self._selected_tool:
+            from brain.capability_catalog import get_capability
+            descriptor = get_capability(self._selected_tool)
+            display_name = descriptor.display_name if descriptor else self._selected_tool
+            mode_label = "强制使用" if self._selected_tool_mode == "forced" else "建议使用"
+            self._tool_chip_label.setText(f"{mode_label}：{display_name}")
+            self._tool_chip.setVisible(True)
             self._tool_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #347767;
@@ -924,6 +1013,7 @@ class InputPanel(QWidget):
             """)
             self._tool_btn.setToolTip(f"已绑定工具：{self._selected_tool}")
         else:
+            self._tool_chip.setVisible(False)
             self._tool_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #18312C;
@@ -945,8 +1035,21 @@ class InputPanel(QWidget):
     def get_selected_tool(self):
         return self._selected_tool
 
+    def get_tool_selection(self):
+        if not self._selected_tool:
+            return None
+        return {"name": self._selected_tool, "mode": self._selected_tool_mode}
+
+    def select_tool(self, tool_name: str, mode: str = "preferred"):
+        self._selected_tool = str(tool_name or "") or None
+        self._selected_tool_mode = mode if mode in ("preferred", "forced") else "preferred"
+        self._update_tool_button_style()
+        if self._selected_tool:
+            self._input.setFocus()
+
     def clear_selection(self):
         self._selected_tool = None
+        self._selected_tool_mode = "auto"
         self._update_tool_button_style()
 
     # ── 公开接口 ─────────────────────────────────────────────

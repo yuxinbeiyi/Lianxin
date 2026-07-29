@@ -4,10 +4,10 @@ tool_registry.py — 工具注册中心
 - 在 execute_tool() 中自动追踪，无需逐个修改 TOOL_EXECUTORS
 """
 
-import time
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from typing import Optional
+
+from brain.tool_usage import get_tool_usage_store
 
 # ══════════════════════════════════════════════════════════
 # Category definitions
@@ -132,28 +132,37 @@ class ToolRegistry:
         return self._stats[name]
 
     def record_call(self, name: str, success: bool, duration_ms: float):
-        """记录一次工具调用。自动创建统计条目（如果尚未注册）。"""
-        stats = self._stats.get(name)
-        if stats is None:
-            stats = self.register(name)
-        stats.call_count += 1
-        if success:
-            stats.success_count += 1
-        else:
-            stats.fail_count += 1
-        stats.last_called = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        stats.last_duration_ms = duration_ms
-        stats.total_duration_ms += duration_ms
+        """Compatibility entry point backed by the persistent usage store."""
+        if name not in self._stats:
+            self.register(name)
+        get_tool_usage_store().record(
+            name, status="success" if success else "failure", duration_ms=duration_ms,
+        )
+
+    def _materialize(self, name: str) -> Optional[ToolStats]:
+        metadata = self._stats.get(name)
+        if metadata is None:
+            return None
+        summary = get_tool_usage_store().summaries([name])[name]
+        return ToolStats(
+            name=name, category=metadata.category, call_count=summary.call_count,
+            success_count=summary.success_count, fail_count=(
+                summary.failure_count + summary.blocked_count + summary.cancelled_count
+            ), last_called=summary.last_called,
+            last_duration_ms=summary.avg_duration_ms,
+            total_duration_ms=summary.total_duration_ms,
+        )
 
     def get_stats(self, name: str) -> Optional[ToolStats]:
-        return self._stats.get(name)
+        return self._materialize(name)
 
     def get_all_stats(self) -> list[ToolStats]:
-        return sorted(self._stats.values(), key=lambda s: s.call_count, reverse=True)
+        items = [self._materialize(name) for name in self._stats]
+        return sorted((item for item in items if item), key=lambda s: (-s.call_count, s.name))
 
     def get_by_category(self) -> dict[str, list[ToolStats]]:
         groups: dict[str, list[ToolStats]] = {}
-        for s in self._stats.values():
+        for s in self.get_all_stats():
             groups.setdefault(s.category, []).append(s)
         # 按分类顺序排序
         ordered = {}
@@ -166,7 +175,7 @@ class ToolRegistry:
         return ordered
 
     def reset_stats(self):
-        self._stats.clear()
+        get_tool_usage_store().reset()
 
 
 # ══════════════════════════════════════════════════════════

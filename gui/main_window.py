@@ -899,6 +899,7 @@ class MainWindow(QMainWindow):
         # 下半：输入栏（全宽）
         self._input_panel = InputPanel()
         self._input_panel.message_submitted.connect(self._on_user_message)
+        self._input_panel.capability_center_requested.connect(self._show_capability_center)
         self._chat_widget.quote_requested.connect(self._input_panel.set_quote)
         self._chat_widget.speak_requested.connect(self._on_speak_request)
         self._chat_widget.avatar_interaction_requested.connect(self._on_avatar_interaction)
@@ -1158,7 +1159,9 @@ class MainWindow(QMainWindow):
        
         if images is None:
             images = []
-        selected_tool = self._input_panel.get_selected_tool()
+        tool_selection = self._input_panel.get_tool_selection()
+        selected_tool = tool_selection.get("name") if tool_selection else None
+        selected_mode = tool_selection.get("mode", "auto") if tool_selection else "auto"
         display_text = text  # 气泡显示用原始文本，注入提示不显示
         if selected_tool is None:
             action_keywords = ["打开", "启动", "运行", "执行", "开启"]
@@ -1236,7 +1239,7 @@ class MainWindow(QMainWindow):
             self._staged_image_errors = {}
             self._staged_image_count = len(images)
             self._staged_text = text
-            self._staged_selected_tool = selected_tool
+            self._staged_tool_selection = tool_selection
             self._staged_bubbles = image_bubbles
 
             for i, (img_path, _) in enumerate(image_bubbles):
@@ -1247,7 +1250,8 @@ class MainWindow(QMainWindow):
         else:
             self._agent_worker = AgentWorker(
                 self._agent, self._avatar_contextual_message(text), self,
-                forced_tool=selected_tool
+                forced_tool=selected_tool if selected_mode == "forced" else None,
+                preferred_tool=selected_tool if selected_mode == "preferred" else None,
             )
             self._agent_worker.response_ready.connect(self._on_ai_response)
             self._agent_worker.progress_update.connect(self._on_progress_update)
@@ -1319,7 +1323,10 @@ class MainWindow(QMainWindow):
 
         self._agent_worker = AgentWorker(
             self._agent, self._avatar_contextual_message(full_context), self,
-            forced_tool=self._staged_selected_tool
+            forced_tool=(self._staged_tool_selection or {}).get("name")
+                if (self._staged_tool_selection or {}).get("mode") == "forced" else None,
+            preferred_tool=(self._staged_tool_selection or {}).get("name")
+                if (self._staged_tool_selection or {}).get("mode") == "preferred" else None,
         )
         self._agent_worker.response_ready.connect(self._on_ai_response)
         self._agent_worker.progress_update.connect(self._on_progress_update)
@@ -2157,9 +2164,14 @@ class MainWindow(QMainWindow):
         play_sound("ButtonAll.mp3")
         if self._capability_center_dialog is None:
             self._capability_center_dialog = CapabilityCenter(self)
+            self._capability_center_dialog.tool_requested.connect(self._on_capability_tool_requested)
         self._capability_center_dialog.show()
         self._capability_center_dialog.raise_()
         self._capability_center_dialog.activateWindow()
+
+    def _on_capability_tool_requested(self, tool_name: str, mode: str):
+        self._input_panel.select_tool(tool_name, mode)
+        self._input_panel._input.setFocus()
 
     def _show_constellation_system(self):
         """Open the Canvas-based Memory Constellations comparison view."""
