@@ -8,7 +8,7 @@ ToolCallGroup：单轮工具调用容器
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QSizePolicy,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 
 from gui.tool_call_card import ToolCallCard
@@ -16,6 +16,7 @@ from gui.tool_call_card import ToolCallCard
 
 class ToolCallGroup(QWidget):
     """单轮 ReAct 工具调用的容器"""
+    geometry_changed = pyqtSignal()
 
     def __init__(self, round_num: int, parent=None):
         super().__init__(parent)
@@ -35,6 +36,7 @@ class ToolCallGroup(QWidget):
         """添加一个 running 状态的工具卡片"""
         card = ToolCallCard()
         card.set_running(tool_name, args_json)
+        card.geometry_changed.connect(self.geometry_changed.emit)
         self._cards.append(card)
         # 插入到标题之下、已有卡片之后
         self._card_layout.addWidget(card)

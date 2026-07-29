@@ -8,7 +8,7 @@ ToolCallCard：单个工具调用卡片组件
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QVBoxLayout, QSizePolicy, QFrame,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 
 
@@ -29,6 +29,7 @@ _MOOYU_COLORS = {
 
 class ToolCallCard(QWidget):
     """单个工具调用卡片 — 可折叠展开"""
+    geometry_changed = pyqtSignal()
 
     def __init__(self, parent=None, variant="tool"):
         super().__init__(parent)
@@ -161,6 +162,7 @@ class ToolCallCard(QWidget):
     def _toggle_expand(self):
         self._expanded = not self._expanded
         self._detail.setVisible(self._expanded)
+        self.geometry_changed.emit()
 
     def _refresh(self):
         c = self._get_colors()[self._status]

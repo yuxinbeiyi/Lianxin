@@ -54,8 +54,8 @@ class MessageBubble(QWidget):
         bubble = QWidget()
         bubble.setAttribute(Qt.WA_StyledBackground, True)
         bubble.setMaximumWidth(520)
-        # 气泡只在自身内容需要时扩展，避免窗口宽度变化时整列气泡反复重排。
-        bubble.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        # 气泡占用稳定的可用宽度，再受最大宽度限制，避免文字测量结果反复改变换行。
+        bubble.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Preferred)
 
         inner = QVBoxLayout(bubble)
         inner.setContentsMargins(0, 0, 0, 0)
@@ -158,6 +158,7 @@ class ImageMessageBubble(QWidget):
     avatar_clicked = pyqtSignal(str)
     avatar_long_pressed = pyqtSignal(str)
     avatar_context_requested = pyqtSignal(str)
+    geometry_changed = pyqtSignal()
     """用于显示图片消息的气泡。
     支持 sender 参数：
         - "user": 右侧，紫蓝色背景，白色文字
@@ -183,7 +184,7 @@ class ImageMessageBubble(QWidget):
         bubble = QWidget()
         bubble.setAttribute(Qt.WA_StyledBackground, True)
         bubble.setMaximumWidth(320)
-        bubble.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        bubble.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Preferred)
 
         inner = QVBoxLayout(bubble)
         inner.setContentsMargins(10, 8, 10, 8)
@@ -306,6 +307,7 @@ class ImageMessageBubble(QWidget):
             if self._toggle_btn:
                 btn_color = "#FFD966" if self._sender == "user" else "#6C7BFF"
                 self._toggle_btn.setText(f"<a href='#' style='color:{btn_color}; text-decoration:none;'>展开 ▾</a>")
+        self.geometry_changed.emit()
 
     def update_text(self, full_text: str):
         """异步更新完整描述（分析完成后调用）。"""
@@ -329,3 +331,4 @@ class ImageMessageBubble(QWidget):
                     break
             if bubble:
                 bubble.layout().addWidget(self._toggle_btn)
+        self.geometry_changed.emit()

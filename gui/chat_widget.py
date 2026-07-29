@@ -117,12 +117,9 @@ class ChatWidget(QScrollArea):
         self._thinking_started_at: float = 0  # 思考开始时间戳（秒）
         self._boredom_timer: QTimer | None = None
         self._boredom_index: int = 0
-        self._scroll_timer: QTimer | None = None
-        self._scroll_generation: int = 0
-        self._pending_scroll_generation: int = 0
         self._layout_refresh_timer: QTimer | None = None
         self._layout_refresh_pending = False
-        self._scroll_force_pending = False
+        self._scroll_after_layout = False
         self._build_ui()
 
     def _build_ui(self):
@@ -130,7 +127,9 @@ class ChatWidget(QScrollArea):
         # even when the stylesheet says transparent, hiding the main wallpaper.
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
-        self.setWidgetResizable(True)
+        # 容器宽度由视口固定、高度由聊天布局决定。让 QScrollArea 同时接管
+        # 这两个方向会在异步更新时留下过期高度，表现为底部出现大片空白。
+        self.setWidgetResizable(False)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 # 原代码（第 28-49 行）：
@@ -147,7 +146,7 @@ class ChatWidget(QScrollArea):
         self.viewport().setPalette(transparent_palette)
 
         self._container = QWidget()
-        self._container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self._container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
         self._container.setAttribute(Qt.WA_TranslucentBackground, True)
         self._container.setAutoFillBackground(False)
         self._container.setPalette(transparent_palette)
@@ -181,18 +180,12 @@ class ChatWidget(QScrollArea):
         return super().eventFilter(obj, event)
 
     def _cancel_pending_scroll(self):
-        self._scroll_force_pending = False
-        self._scroll_generation += 1
-        if self._scroll_timer is not None:
-            self._scroll_timer.stop()
+        self._scroll_after_layout = False
 
     def resizeEvent(self, event):
-        """让内容面板始终跟随视口宽度，避免滚动范围因宽度抖动而重算。"""
+        """视口变化后，按新宽度重算所有气泡的真实换行高度。"""
         super().resizeEvent(event)
-        width = self.viewport().width()
-        if width > 0 and self._container.minimumWidth() != width:
-            self._container.setMinimumWidth(width)
-            self._schedule_layout_refresh()
+        self._schedule_layout_refresh()
 
     # ── 公开接口 ─────────────────────────────────────────────
 
@@ -248,6 +241,7 @@ class ChatWidget(QScrollArea):
         bubble.avatar_clicked.connect(self.avatar_clicked.emit)
         bubble.avatar_long_pressed.connect(self.avatar_long_pressed.emit)
         bubble.avatar_context_requested.connect(self.avatar_context_requested.emit)
+        bubble.geometry_changed.connect(self._schedule_layout_refresh)
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._schedule_layout_refresh()
         self._scroll_to_bottom(force=follow_bottom)
@@ -273,7 +267,7 @@ class ChatWidget(QScrollArea):
         self._boredom_timer = QTimer(self)
         self._boredom_timer.timeout.connect(self._check_boredom)
         self._boredom_timer.start(_BOREDOM_THRESHOLD_MS)
-        
+        self._schedule_layout_refresh()
         self._scroll_to_bottom()
 
     def _check_boredom(self):
@@ -286,6 +280,7 @@ class ChatWidget(QScrollArea):
         msg = _BOREDOM_MESSAGES[self._boredom_index % len(_BOREDOM_MESSAGES)]
         self._boredom_index += 1
         self._thinking_label.setText(f"💭  {msg}")
+        self._schedule_layout_refresh()
         self._scroll_to_bottom()
 
     # ── 工具调用卡片管理 ──────────────────────────────────
@@ -304,6 +299,8 @@ class ChatWidget(QScrollArea):
         # 不再隐藏思考提示，而是保持可见
         if not self._thinking_label.isVisible():
             self._thinking_label.show()
+        group.geometry_changed.connect(self._schedule_layout_refresh)
+        self._schedule_layout_refresh()
         self._scroll_to_bottom()
 
     def add_tool_call_card(self, tool_name: str, args_json: str, round_num: int):
@@ -349,6 +346,7 @@ class ChatWidget(QScrollArea):
         self._current_tool_group = None
         self._tool_groups.clear()
         self._tool_round_count = 0
+        self._schedule_layout_refresh()
         self._hide_thinking()
 
     def hide_thinking(self):
@@ -360,10 +358,7 @@ class ChatWidget(QScrollArea):
         self._current_tool_group = None
         self._tool_groups.clear()
         self._tool_round_count = 0
-        self._scroll_generation += 1
-        self._scroll_force_pending = False
-        if self._scroll_timer is not None:
-            self._scroll_timer.stop()
+        self._scroll_after_layout = False
         self._layout_refresh_pending = False
         if self._layout_refresh_timer is not None:
             self._layout_refresh_timer.stop()
@@ -371,6 +366,7 @@ class ChatWidget(QScrollArea):
             item = self._layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        self._schedule_layout_refresh()
 
     def refresh_avatars(self):
         """设置页保存头像后，只刷新头像 pixmap，不重建聊天内容。"""
@@ -394,6 +390,7 @@ class ChatWidget(QScrollArea):
         self._thinking_label.setFont(QFont("Microsoft YaHei UI", 10))
         self._thinking_label.show()
         self._thinking_started_at = time.time()
+        self._schedule_layout_refresh()
         self._scroll_to_bottom()
 
     def add_system_tip(self, text: str):
@@ -440,6 +437,7 @@ class ChatWidget(QScrollArea):
         bubble.avatar_interaction_requested.connect(self.avatar_interaction_requested.emit)
         bubble.avatar_clicked.connect(self.avatar_clicked.emit)
         bubble.avatar_long_pressed.connect(self.avatar_long_pressed.emit)
+        bubble.geometry_changed.connect(self._schedule_layout_refresh)
         bubble.setObjectName("vision_pending_bubble" if temporary else "image_bubble")
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._schedule_layout_refresh()
@@ -467,6 +465,7 @@ class ChatWidget(QScrollArea):
         if self._boredom_timer is not None:
             self._boredom_timer.stop()
             self._boredom_timer = None
+        self._schedule_layout_refresh()
 
     def _scroll_to_bottom(self, force: bool = False):
         self._request_scroll_to_bottom(force=force)
@@ -487,40 +486,10 @@ class ChatWidget(QScrollArea):
         return True
 
     def _request_scroll_to_bottom(self, force: bool = False):
-        """在布局稳定后合并滚动请求，避免多个延迟回调互相争抢滚动位置。"""
-        scrollbar = self.verticalScrollBar()
-        near_bottom = scrollbar.maximum() - scrollbar.value() <= 24
-        if not force and not near_bottom:
-            self._cancel_pending_scroll()
-            return
-        self._scroll_force_pending = self._scroll_force_pending or force
-        self._scroll_generation += 1
-        self._pending_scroll_generation = self._scroll_generation
-        if self._scroll_timer is None:
-            self._scroll_timer = QTimer(self)
-            self._scroll_timer.setSingleShot(True)
-            self._scroll_timer.timeout.connect(self._flush_pending_scroll)
-        self._scroll_timer.start(60)
-
-    def _flush_pending_scroll(self):
-        self._flush_scroll_request(self._pending_scroll_generation)
-
-    def _flush_scroll_request(self, generation: int):
-        if generation != self._scroll_generation:
-            return
-        self._container.updateGeometry()
-        self._layout.activate()
-        QTimer.singleShot(
-            20, lambda: self._apply_scroll_after_layout(generation)
-        )
-
-    def _apply_scroll_after_layout(self, generation: int):
-        if generation != self._scroll_generation:
-            return
-        scrollbar = self.verticalScrollBar()
-        if self._scroll_force_pending or scrollbar.maximum() - scrollbar.value() <= 32:
-            scrollbar.setValue(scrollbar.maximum())
-        self._scroll_force_pending = False
+        """把滚动动作合并到同一次几何刷新之后，避免读取过期的 maximum。"""
+        if force or self._is_near_bottom():
+            self._scroll_after_layout = True
+            self._schedule_layout_refresh()
 
     def _schedule_layout_refresh(self):
         self._layout_refresh_pending = True
@@ -535,8 +504,21 @@ class ChatWidget(QScrollArea):
         if not self._layout_refresh_pending:
             return
         self._layout_refresh_pending = False
-        self._container.updateGeometry()
+        width = self.viewport().width()
+        if width <= 0:
+            return
+
+        # 固定横向约束后再取 sizeHint，QLabel 的自动换行高度才对应当前视口。
+        # 显式 resize 会覆盖任何遗留的旧容器高度，防止顶端气泡与底部空白脱节。
+        self._container.setFixedWidth(width)
+        self._layout.invalidate()
         self._layout.activate()
+        content_height = max(1, self._layout.sizeHint().height())
+        self._container.resize(width, content_height)
+        self._container.updateGeometry()
+        if self._scroll_after_layout:
+            self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+        self._scroll_after_layout = False
     
     def add_ai_image(self, image_path: str):
         """在聊天区域添加一张 AI 发送的图片气泡（左对齐）"""
@@ -547,6 +529,7 @@ class ChatWidget(QScrollArea):
         bubble.avatar_interaction_requested.connect(self.avatar_interaction_requested.emit)
         bubble.avatar_clicked.connect(self.avatar_clicked.emit)
         bubble.avatar_long_pressed.connect(self.avatar_long_pressed.emit)
+        bubble.geometry_changed.connect(self._schedule_layout_refresh)
         self._layout.insertWidget(self._layout.count() - 1, bubble)
         self._schedule_layout_refresh()
         self._scroll_to_bottom(force=follow_bottom)
@@ -573,3 +556,4 @@ class ChatWidget(QScrollArea):
         # 从布局中移除
         self._layout.removeWidget(bubble)
         bubble.deleteLater()
+        self._schedule_layout_refresh()
