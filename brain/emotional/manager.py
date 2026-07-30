@@ -84,7 +84,7 @@ class EmotionManager:
                 "semantic_analysis": "auto",
                 "analysis_timeout_seconds": 8,
                 "significant_memory_enabled": True,
-                "significant_memory_threshold": 0.82,
+                "significant_memory_threshold": 0.50,
                 "dynamics": {},
             }
 
@@ -345,7 +345,7 @@ class EmotionManager:
     ) -> None:
         if not self._config.get("significant_memory_enabled", True):
             return
-        threshold = float(self._config.get("significant_memory_threshold", 0.82))
+        threshold = float(self._config.get("significant_memory_threshold", 0.50))
         if result.significance < threshold or not result.summary:
             return
         try:
@@ -902,9 +902,10 @@ class EmotionManager:
     @_synchronized
     def proactive_interval_multiplier(self) -> float:
         connection = self._get_state(*self._active_key).connection
-        if connection >= 0.80:
+        contact_threshold = self._dynamics.config.contact_threshold
+        if connection >= self._dynamics.config.urgent_threshold:
             return 0.55
-        if connection >= 0.58:
+        if connection >= contact_threshold:
             return 0.75
         if connection < 0.25:
             return 1.35
@@ -942,7 +943,7 @@ class EmotionManager:
         saga_bias = self._get_saga_bias(state.persona_id)
         event_stats = self._store.event_stats(
             *key,
-            significant=float(self._config.get("significant_memory_threshold", 0.82)),
+            significant=float(self._config.get("significant_memory_threshold", 0.50)),
         )
         axes = {
             "connection": round(state.connection, 4),
@@ -985,6 +986,7 @@ class EmotionManager:
                     "type": event.get("event_type", ""),
                     "time": event.get("created_at", 0),
                     "delta": self._event_valence(event),
+                    "deltas": self._event_deltas(event),
                     "detail": event.get("summary", ""),
                     "severity": round(float(event.get("significance", 0)) * 5),
                     "source_message_id": event.get("source_message_id"),
@@ -1019,7 +1021,7 @@ class EmotionManager:
     @classmethod
     def _axis_details(cls, axes: dict, events: list[dict], bias: dict) -> dict:
         thresholds = {
-            "connection": {"observation": 0.20, "contact": 0.58, "urgent": 0.80},
+            "connection": {"observation": 0.35, "contact": 0.20, "urgent": 0.80},
             "pride": {"center": 0.0, "block_contact": 0.50, "defensive": 0.42},
             "guardedness": {"caution": 0.42, "repair": 0.58},
             "valence": {}, "arousal": {"regulation": 0.58}, "immersion": {"activity": 0.30},
@@ -1083,6 +1085,27 @@ class EmotionManager:
             return float(json.loads(event.get("delta_json", "{}")) .get("valence", 0)) * 100
         except (TypeError, ValueError, json.JSONDecodeError):
             return 0.0
+
+    @staticmethod
+    def _event_deltas(event: dict) -> dict:
+        """Expose every meaningful event delta for the debug console."""
+        try:
+            payload = json.loads(event.get("delta_json", "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        axis_names = (
+            "connection", "pride", "guardedness", "valence", "arousal", "immersion",
+            "trust", "intimacy", "rupture", "repair",
+        )
+        result = {}
+        for name in axis_names:
+            try:
+                value = float(payload.get(name, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if abs(value) > 0.0001:
+                result[name] = round(value, 4)
+        return result
 
     @staticmethod
     def _event_state(event: dict) -> dict:

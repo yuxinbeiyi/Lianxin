@@ -31,6 +31,11 @@ class EmotionalDebugDialog(QDialog):
         "trust": "信任", "intimacy": "亲密", "rupture": "裂痕", "repair": "修复",
     }
 
+    EVENT_AXIS_LABELS = {
+        **NEED_LABELS,
+        **EMOTION_LABELS,
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("🧪 涟漪情感系统 v3 — 调试面板")
@@ -93,6 +98,8 @@ class EmotionalDebugDialog(QDialog):
         layout.addWidget(overview)
 
         needs_g = QGroupBox("连续情感轴（愉悦度/唤醒度/防御感的 50 为中性）")
+        axis_font = QFont("Microsoft YaHei UI", 13)
+        needs_g.setFont(axis_font)
         ng = QGridLayout(needs_g)
         ng.setSpacing(6)
         self._need_bars = {}
@@ -100,15 +107,19 @@ class EmotionalDebugDialog(QDialog):
         self._sliders = {}
         self._slider_modified = False
         for i, (key, label) in enumerate(self.NEED_LABELS.items()):
-            ng.addWidget(QLabel(label), i, 0)
+            axis_label = QLabel(label)
+            axis_label.setFont(axis_font)
+            ng.addWidget(axis_label, i, 0)
             bar = QProgressBar()
             bar.setRange(0, 100)
             bar.setFixedHeight(16)
             bar.setTextVisible(True)
             bar.setFormat(f"%v")
+            bar.setStyleSheet("QProgressBar { font-size: 13px; }")
             ng.addWidget(bar, i, 1)
             val_label = QLabel("50")
-            val_label.setFixedWidth(35)
+            val_label.setFont(axis_font)
+            val_label.setFixedWidth(48)
             ng.addWidget(val_label, i, 2)
             sl = QSlider(Qt.Horizontal)
             sl.setRange(0, 100)
@@ -129,22 +140,25 @@ class EmotionalDebugDialog(QDialog):
         layout.addLayout(btn_row)
 
         emo_g = QGroupBox("关系慢变量")
+        emo_g.setFont(axis_font)
         eg = QHBoxLayout(emo_g)
         self._emotion_labels = {}
         for key, label in self.EMOTION_LABELS.items():
             lbl = QLabel(f"{label}: 0")
+            lbl.setFont(axis_font)
             self._emotion_labels[key] = lbl
             eg.addWidget(lbl)
         eg.addStretch()
         layout.addWidget(emo_g)
 
         cap_g = QGroupBox("当前作用域")
+        cap_g.setFont(axis_font)
         cg = QHBoxLayout(cap_g)
         self._cap_labels = {}
         for key in self.NEED_LABELS:
             lbl = QLabel("")
             self._cap_labels[key] = lbl
-            lbl.setStyleSheet("font-size: 11px; color: #888;")
+            lbl.setStyleSheet("font-size: 15px; color: #888;")
             cg.addWidget(lbl)
         cg.addStretch()
         layout.addWidget(cap_g)
@@ -349,7 +363,7 @@ class EmotionalDebugDialog(QDialog):
         self._param_thresholds = {}
         for row, (key, label, value) in enumerate((
             ("observation_threshold", "开始留意", 35),
-            ("contact_threshold", "产生联系动机", 58),
+            ("contact_threshold", "产生联系动机", 20),
                                ("urgent_threshold", "强联系动机", 80),
         ), start=2):
             grid.addWidget(QLabel(label), row, 0)
@@ -386,7 +400,7 @@ class EmotionalDebugDialog(QDialog):
         self._param_memory_threshold = QSpinBox()
         self._param_memory_threshold.setRange(50, 100)
         self._param_memory_threshold.setValue(round(
-            float(emotion_config.get("significant_memory_threshold", 0.82)) * 100
+            float(emotion_config.get("significant_memory_threshold", 0.50)) * 100
         ))
         grid.addWidget(self._param_memory_threshold, 8, 1)
         layout.addWidget(dynamics_g)
@@ -491,10 +505,14 @@ class EmotionalDebugDialog(QDialog):
         log_lines = []
         for e in reversed(events[-50:]):
             ts = time.strftime("%H:%M:%S", time.localtime(e["time"]))
-            delta = e["delta"]
+            deltas = e.get("deltas", {})
+            changes = " · ".join(
+                f"{self.EVENT_AXIS_LABELS.get(key, key)} {float(value):+.2f}"
+                for key, value in deltas.items()
+            ) or "无显著轴变化"
             log_lines.append(
-                f"[{ts}] {e['type']:20s} V{delta:+.0f}  "
-                f"{e.get('detail', '')[:40]}"
+                f"[{ts}] {e.get('detail') or e['type']}\n"
+                f"  {changes}"
             )
         self._log_view.setText("\n".join(log_lines) if log_lines else "（无事件记录）")
 
@@ -503,7 +521,7 @@ class EmotionalDebugDialog(QDialog):
         positive = sum(1 for e in today_events if e["delta"] > 0)
         negative = sum(1 for e in today_events if e["delta"] < 0)
         self._log_stats.setText(
-            f"今日事件: {len(today_events)} (正面: {positive}, 负面: {negative})  |  "
+            f"今日事件: {len(today_events)} (愉悦上升: {positive}, 愉悦下降: {negative})  |  "
             f"总记录: {info.get('event_count', 0)} 条"
         )
 
@@ -658,25 +676,28 @@ class EmotionalDebugDialog(QDialog):
             self._param_connection_rate.setValue(0.025)
             self._param_accel_delay.setValue(90)
             for key, value in (("observation_threshold", 35),
-                               ("contact_threshold", 58),
+                               ("contact_threshold", 20),
                                ("urgent_threshold", 80)):
                 self._param_thresholds[key].setValue(value)
             self._semantic_combo.setCurrentIndex(self._semantic_combo.findData("auto"))
             self._param_analysis_timeout.setValue(8.0)
             self._param_memory_enabled.setChecked(True)
-            self._param_memory_threshold.setValue(82)
+            self._param_memory_threshold.setValue(50)
             _get_emotion_mgr().configure_dynamics(
                 connection_rate=0.00042,
                 connection_accel_delay=90,
+                immersion_decay=0.02,
                 observation_threshold=0.35,
-                contact_threshold=0.58,
+                contact_threshold=0.20,
                 urgent_threshold=0.80,
             )
             _get_emotion_mgr().configure_settings(
                 semantic_analysis="auto",
                 analysis_timeout_seconds=8,
                 significant_memory_enabled=True,
-                significant_memory_threshold=0.82,
+                significant_memory_threshold=0.50,
+                proactive_motive_enabled=True,
+                saga_bias_scale=1.0,
             )
             self._log_view.append("[参数] 已恢复 v3 默认动力参数")
         except Exception as e:

@@ -33,11 +33,11 @@ class DynamicsConfig:
     guardedness_defend_threshold: float = 0.58
     guardedness_defend_target: float = 0.42
     guardedness_defend_rate: float = 0.0020
-    immersion_decay: float = 0.006
+    immersion_decay: float = 0.02
     rupture_decay: float = 0.000035
     repair_decay: float = 0.00008
     observation_threshold: float = 0.35
-    contact_threshold: float = 0.58
+    contact_threshold: float = 0.20
     urgent_threshold: float = 0.80
     guardedness_block: float = 0.55
     low_valence_regulation: float = -0.48

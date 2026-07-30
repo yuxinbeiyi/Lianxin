@@ -870,7 +870,7 @@ _EMOTION_DEFAULTS = {
     "semantic_analysis": "auto",
     "analysis_timeout_seconds": 8,
     "significant_memory_enabled": True,
-    "significant_memory_threshold": 0.82,
+    "significant_memory_threshold": 0.50,
     "proactive_motive_enabled": True,
     "saga_bias_scale": 1.0,
     "tone_profiles": {},
