@@ -9,7 +9,7 @@ import time
 from PyQt5.QtWidgets import (
     QScrollArea, QWidget, QVBoxLayout, QLabel, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QTimer, QEvent, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QEvent, QRect, pyqtSignal
 from PyQt5.QtGui import QFont, QPalette, QColor
 from gui.message_bubble import MessageBubble, ImageMessageBubble
 
@@ -120,6 +120,8 @@ class ChatWidget(QScrollArea):
         self._boredom_index: int = 0
         self._layout_refresh_timer: QTimer | None = None
         self._layout_refresh_pending = False
+        self._layout_verify_pending = False
+        self._skip_next_layout_verify = False
         self._scroll_after_layout = False
         self._build_ui()
 
@@ -539,17 +541,35 @@ class ChatWidget(QScrollArea):
         if width <= 0:
             return
 
-        # 固定横向约束后再取 sizeHint，QLabel 的自动换行高度才对应当前视口。
-        # 显式 resize 会覆盖任何遗留的旧容器高度，防止顶端气泡与底部空白脱节。
+        # 先将容器和布局约束到最终宽度，再按宽度测量高度。仅取未约束的
+        # sizeHint 会让新建的自动换行 QLabel 在首帧少算最后一行高度。
         self._container.setFixedWidth(width)
         self._layout.invalidate()
         self._layout.activate()
-        content_height = max(1, self._layout.sizeHint().height())
+        content_height = self._layout.heightForWidth(width)
+        if content_height <= 0:
+            content_height = self._layout.sizeHint().height()
+        content_height = max(1, content_height)
         self._container.resize(width, content_height)
+        self._layout.setGeometry(QRect(0, 0, width, content_height))
+        self._layout.activate()
         self._container.updateGeometry()
         if self._scroll_after_layout:
             self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
         self._scroll_after_layout = False
+
+        # QLabel 会在获得实际宽度后的下一轮事件循环完成最后一次换行。
+        # 补做一次幂等校验，保证首条消息不会等到下一条消息才恢复高度。
+        if self._skip_next_layout_verify:
+            self._skip_next_layout_verify = False
+        elif not self._layout_verify_pending:
+            self._layout_verify_pending = True
+            QTimer.singleShot(0, self._verify_layout_after_wrap)
+
+    def _verify_layout_after_wrap(self):
+        self._layout_verify_pending = False
+        self._skip_next_layout_verify = True
+        self._schedule_layout_refresh()
     
     def add_ai_image(self, image_path: str):
         """在聊天区域添加一张 AI 发送的图片气泡（左对齐）"""
