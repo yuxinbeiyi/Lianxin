@@ -51,9 +51,20 @@ class AvatarInteractionWorker(QThread):
             from brain.agent import AgentCore
 
             class _EphemeralHistory:
+                db_path = ":memory:"
+                def sync_legacy_channel_maps(self):
+                    return None
+                def new_session(self, *args, **kwargs):
+                    return 0
                 def update_title(self, *args, **kwargs):
                     return None
                 def save_message(self, *args, **kwargs):
+                    return 0
+                def get_latest_session_id(self, *args, **kwargs):
+                    return None
+                def get_messages(self, *args, **kwargs):
+                    return []
+                def get_latest_message_id(self, *args, **kwargs):
                     return 0
                 def get_latest_compression_snapshot(self, *args, **kwargs):
                     return None
@@ -66,11 +77,11 @@ class AvatarInteractionWorker(QThread):
                         track_emotion=False,
                         owner_scope=False,
                         source_channel="avatar_interaction",
+                        history_manager=_EphemeralHistory(),
                     )
                     isolated.history = []
                     isolated._session_titled = True
                     isolated._conversation_summary = ""
-                    isolated._history_mgr = _EphemeralHistory()
                     nonce = int(time.time() * 1000) % 1000000
                     prompt = (
                         f"{self.prompt}\n本次互动编号：{nonce}。"

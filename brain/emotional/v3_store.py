@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from memory.sqlite_coordination import connect_database, get_database_lock
+
 from .v3_models import (
     DEFAULT_PERSONA_ID,
     DEFAULT_SUBJECT_ID,
@@ -26,7 +28,7 @@ class EmotionStore:
 
     def __init__(self, db_path: Path | str | None = None):
         self.db_path = str(db_path or DEFAULT_DB_PATH)
-        self._lock = threading.RLock()
+        self._lock = get_database_lock(self.db_path)
         self._local = threading.local()
         self._memory_conn: sqlite3.Connection | None = None
         self._ensure_schema()
@@ -34,13 +36,13 @@ class EmotionStore:
     def _connect(self) -> sqlite3.Connection:
         if self.db_path == ":memory:":
             if self._memory_conn is None:
-                self._memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
+                self._memory_conn = connect_database(":memory:", check_same_thread=False)
                 self._memory_conn.row_factory = sqlite3.Row
                 self._memory_conn.execute("PRAGMA foreign_keys=ON")
             return self._memory_conn
         conn = getattr(self._local, "conn", None)
         if conn is None:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn = connect_database(self.db_path, check_same_thread=False)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=3000")

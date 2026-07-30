@@ -151,6 +151,11 @@ _RESOURCE_GROUPS = {
     "start_observation_mode": "hardware",
     "stop_observation_mode": "hardware",
     "shoulder_observe": "hardware",
+    # 具身模拟（共享权威 WorldState，运动任务必须按提交顺序执行）
+    "navigate_to_marker": "physical",
+    "move_snake": "physical",
+    "cancel_embodied_task": "physical",
+    "get_embodied_status": "physical",
 }
 _resource_locks: dict[str, threading.Lock] = {}
 _resource_init_lock = threading.Lock()
@@ -274,7 +279,8 @@ class AgentCore:
     def __init__(self, session_id: int = None, user_desc: str = None,
                  disable_tools: bool = False, track_emotion: bool = True,
                  source_channel: str = "desktop", participant_id: str = "",
-                 owner_scope: bool = True, scene: str = "main_chat"):
+                 owner_scope: bool = True, scene: str = "main_chat",
+                 history_manager=None):
         
         self._cancel_event = threading.Event()
         self._active_workflow_run_id = 0
@@ -329,7 +335,11 @@ class AgentCore:
         self.history: list[dict] = []
 
         # 会话历史持久化
-        self._history_mgr = HistoryManager()
+        self._history_mgr = history_manager or HistoryManager()
+        self._ephemeral_history = (
+            history_manager is not None
+            and str(getattr(history_manager, "db_path", "")) == ":memory:"
+        )
         self._history_mgr.sync_legacy_channel_maps()
         self._last_reply_time = self._load_last_reply_time()
 
@@ -342,7 +352,7 @@ class AgentCore:
             graph_enabled = True
 
         # 初始化图记忆表（延迟导入，首次启动时建表）
-        if graph_enabled:
+        if graph_enabled and not self._ephemeral_history:
             try:
                 from brain.graph_memory import _init_tables, _get_conn
                 _init_tables(_get_conn())
@@ -396,11 +406,12 @@ class AgentCore:
         try:
             from brain.memory_extraction_pipeline import MemoryExtractionStore
 
-            self._memory_extraction_store = MemoryExtractionStore(self._history_mgr.db_path)
-            self._memory_extraction_store.bootstrap_session(
-                self._session_id,
-                self._history_mgr.get_latest_message_id(self._session_id),
-            )
+            if not self._ephemeral_history:
+                self._memory_extraction_store = MemoryExtractionStore(self._history_mgr.db_path)
+                self._memory_extraction_store.bootstrap_session(
+                    self._session_id,
+                    self._history_mgr.get_latest_message_id(self._session_id),
+                )
         except Exception as exc:
             logger.warning("自动记忆提取状态初始化失败，将在触发时重试: %s", exc)
         self._session_memory_writes_blocked = self._derive_memory_write_policy()
@@ -2323,7 +2334,11 @@ class AgentCore:
                 mcp_tools, _msg_for_match, recent_external_context
             )
             # 仅当用户明确点名 MCP 时首轮开放，避免整套外部工具常驻。
-            all_tools = [] if route.is_light else filtered_builtin + contextual_mcp_tools
+            selected_skill_tools = [
+                definition for definition in skill_tools
+                if definition.get("function", {}).get("name", "") in route.tool_names
+            ]
+            all_tools = [] if route.is_light else filtered_builtin + selected_skill_tools + contextual_mcp_tools
 
             # 用户禁用的工具过滤
             from config import get_builtin_tool_config
@@ -2569,6 +2584,14 @@ class AgentCore:
         elif (extract_urls(_msg_for_match)
                 and any(t.get("function", {}).get("name") == "fetch_webpage" for t in all_tools)):
             forced_tool = "fetch_webpage"
+        elif ("embodied" in route.capabilities
+                and any(token in _msg_for_match.lower() for token in ("标记", "前往", "到达", "去"))
+                and any(t.get("function", {}).get("name") == "navigate_to_marker" for t in all_tools)):
+            forced_tool = "navigate_to_marker"
+            messages.append({
+                "role": "system",
+                "content": "用户正在命令虚拟世界中的贪吃蛇前往食物标记。必须调用 navigate_to_marker，标记 ID 使用 marker_001；不得声称自己无法移动。",
+            })
 
         # ── 三层熔断器状态 ──
         _content_drought_count = 0           # 连续无文本回复计数

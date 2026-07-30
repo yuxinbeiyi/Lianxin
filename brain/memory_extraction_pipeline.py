@@ -11,6 +11,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
+from memory.sqlite_coordination import connect_database
 from typing import Callable
 
 import litellm
@@ -102,7 +104,7 @@ class MemoryExtractionStore:
         self._ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=5, isolation_level=None)
+        conn = connect_database(self.db_path, timeout=5, isolation_level=None)
         conn.row_factory = sqlite3.Row
         # SQLite changes journal mode at the database level.  Serialize this
         # transition because scheduler/history dialogs can initialize together.

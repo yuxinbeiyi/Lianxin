@@ -314,6 +314,18 @@ def main():
     from brain.skill_manager import activate_all_skills
     activate_all_skills()
 
+    # 虚拟世界网页服务和技能工具必须处于同一进程，才能共享权威 WorldState。
+    try:
+        from brain.physical.service import start_physical_sim_server, stop_physical_sim_server
+        _physical_server = start_physical_sim_server()
+        if _physical_server.error:
+            print(f"[PhysicalSim] 调试服务启动失败: {_physical_server.error}", flush=True)
+        else:
+            app.aboutToQuit.connect(stop_physical_sim_server)
+            print("[PhysicalSim] 调试服务已启动: http://127.0.0.1:8765/", flush=True)
+    except Exception as exc:
+        print(f"[PhysicalSim] 调试服务初始化失败: {exc}", flush=True)
+
     # ── 初始化 MCP 系统 ──────────────────────────────────
     try:
         from brain.mcp.mcp_manager import get_mcp_manager

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>莲心虚拟世界</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header>
+      <div>
+        <p class="eyebrow">LIANXIN VIRTUAL WORLD · STAGE B</p>
+        <h1>莲心虚拟世界</h1>
+        <p class="subtitle">后端权威世界 · 本地 A* · 固定步长具身控制</p>
+      </div>
+      <span id="connection" class="status-chip offline">连接中</span>
+    </header>
+
+    <section class="workspace">
+      <div class="map-panel">
+        <div class="map-toolbar">
+          <button class="active" data-mode="marker">放置食物</button>
+          <button data-mode="obstacle">障碍物模式</button>
+          <button data-mode="erase">删除障碍</button>
+          <label><input id="show-grid" type="checkbox" checked> 网格</label>
+          <label><input id="show-path" type="checkbox" checked> 路径</label>
+        </div>
+        <canvas id="world" width="800" height="800" aria-label="莲心虚拟世界地图"></canvas>
+        <p id="hint" class="hint">点击地图放置黄色食物。</p>
+      </div>
+
+      <aside class="side-panel">
+        <section class="card">
+          <h2>任务控制</h2>
+          <div class="button-grid">
+            <button id="navigate" class="primary">前往食物</button>
+            <button id="move-up">上移一格</button>
+            <button id="move-down">下移一格</button>
+            <button id="move-left">左移一格</button>
+            <button id="move-right">右移一格</button>
+            <button id="cancel">取消任务</button>
+            <button id="stop" class="danger">急停</button>
+            <button id="clear-obstacles">清除障碍</button>
+            <button id="reset">重置贪吃蛇</button>
+            <button id="download-debug">下载诊断报告</button>
+          </div>
+        </section>
+
+        <section class="card telemetry-card">
+          <h2>权威状态</h2>
+          <dl id="telemetry">
+            <div><dt>任务</dt><dd>等待快照</dd></div>
+            <div><dt>位置</dt><dd>—</dd></div>
+            <div><dt>朝向</dt><dd>—</dd></div>
+            <div><dt>速度</dt><dd>—</dd></div>
+            <div><dt>路径</dt><dd>—</dd></div>
+          </dl>
+        </section>
+
+        <section class="card log-card">
+          <h2>实时日志</h2>
+          <ol id="log"></ol>
+        </section>
+      </aside>
+    </section>
+  </main>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

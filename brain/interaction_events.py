@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+from memory.sqlite_coordination import connect_database
+
 from utils.paths import get_user_data_dir
 
 
@@ -46,7 +48,7 @@ class InteractionEventStore:
         self._ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=5)
+        conn = connect_database(self.db_path, timeout=5, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=5000")
         return conn

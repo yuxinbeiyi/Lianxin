@@ -15,6 +15,8 @@ import threading
 import logging
 from pathlib import Path
 
+from memory.sqlite_coordination import connect_database
+
 _DB_PATH = Path(__file__).parent.parent / "memory" / "conversations.db"
 _local = threading.local()
 
@@ -23,7 +25,13 @@ ENTITY_TYPES = ("人物", "地点", "组织", "物品", "概念", "时间", "事
 
 def _get_conn() -> sqlite3.Connection:
     if not hasattr(_local, "conn") or _local.conn is None:
-        conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
+        # Most graph-memory callers perform short independent mutations.  Use
+        # autocommit so a later Python exception cannot strand a write
+        # transaction on this long-lived thread-local connection.  Callers
+        # that need atomic multi-step work can still issue BEGIN explicitly.
+        conn = connect_database(
+            _DB_PATH, check_same_thread=False, isolation_level=None
+        )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=2000")

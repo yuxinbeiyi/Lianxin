@@ -34,6 +34,7 @@ CAPABILITY_TO_TOOLS: dict[str, set[str]] = {
     "weather": {"get_weather", "set_user_city"},
     "bilibili": {"bilibili_search", "bilibili_add_tag", "bilibili_list_tags"},
     "time_capsule": {"read_diary", "write_diary"},
+    "embodied": {"navigate_to_marker", "move_snake", "cancel_embodied_task", "get_embodied_status"},
 }
 
 CAPABILITY_DESCRIPTIONS = {
@@ -52,6 +53,7 @@ CAPABILITY_DESCRIPTIONS = {
     "weather": "查询实时天气",
     "bilibili": "搜索或管理 B 站内容",
     "time_capsule": "读取或写入时间胶囊日记",
+    "embodied": "在莲心虚拟世界中导航、移动或查询贪吃蛇执行状态",
 }
 
 _URL_RE = re.compile(r"https?://\S+", re.I)
@@ -210,6 +212,12 @@ def classify_request(message: str, *, recent_messages: Iterable[dict] = (),
     if re.search(r"(?:b站|哔哩哔哩|bilibili)", lowered):
         capabilities.add("bilibili")
         reasons.append("明确 B 站任务")
+    if any(token in lowered for token in (
+        "坦克", "贪吃蛇", "虚拟世界", "地图标记", "食物", "标记的位置", "标记点", "前往标记", "到达标记",
+        "左转", "右转", "急停", "取消任务",
+    )):
+        capabilities.add("embodied")
+        reasons.append("虚拟世界具身任务")
 
     if capabilities:
         return RequestRoute(RequestMode.TASK_DIRECT, frozenset(capabilities), "；".join(reasons))

@@ -15,6 +15,8 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import json
 
+from memory.sqlite_coordination import connect_database, get_database_lock
+
 _DB_PATH = Path(__file__).parent / "conversations.db"
 _local = threading.local()
 
@@ -26,14 +28,15 @@ def _get_connection(db_path: Path = _DB_PATH) -> sqlite3.Connection:
         _local.connections = {}
     conn = _local.connections.get(key)
     if conn is None:
-        conn = sqlite3.connect(key, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=2000")     # 写冲突最多等 2 秒（太长会导致界面卡顿，太短会频繁 SQLITE_BUSY）
-        conn.execute("PRAGMA wal_autocheckpoint=500")
-        conn.execute("PRAGMA synchronous=NORMAL")     # WAL 模式下 NORMAL 安全且更快
-        _init_db(conn)
-        _local.connections[key] = conn
+        with get_database_lock(db_path):
+            conn = connect_database(key, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=2000")     # 写冲突最多等 2 秒（太长会导致界面卡顿，太短会频繁 SQLITE_BUSY）
+            conn.execute("PRAGMA wal_autocheckpoint=500")
+            conn.execute("PRAGMA synchronous=NORMAL")     # WAL 模式下 NORMAL 安全且更快
+            _init_db(conn)
+            _local.connections[key] = conn
     return conn
 
 
@@ -140,6 +143,7 @@ def _migrate_db(conn: sqlite3.Connection):
 class HistoryManager:
     def __init__(self, db_path: Path | str | None = None):
         self._db_path = Path(db_path) if db_path else _DB_PATH
+        self._write_lock = get_database_lock(self._db_path)
 
     @property
     def db_path(self) -> Path:
@@ -155,42 +159,45 @@ class HistoryManager:
     def new_session(self, channel: str = "desktop", participant_id: str = "",
                     owner_scope: bool = True) -> int:
         """创建新会话，返回 session_id。"""
-        conn = self._conn()
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cur = conn.execute(
-            """INSERT INTO sessions
-               (title, created_at, updated_at, channel, participant_id, owner_scope)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            ("新对话", now, now, channel, str(participant_id), int(owner_scope))
-        )
-        conn.commit()
-        return cur.lastrowid
+        with self._write_lock:
+            conn = self._conn()
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cur = conn.execute(
+                """INSERT INTO sessions
+                   (title, created_at, updated_at, channel, participant_id, owner_scope)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                ("新对话", now, now, channel, str(participant_id), int(owner_scope))
+            )
+            conn.commit()
+            return cur.lastrowid
 
     def update_title(self, session_id: int, title: str):
         """更新会话标题。"""
-        conn = self._conn()
-        conn.execute(
-            "UPDATE sessions SET title = ? WHERE id = ?",
-            (title[:30], session_id)
-        )
-        conn.commit()
+        with self._write_lock:
+            conn = self._conn()
+            conn.execute(
+                "UPDATE sessions SET title = ? WHERE id = ?",
+                (title[:30], session_id)
+            )
+            conn.commit()
 
     # ── 消息管理 ─────────────────────────────────────────────
 
     def save_message(self, session_id: int, role: str, content: str) -> int:
         """保存一条消息（role: 'user' | 'assistant'）。"""
-        conn = self._conn()
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cur = conn.execute(
-            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
-            (session_id, role, content, now)
-        )
-        conn.execute(
-            "UPDATE sessions SET updated_at = ? WHERE id = ?",
-            (now, session_id)
-        )
-        conn.commit()
-        return int(cur.lastrowid)
+        with self._write_lock:
+            conn = self._conn()
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cur = conn.execute(
+                "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+                (session_id, role, content, now)
+            )
+            conn.execute(
+                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id)
+            )
+            conn.commit()
+            return int(cur.lastrowid)
 
     # ── 读取接口 ─────────────────────────────────────────────
 
