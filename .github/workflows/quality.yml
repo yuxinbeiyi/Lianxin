@@ -44,4 +44,4 @@ jobs:
           fetch-depth: 0
 
       - name: 扫描提交与当前文件
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
