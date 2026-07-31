@@ -56,6 +56,7 @@ class EmotionManager:
         self._lock = threading.RLock()
         self._store = store or EmotionStore()
         self._config = self._load_config()
+        self._enable_proactive_motive_on_startup()
         configured_dynamics = DynamicsConfig.from_mapping(self._config.get("dynamics"))
         self._dynamics = dynamics or EmotionalDynamics(configured_dynamics)
         self._semantic_mode = str(
@@ -85,8 +86,20 @@ class EmotionManager:
                 "analysis_timeout_seconds": 8,
                 "significant_memory_enabled": True,
                 "significant_memory_threshold": 0.50,
+                "proactive_motive_enabled": True,
                 "dynamics": {},
             }
+
+    def _enable_proactive_motive_on_startup(self) -> None:
+        """启动时恢复主动动机，避免旧暂停状态跨会话残留。"""
+        if self._config.get("proactive_motive_enabled") is True:
+            return
+        self._config["proactive_motive_enabled"] = True
+        try:
+            from config import save_emotion_config
+            save_emotion_config(self._config)
+        except Exception as exc:
+            logger.warning("恢复主动动机默认设置失败: %s", exc)
 
     @staticmethod
     def _persona_id(persona_snapshot=None, persona_id: str | None = None) -> str:
