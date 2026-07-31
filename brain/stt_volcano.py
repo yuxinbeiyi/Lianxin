@@ -1,4 +1,3 @@
-# E:\Desktop\莲心AI\brain\stt_volcano.py
 # 火山引擎语音识别 (v3) — WebSocket 二进制协议 + X-Api 鉴权
 # 免费额度: 20,000 次（半年），超出后 ¥1~4.5/小时
 # 文档: https://www.volcengine.com/docs/6561/1354869

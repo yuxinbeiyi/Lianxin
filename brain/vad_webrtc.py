@@ -1,4 +1,3 @@
-# E:\Desktop\莲心AI\brain\vad_webrtc.py
 # WebRTC VAD 语音活动检测器
 # 替代 Silero VAD，零模型文件，零路径依赖，纯 pip 安装
 # pip install webrtcvad-wheels
