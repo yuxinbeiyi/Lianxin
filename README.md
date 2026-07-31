@@ -34,9 +34,11 @@
 - [时间胶囊](#时间胶囊)
 - [工具、视觉与语音](#工具视觉与语音)
 - [扩展生态](#扩展生态)
+- [运行资源与轻薄本模式](#运行资源与轻薄本模式)
 - [快速开始](#快速开始)
 - [项目结构](#项目结构)
 - [数据与隐私](#数据与隐私)
+- [许可证](#许可证)
 - [开发与测试](#开发与测试)
 - [参考与致谢](#参考与致谢)
 - [免责声明](#免责声明)
@@ -1031,19 +1033,82 @@ MCP 是**外部工具服务接入层**，让文件系统、搜索、浏览器等
 
 ---
 
+## 运行资源与轻薄本模式
+
+莲心的文本对话默认通过 LiteLLM 请求已配置的云端模型，**不要求本机显卡，也不会在启动时加载本地大语言模型**。GPU 只会提升本地语音识别、语义检索和本地 Ollama 模型的速度；没有 NVIDIA GPU 时，程序会将这些可用能力回退到 CPU，或使用已配置的云端服务。
+
+### 资源建议
+
+| 使用方式 | CPU / 内存 | 磁盘预留 | 显卡 | 可用能力 |
+|------|------|------|------|------|
+| 基础聊天（最低） | 4 核 CPU，8 GB RAM | 6 GB 可用空间 | 不需要 | 桌面聊天、SQLite 记忆、情感与陪伴功能、成就、自习室、云端文本模型 |
+| 日常推荐 | 4 至 8 核 CPU，16 GB RAM | 10 GB 可用空间 | 集成显卡即可 | 基础聊天外，可同时使用记忆检索、WebEngine 页面和常用工具 |
+| 功能全开 | 8 核 CPU，32 GB RAM | 20 GB 以上，另加本地模型空间 | NVIDIA GPU 可选，8 GB 以上显存更适合 | 本地语音识别、视觉处理、浏览器自动化、Ollama 本地模型及多项后台能力并行 |
+
+以上磁盘预留包含 Python 虚拟环境、项目资源和运行日志，不包含 Ollama、FunASR、Whisper 等首次启用时单独下载的模型文件。本地模型体积取决于模型规格，建议单独预留空间。
+
+### 无 GPU 的稳定使用方式
+
+1. 在设置中使用 DeepSeek、Agnes 或任意 OpenAI 兼容的云端文本模型，保持 `use_local: false`。这是轻薄本最流畅的主路径。
+2. 不启用 Ollama、FunASR / Whisper 本地语音识别、摄像头持续观察等需要下载模型或持续推理的功能；语音需求可优先选择已配置的火山或阿里云 STT，语音输出使用 Edge-TTS。
+3. 在“设置 -> 设备偏好”中，将语音识别和 RAG 设为 `CPU`；程序也会在未检测到 CUDA 时自动回退到 CPU。CPU 模式的首次语义检索或本地语音识别可能较慢，属于模型加载与推理耗时，不影响云端文字聊天。
+4. 浏览器自动化、摄像头、桌面观察和高频主动行为会增加内存、CPU 与电量消耗。轻薄本建议按需开启，并关闭不使用的桥接和后台功能。
+
+可在 `%USERPROFILE%\.lianxin\user_config.json` 中显式固定 CPU 偏好：
+
+```json
+{
+  "deepseek": {
+    "use_local": false
+  },
+  "device_preferences": {
+    "rag": "cpu",
+    "whisper": "cpu",
+    "funasr": "cpu"
+  }
+}
+```
+
+### 性能排查顺序
+
+当界面卡顿或风扇持续高转时，依次检查：是否启动了本地模型、是否正在首次加载语音或 RAG 模型、是否开启了摄像头/桌面观察、是否有浏览器自动化窗口或多个后台桥接在运行。基础文字聊天仅依赖 Python、PyQt、SQLite 和云端模型请求；关闭上述可选能力后，低配置电脑也可以稳定运行。
+
+---
+
 ## 快速开始
 
 ### 1. 创建环境
 
-建议使用 Conda 和 Python 3.12：
+支持 Windows 10/11 与 Python 3.11、3.12。新用户推荐直接运行 `bootstrap.bat`：它会在项目目录创建 `.venv`，安装基础桌面版依赖，并在当前用户目录初始化配置文件。普通启动使用 `run.bat`，不需要管理员权限。
+
+```powershell
+.\bootstrap.bat
+.\run.bat
+```
+
+也可手动创建环境。基础桌面版只安装聊天、桌面界面、SQLite 记忆和具身模拟器所需依赖：
 
 ```powershell
 conda create -n lianxin python=3.12
 conda activate lianxin
-pip install -r requirements.txt
+pip install -r requirements-core.txt
 ```
 
-莲心自习室使用 `PyQtWebEngine` 承载 HTML/CSS/JavaScript 前端；它已列在 `requirements.txt` 中（`PyQtWebEngine==5.15.7`）。如果只安装了 PyQt5 而没有安装 WebEngine，自习室窗口无法加载。
+莲心自习室使用 `PyQtWebEngine` 承载 HTML/CSS/JavaScript 前端；它已列在基础依赖中。如果只安装了 PyQt5 而没有安装 WebEngine，自习室窗口无法加载。
+
+### 安装档案
+
+| 安装命令 | 用途 |
+|---|---|
+| `pip install -r requirements-core.txt` | 默认桌面版：云端对话、SQLite 记忆、PyQt、时间胶囊、自习室与具身模拟器 |
+| `pip install -r requirements-rag.txt` | 本地语义记忆检索；会安装 PyTorch 并在首次检索时下载 embedding 模型 |
+| `pip install -r requirements-voice.txt` | 本地语音输入与音频处理 |
+| `pip install -r requirements-vision.txt` | 摄像头、OCR、视觉处理 |
+| `pip install -r requirements-browser.txt` | Playwright 浏览器自动化与网页提取 |
+| `pip install -r requirements-bridge.txt` | QQ / 微信桥接及 MCP 接入 |
+| `pip install -r requirements.txt` | 原有全功能兼容依赖集合，适合维护者或需要全部可选能力的用户 |
+
+可选依赖在需要时单独安装；安装浏览器能力后还需执行 `playwright install chromium`。本地模型及模型权重不在上述依赖清单内。
 
 ### 2. 配置模型
 
@@ -1180,6 +1245,16 @@ python main.py
 - 用户配置、API Key、Cookie 和记忆数据库**不应提交到 Git**
 - 工具调用有权限边界，不会无条件执行危险操作
 - 记忆写入包含来源消息和时间范围，可追溯和审计
+
+完整隐私边界见 [PRIVACY.md](PRIVACY.md)。素材、动画、音乐与模型的公开发布状态见 [ASSET_NOTICE.md](ASSET_NOTICE.md)；表情包目录仅保留空占位文件，用户可自行在本机添加。
+
+---
+
+## 许可证
+
+本项目的源代码采用 [MIT License](LICENSE)。你可以在保留版权与许可证声明的前提下使用、复制、修改、发布、再授权或商用源代码。
+
+MIT 许可证仅覆盖项目维护者拥有著作权的源代码；第三方依赖、音乐、音效、角色素材、模型权重及其他二进制资源不因此自动获得 MIT 授权。它们的发布状态与额外条件见 [ASSET_NOTICE.md](ASSET_NOTICE.md)。
 
 ---
 

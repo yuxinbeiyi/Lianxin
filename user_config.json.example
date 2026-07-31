@@ -1,10 +1,10 @@
 {
-  "api_key": "sk-your-deepseek-api-key",
+  "api_key": "",
   "base_url": "https://api.deepseek.com",
   "model": "deepseek-v4-flash",
   "max_tokens": 4096,
   "deepseek": {
-    "api_key": "sk-your-deepseek-api-key",
+    "api_key": "",
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-v4-flash",
     "max_tokens": 4096,
@@ -12,10 +12,15 @@
     "local_base_url": "http://localhost:11434/v1",
     "local_model_name": "my-qwen"
   },
+  "device_preferences": {
+    "rag": "cpu",
+    "whisper": "cpu",
+    "funasr": "cpu"
+  },
   "aliyun_stt": {
-    "access_key_id": "your-aliyun-access-key-id",
-    "access_key_secret": "your-aliyun-access-key-secret",
-    "app_key": "your-aliyun-stt-app-key"
+    "access_key_id": "",
+    "access_key_secret": "",
+    "app_key": ""
   },
   "camera": {
     "device_index": 0,
@@ -26,10 +31,10 @@
     "baidu_cookie": ""
   },
   "qq_bridge": {
-    "enabled": true,
+    "enabled": false,
     "ws_url": "ws://127.0.0.1:3001",
-    "qq_account": "your-qq-account",
-    "owner_qq": "your-qq-number",
+    "qq_account": "",
+    "owner_qq": "",
     "owner_name": "你的名字",
     "voice_reply_enabled": true,
     "timing": {
@@ -63,7 +68,7 @@
     }
   ],
   "siliconflow": {
-    "api_key": "sk-your-siliconflow-api-key",
+    "api_key": "",
     "base_url": "https://api.siliconflow.cn/v1",
     "vision_model": "Qwen/Qwen3-VL-30B-A3B-Instruct"
   },

@@ -24,7 +24,10 @@ env/
 # 大模型文件
 models/
 # 保留视觉模型（MediaPipe 面部/手势检测）
+# Visual runtime models are downloaded locally; only the setup guide is public.
 !vision/models/
+vision/models/*
+!vision/models/README.md
 
 # 运行时数据库
 memory/*.db
@@ -143,8 +146,13 @@ GPT-SoVITS-v2pro/
 # 测试工作区
 test_workspace/
 
-# 本地自动化测试代码不随发布仓库提交
-tests/
+# 公开仓库仅提交已完成脱敏与离线验证的回归测试；其余测试保留本地迭代。
+tests/**
+!tests/test_physical_audit.py
+!tests/test_physical_controller.py
+!tests/test_physical_planner.py
+!tests/test_physical_runtime.py
+!tests/test_physical_service.py
 
 # 阿里云语音 SDK（用户自行安装）
 alibabacloud-nls-python-sdk/

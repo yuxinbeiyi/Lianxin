@@ -18,5 +18,5 @@ python main.py
 if errorlevel 1 (
     echo.
     echo [错误] 莲心AI异常退出，详细信息请查看 %USERPROFILE%\.lianxin\logs 或项目 logs 目录。
-    pause
+    if not defined LIANXIN_NO_PAUSE pause
 )
