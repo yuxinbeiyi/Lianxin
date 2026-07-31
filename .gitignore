@@ -121,6 +121,10 @@ CLAUDE.md
 # 音频文件
 *.wav
 
+# 用户自定义表情包：仓库只保留空目录占位，图片由用户自行放入。
+表情包/**
+!表情包/.gitkeep
+
 logs/
 game/
 powershell
