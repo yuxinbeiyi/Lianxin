@@ -8,9 +8,10 @@
     "agentType": "external",
     "connection": {
       "command": [
-        "node",
-        "C:/Users/guoyuxin/AppData/Roaming/npm/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js",
-        "E:/Desktop"
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "{user_home}/Desktop"
       ]
     },
     "capabilities": {

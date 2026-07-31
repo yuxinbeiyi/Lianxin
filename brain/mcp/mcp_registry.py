@@ -189,7 +189,7 @@ def _create_agent(manifest: Dict, service_dir: Path) -> Optional[Any]:
             return None
 
         connection = manifest.get("connection", {})
-        cmd = connection.get("command", [])
+        cmd = _expand_external_command(connection.get("command", []))
         env = connection.get("env", {}).copy()
         
         # 如果是 tavily_search，从用户配置读取 API Key（优先级高于 manifest）
@@ -230,6 +230,21 @@ def _create_agent(manifest: Dict, service_dir: Path) -> Optional[Any]:
 
 
     return None
+
+
+def _expand_external_command(command: list) -> list:
+    """展开 MCP 清单中的跨机器路径占位符，避免提交个人目录。"""
+    replacements = {
+        "{project_root}": str(_MCP_DIR.parent),
+        "{user_home}": str(Path.home()),
+    }
+    resolved = []
+    for item in command:
+        value = str(item)
+        for placeholder, replacement in replacements.items():
+            value = value.replace(placeholder, replacement)
+        resolved.append(value)
+    return resolved
 
 
 def _rebuild_tool_cache():

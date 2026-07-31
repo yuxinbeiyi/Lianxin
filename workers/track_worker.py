@@ -12,6 +12,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 
 from brain.hardware_bridge import HardwareBridge
 from brain.human_tracking import get_track_manager, TrackState
+from utils.paths import get_user_data_dir
 from vision.gesture_detector import _load_bytes
 
 from mediapipe.tasks.python import BaseOptions
@@ -196,9 +197,13 @@ class TrackWorker(QThread):
 
             # 首帧保存
             if self._frame_count == 1:
-                cv2.imwrite("E:/Desktop/Claude/track_first_frame.jpg", frame)
+                # 调试帧属于运行数据，统一写入用户目录而非开发者桌面。
+                debug_dir = get_user_data_dir() / "debug"
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                debug_frame = debug_dir / "track_first_frame.jpg"
+                cv2.imwrite(str(debug_frame), frame)
                 h0, w0 = frame.shape[:2]
-                _log(f"[track] 首帧已保存: {w0}x{h0} → E:/Desktop/Claude/track_first_frame.jpg")
+                _log(f"[track] 首帧已保存: {w0}x{h0} -> {debug_frame}")
 
             # OpenCV BGR → MediaPipe RGB
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

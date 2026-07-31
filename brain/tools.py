@@ -3403,9 +3403,14 @@ def _legacy_fetch_webpage(url: str, max_length: int = 3000) -> str:
     # 打开浏览器访问百度百科，按 F12 → 网络 → 刷新 → 找到任意请求的 Cookie 字段，
     # 复制类似 "BAIDUID=xxx; BIDUPSID=xxx; PSTM=xxx" 的内容粘贴到下面。
     # 如果你不添加，也能工作，但可能偶尔遇到 403。
-    BAIDU_COOKIE = ""  # 例如 "BAIDUID=abc123; BIDUPSID=abc123; PSTM=12345678"
-    if BAIDU_COOKIE:
-        headers['Cookie'] = BAIDU_COOKIE
+    # Cookie 只从本机用户配置读取；未配置时仍可访问公开网页。
+    try:
+        from config import get_web_fetch_config
+        baidu_cookie = str(get_web_fetch_config().get("baidu_cookie", "")).strip()
+    except Exception:
+        baidu_cookie = ""
+    if baidu_cookie:
+        headers["Cookie"] = baidu_cookie
 
     session = requests.Session()
     session.headers.update(headers)
@@ -3429,7 +3434,7 @@ def _legacy_fetch_webpage(url: str, max_length: int = 3000) -> str:
             return "网络连接失败，请检查网络或配置代理后重试。"
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 403:
-            return "访问被拒绝（403）。建议：① 在代码中填写 BAIDU_COOKIE（见函数内注释）；② 改用 fetch_webpage_browser 工具。"
+            return "访问被拒绝（403）。可在本机 user_config.json 的 web_fetch.baidu_cookie 配置 Cookie，或改用浏览器网页提取工具。"
         return f"获取网页失败：HTTP {e.response.status_code}"
 
     try:

@@ -1175,6 +1175,25 @@ def save_browser_config(config: dict):
     _save_full_config(full)
 
 
+# 网页正文提取的可选凭据仅保存至用户数据目录，不进入版本库。
+_WEB_FETCH_DEFAULTS = {
+    "baidu_cookie": "",
+}
+
+
+def get_web_fetch_config() -> dict:
+    """读取网页正文提取的本地可选配置。"""
+    full = _load_full_config()
+    return {**_WEB_FETCH_DEFAULTS, **full.get("web_fetch", {})}
+
+
+def save_web_fetch_config(config: dict):
+    """保存网页正文提取的本地可选配置。"""
+    full = _load_full_config()
+    full["web_fetch"] = {**_WEB_FETCH_DEFAULTS, **config}
+    _save_full_config(full)
+
+
 # ── 网络代理配置 ─────────────────────────────────────────────
 _PROXY_DEFAULTS = {
     "enabled":      False,

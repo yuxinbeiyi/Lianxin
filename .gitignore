@@ -67,6 +67,20 @@ nul
 
 # 环境变量（防密钥泄露）
 .env
+.env.*
+!.env.example
+
+# 用户凭据与运行时数据（仅保存在 C:\\Users\\<用户>\\.lianxin）
+user_config.json
+global_settings.json
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.session
+*.cookie
+*.cookies
+injector.log
 # GIF 压缩备份
 *.gif.bak
 assets/原始GIF/

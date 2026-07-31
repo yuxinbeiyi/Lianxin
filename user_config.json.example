@@ -22,6 +22,9 @@
     "save_to_local": false,
     "save_folder": ""
   },
+  "web_fetch": {
+    "baidu_cookie": ""
+  },
   "qq_bridge": {
     "enabled": true,
     "ws_url": "ws://127.0.0.1:3001",
