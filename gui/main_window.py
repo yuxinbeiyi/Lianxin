@@ -5,6 +5,7 @@ MainWindow：莲心AI 主窗口（Phase 4 — 含语音输入/输出）
 import webbrowser
 import os
 import ctypes
+from datetime import datetime
 from ctypes import wintypes
 from typing import Optional
 from PyQt5.QtWidgets import (
@@ -132,6 +133,14 @@ class MainWindow(QMainWindow):
         # ── 陪伴统计模块 ──────────────────────────────────────
         self._accompany_stats = AccompanyStats()
         self._accompany_stats.start_session()   # 记录本次启动时间
+        # Achievement Record counts only visible, interactive foreground time.
+        self._achievement_presence_started_at = datetime.now().astimezone()
+        self._achievement_presence_sequence = 0
+        self._achievement_user_turn_active = False
+        self._achievement_presence_timer = QTimer(self)
+        self._achievement_presence_timer.setInterval(30_000)
+        self._achievement_presence_timer.timeout.connect(self._roll_achievement_presence)
+        self._achievement_presence_timer.start()
 
         # ── 全局设置 ──────────────────────────────────────────
         self._global_settings = get_settings()
@@ -159,6 +168,7 @@ class MainWindow(QMainWindow):
         # ── 非模态对话框（改为 show() 打开，不阻塞主窗口）────
         self._history_dialog = None
         self._accompany_dialog = None
+        self._achievement_window = None
         self._api_config_dialog = None
         self._sound_settings_dialog = None
         self._memory_settings_dialog = None
@@ -580,18 +590,51 @@ class MainWindow(QMainWindow):
         if event.type() == event.WindowStateChange:
             if self.isMinimized():
                 self._is_minimized = True
+                self._flush_achievement_presence()
                 if hasattr(self, "_window_experience"):
                     QTimer.singleShot(0, self._window_experience.handle_minimize)
             else:
                 if self._is_minimized:
                     self._is_minimized = False
                     self.stop_flash()
+                    self._start_achievement_presence()
             # 最大化按钮文字同步
             if self.isMaximized():
                 self._btn_maximize.setText("❐")
             else:
                 self._btn_maximize.setText("□")
         super().changeEvent(event)
+
+    def _start_achievement_presence(self):
+        if getattr(self, "_achievement_presence_started_at", None) is None:
+            self._achievement_presence_started_at = datetime.now().astimezone()
+
+    def _flush_achievement_presence(self):
+        started_at = getattr(self, "_achievement_presence_started_at", None)
+        if started_at is None:
+            return
+        ended_at = datetime.now().astimezone()
+        self._achievement_presence_started_at = None
+        if (ended_at - started_at).total_seconds() < 1:
+            return
+        self._achievement_presence_sequence += 1
+        try:
+            from brain.interaction_events import record_interaction
+            record_interaction(
+                feature="companion", event_type="presence_segment",
+                local_date=started_at.date().isoformat(),
+                source_id=f"presence:{self._achievement_presence_sequence}:{started_at.isoformat()}",
+                searchable=False,
+                metadata={"started_at": started_at.isoformat(), "ended_at": ended_at.isoformat()},
+            )
+        except Exception as exc:
+            print(f"[成就记录] 陪伴片段记录失败: {exc}")
+
+    def _roll_achievement_presence(self):
+        if self.isMinimized():
+            return
+        self._flush_achievement_presence()
+        self._start_achievement_presence()
 
     # ── 界面构建 ─────────────────────────────────────────────
 
@@ -1160,6 +1203,7 @@ class MainWindow(QMainWindow):
        
         if images is None:
             images = []
+        self._achievement_user_turn_active = bool(str(text or "").strip() or images)
         tool_selection = self._input_panel.get_tool_selection()
         selected_tool = tool_selection.get("name") if tool_selection else None
         selected_mode = tool_selection.get("mode", "auto") if tool_selection else "auto"
@@ -1305,6 +1349,15 @@ class MainWindow(QMainWindow):
         for i, (_, bubble) in enumerate(self._staged_bubbles):
             if i in self._staged_image_results:
                 bubble.update_text(self._staged_image_results[i])
+                try:
+                    from brain.interaction_events import record_interaction
+                    record_interaction(
+                        feature="vision", event_type="vision_completed",
+                        source_id=f"staged-vision:{self._agent._session_id}:{i}:{datetime.now().isoformat(timespec='seconds')}",
+                        summary="完成了一次图片识别", searchable=False,
+                    )
+                except Exception as exc:
+                    print(f"[成就记录] 图片事件记录失败: {exc}")
             elif i in self._staged_image_errors:
                 bubble.update_text(f"分析失败: {self._staged_image_errors[i]}")
 
@@ -1358,6 +1411,17 @@ class MainWindow(QMainWindow):
             tool_name, preview, is_error, round_num, elapsed_ms)
         status = "❌" if is_error else "✅"
         self._task_progress.set_subtitle(f"{status} {tool_name} → {preview}")
+        if not is_error and getattr(self, "_achievement_user_turn_active", False):
+            try:
+                from brain.interaction_events import record_interaction
+                record_interaction(
+                    feature="tool", event_type="tool_called",
+                    source_id=f"tool:{self._agent._session_id}:{round_num}:{tool_name}:{datetime.now().isoformat(timespec='seconds')}",
+                    summary="完成了一次工具探索", searchable=False,
+                    metadata={"user_initiated": True, "tool_name": str(tool_name or "")},
+                )
+            except Exception as exc:
+                print(f"[成就记录] 工具事件记录失败: {exc}")
 
     def _on_tool_enable_requested(self, tool_key: str, display_name: str,
                                   reason: str, request):
@@ -1392,6 +1456,7 @@ class MainWindow(QMainWindow):
 
 
     def _on_error(self, err: str):
+        self._achievement_user_turn_active = False
         self._watchdog_resolved = True  # 防止看门狗 cleanup 重复添加系统提示
         self._agent_watchdog.stop()
         self._stop_watchdog_check_timer()
@@ -1459,6 +1524,18 @@ class MainWindow(QMainWindow):
         # 去除 AI 回复中的 ** 星号
         display_text = text.replace('**', '')
 
+        # Only a factual completion marker is stored for achievements.  The
+        # user's message and the reply stay exclusively in chat history.
+        try:
+            from brain.interaction_events import record_interaction
+            record_interaction(
+                feature="chat", event_type="chat_turn_completed",
+                source_id=f"{self._agent._session_id}:{datetime.now().isoformat(timespec='seconds')}",
+                summary="完成了一次对话", searchable=False,
+            )
+        except Exception as exc:
+            print(f"[成就记录] 对话事件记录失败: {exc}")
+
         play_sound("lianxinSend.mp3")
 
         # 再次检查：如果在上一个 segment_sender 还没结束就收到了新回复，取消旧段
@@ -1474,6 +1551,7 @@ class MainWindow(QMainWindow):
 
         def on_segment_finished():
             self._segment_sender = None
+            self._achievement_user_turn_active = False
             self._set_idle_state()
             if self._galgame_visible and self._galgame_dialog:
                 self._galgame_dialog.set_status("就绪")
@@ -1930,7 +2008,7 @@ class MainWindow(QMainWindow):
 
     # ── 陪伴统计 ─────────────────────────────────────────────
 
-    def _on_accompany_clicked(self):
+    def _on_legacy_accompany_clicked(self):
         play_sound("ButtonAll.mp3")
         from gui.accompany_dialog import AccompanyDialog
         self._accompany_stats.reload()
@@ -1953,6 +2031,22 @@ class MainWindow(QMainWindow):
         self._accompany_dialog.show()
         self._accompany_dialog.raise_()
         self._accompany_dialog.activateWindow()
+
+    # The old compact dialog remains in the source for compatibility, but the
+    # companion entry now opens the complete four-page achievement record.
+    def _on_accompany_clicked(self):
+        play_sound("ButtonAll.mp3")
+        self._accompany_stats.reload()
+        from gui.achievement.web_window import AchievementWindow
+        if self._achievement_window is None:
+            self._achievement_window = AchievementWindow(self)
+            self._achievement_window.closed.connect(self._on_achievement_window_closed)
+        self._achievement_window.show()
+        self._achievement_window.raise_()
+        self._achievement_window.activateWindow()
+
+    def _on_achievement_window_closed(self):
+        self._achievement_window = None
 
     def _on_avatar_interaction(self, role: str):
         """头像双击入口；互动独立于正常 AgentWorker。"""
@@ -2022,7 +2116,7 @@ class MainWindow(QMainWindow):
         tap_action = menu.addAction("拍一拍")
         pat_action = menu.addAction("摸摸头")
         menu.addSeparator()
-        stats_action = menu.addAction("查看陪伴统计")
+        stats_action = menu.addAction("查看数据潮汐")
         chosen = menu.exec_(self.cursor().pos())
         if chosen == mood_action:
             try:
@@ -3321,6 +3415,15 @@ class MainWindow(QMainWindow):
         self._vision_pending_bubble = None
         summary = description[:100] + "..." if len(description) > 100 else description
         self._chat_widget.add_user_image(image_path, ocr_text=summary, full_text=description)
+        try:
+            from brain.interaction_events import record_interaction
+            record_interaction(
+                feature="vision", event_type="vision_completed",
+                source_id=f"vision:{self._agent._session_id}:{datetime.now().isoformat(timespec='seconds')}",
+                summary="完成了一次图片识别", searchable=False,
+            )
+        except Exception as exc:
+            print(f"[成就记录] 图片事件记录失败: {exc}")
 
         context = f"[用户发了一张图片，视觉分析结果如下]\n{description}\n\n请根据你看到的内容自然地回应，描述你看到了什么。"
         self._send_user_text_to_agent(context, skip_bubble=True)
@@ -3401,6 +3504,8 @@ class MainWindow(QMainWindow):
         # -------------------------------------------------
 
         # 以下是原有关闭逻辑（确认退出时执行）
+        self._flush_achievement_presence()
+        self._achievement_presence_timer.stop()
         self._accompany_stats.end_session()
         self._duty_scheduler.stop()
         self._alarm_timer.stop()

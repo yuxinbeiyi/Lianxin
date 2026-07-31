@@ -228,6 +228,12 @@ class AccompanyStats:
             current_seconds += max(0, elapsed)
         return int(current_seconds)
 
+    def get_current_session_seconds(self) -> int:
+        """Return the active-session duration without changing persisted totals."""
+        if self._session_start_time is None:
+            return 0
+        return max(0, int((datetime.now() - self._session_start_time).total_seconds()))
+
     def get_current_formatted_duration(self) -> str:
         seconds = self.get_current_total_seconds()
         days = seconds // 86400

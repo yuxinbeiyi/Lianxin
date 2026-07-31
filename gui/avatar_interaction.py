@@ -342,6 +342,16 @@ class AvatarInteractionController(QObject):
             interaction_type, actor=actor, target="user" if target == "user" else "assistant",
             source=source, reaction=action, streak=self._tap_streak,
             context={"time": self._time_context()})
+        try:
+            from brain.interaction_events import record_interaction
+            record_interaction(
+                feature="avatar", event_type="avatar_interaction",
+                source_id=f"avatar:{int(time.time() * 1000)}:{interaction_type}",
+                summary="完成了一次头像互动", searchable=False,
+                metadata={"action": action, "actor": actor, "target": target},
+            )
+        except Exception as exc:
+            print(f"[成就记录] 头像事件记录失败: {exc}")
         print(f"[拍一拍] 互动开始 role={role}, dynamic={cfg.get('dynamic_response', True)}", flush=True)
         context = self._emotion_context()
         self._planned_counter_action = self._plan_counter_action(context, cfg)
@@ -352,6 +362,16 @@ class AvatarInteractionController(QObject):
                 reaction=self._planned_counter_action, streak=self._tap_streak,
                 context={"time": self._time_context()},
             )
+            try:
+                from brain.interaction_events import record_interaction
+                record_interaction(
+                    feature="avatar", event_type="avatar_interaction",
+                    source_id=f"avatar-counter:{int(time.time() * 1000)}:{self._planned_counter_action}",
+                    summary="莲心回应了一次头像互动", searchable=False,
+                    metadata={"action": self._planned_counter_action, "actor": "assistant", "target": "user"},
+                )
+            except Exception as exc:
+                print(f"[成就记录] 头像回应事件记录失败: {exc}")
         self.interaction_accepted.emit(action, target, source, self._planned_counter_action)
         # 留出反击动画时间，保证用户先看到动作，再看到思考与台词。
         if self._planned_counter_action:

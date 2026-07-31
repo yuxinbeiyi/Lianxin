@@ -386,7 +386,7 @@ class CharacterWidget(QWidget):
         popup_layout.addLayout(popup_header)
 
         # 统一的功能卡片。语义色仅作为左侧细线，避免高饱和色块破坏主界面的一致性。
-        self._btn_accompany = self._create_button("📊  陪伴时长", "#6C7BFF")
+        self._btn_accompany = self._create_button("🌊  数据潮汐", "#6C7BFF")
         self._btn_settings = self._create_button("⚙️  全局设置", "#8F96B2")
         self._btn_study_room = self._create_button("📚  莲心自习室", "#C94B55")
         self._btn_api_config = self._create_button("🔑  API Key", "#F0A84B")
