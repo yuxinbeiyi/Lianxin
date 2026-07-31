@@ -15,8 +15,20 @@ from utils.paths import get_user_data_dir
 
 METRIC_COLUMNS = (
     "chat_turns", "focus_completed", "focus_seconds", "capsules", "notes",
-    "images", "tools", "avatar_interactions", "presence_seconds", "active_events",
+    "images", "tools", "avatar_interactions", "avatar_user_taps",
+    "avatar_user_headpats", "avatar_counter_taps", "avatar_counter_headpats",
+    "avatar_assistant_taps", "avatar_assistant_headpats",
+    "presence_seconds", "active_events",
 )
+
+AVATAR_METRIC_MAP = {
+    "user_taps": "avatar_user_taps",
+    "user_headpats": "avatar_user_headpats",
+    "counter_taps": "avatar_counter_taps",
+    "counter_headpats": "avatar_counter_headpats",
+    "assistant_taps": "avatar_assistant_taps",
+    "assistant_headpats": "avatar_assistant_headpats",
+}
 
 
 class AchievementService:
@@ -71,6 +83,12 @@ class AchievementService:
                     images INTEGER NOT NULL DEFAULT 0,
                     tools INTEGER NOT NULL DEFAULT 0,
                     avatar_interactions INTEGER NOT NULL DEFAULT 0,
+                    avatar_user_taps INTEGER NOT NULL DEFAULT 0,
+                    avatar_user_headpats INTEGER NOT NULL DEFAULT 0,
+                    avatar_counter_taps INTEGER NOT NULL DEFAULT 0,
+                    avatar_counter_headpats INTEGER NOT NULL DEFAULT 0,
+                    avatar_assistant_taps INTEGER NOT NULL DEFAULT 0,
+                    avatar_assistant_headpats INTEGER NOT NULL DEFAULT 0,
                     presence_seconds INTEGER NOT NULL DEFAULT 0,
                     active_events INTEGER NOT NULL DEFAULT 0
                 );
@@ -86,21 +104,86 @@ class AchievementService:
                 );
                 CREATE INDEX IF NOT EXISTS idx_journey_date ON journey_entries(local_date, occurred_at DESC);
             """)
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(daily_metrics)")}
+            for column in METRIC_COLUMNS:
+                if column not in existing and column != "local_date":
+                    conn.execute(f"ALTER TABLE daily_metrics ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
 
     def _migrate_legacy_stats(self):
-        """Snapshot only values that cannot be reconstructed safely from facts."""
+        """Create a one-time legacy baseline before projecting new avatar facts."""
         with self._connection() as conn:
-            if conn.execute("SELECT 1 FROM metadata WHERE key='legacy_migrated'").fetchone():
+            legacy_row = conn.execute("SELECT value FROM metadata WHERE key='legacy_stats'").fetchone()
+            if legacy_row:
+                try:
+                    payload = json.loads(legacy_row["value"])
+                except (TypeError, json.JSONDecodeError):
+                    payload = {}
+            else:
+                stats = AccompanyStats()
+                payload = {
+                    "total_seconds": stats.get_current_total_seconds(),
+                    "session_count": stats.get_stats().get("session_count", 0),
+                    "first_meet_date": stats.get_first_meet_date(),
+                    "avatar": stats.get_avatar_interaction_summary(),
+                }
+                conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("legacy_stats", json.dumps(payload, ensure_ascii=False)))
+                conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES ('legacy_migrated', ?)", (datetime.now().isoformat(timespec="seconds"),))
+            if conn.execute("SELECT 1 FROM metadata WHERE key='avatar_v2_migrated'").fetchone():
                 return
-            stats = AccompanyStats()
-            payload = {
-                "total_seconds": stats.get_current_total_seconds(),
-                "session_count": stats.get_stats().get("session_count", 0),
-                "first_meet_date": stats.get_first_meet_date(),
-                "avatar": stats.get_avatar_interaction_summary(),
+
+            avatar = payload.get("avatar") or {}
+            baseline = {
+                "total": int(avatar.get("total", avatar.get("interaction_count", 0)) or 0),
+                "user_taps": int(avatar.get("user_taps", avatar.get("user_tap_count", 0)) or 0),
+                "user_headpats": int(avatar.get("user_headpats", avatar.get("user_headpat_count", 0)) or 0),
+                "counter_taps": int(avatar.get("counter_taps", avatar.get("counter", avatar.get("assistant_counter_tap_count", 0))) or 0),
+                "counter_headpats": int(avatar.get("counter_headpats", avatar.get("counter_headpat_count", 0)) or 0),
+                "assistant_taps": int(avatar.get("assistant_taps", avatar.get("assistant_tap_user_count", 0)) or 0),
+                "assistant_headpats": int(avatar.get("assistant_headpats", avatar.get("assistant_headpat_user_count", 0)) or 0),
             }
-            conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("legacy_stats", json.dumps(payload, ensure_ascii=False)))
-            conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES ('legacy_migrated', ?)", (datetime.now().isoformat(timespec="seconds"),))
+            has_legacy_avatar = any(baseline.values())
+            cutoff_id = self._event_max_id() if has_legacy_avatar else 0
+            if has_legacy_avatar and cutoff_id is None:
+                return
+            if has_legacy_avatar:
+                reset_fields = ["avatar_interactions", *AVATAR_METRIC_MAP.values()]
+                conn.execute("UPDATE daily_metrics SET " + ", ".join(f"{field}=0" for field in reset_fields))
+                avatar_event_ids = self._avatar_event_ids(cutoff_id)
+                if avatar_event_ids is None:
+                    return
+                for event_id in avatar_event_ids:
+                    conn.execute("INSERT OR IGNORE INTO processed_events(event_id, processed_at) VALUES (?, ?)", (event_id, datetime.now().isoformat(timespec="seconds")))
+            conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)", ("avatar_legacy_baseline", json.dumps(baseline, ensure_ascii=False)))
+            conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES ('avatar_cutover_event_id', ?)", (str(cutoff_id),))
+            conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES ('avatar_v2_migrated', ?)", (datetime.now().isoformat(timespec="seconds"),))
+
+    def _event_max_id(self):
+        if not self.events_path.exists():
+            return 0
+        conn = None
+        try:
+            conn = sqlite3.connect(str(self.events_path), timeout=3)
+            row = conn.execute("SELECT COALESCE(MAX(id), 0) FROM interaction_events").fetchone()
+            return int(row[0] or 0)
+        except sqlite3.Error:
+            return None
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def _avatar_event_ids(self, cutoff_id):
+        if not cutoff_id or not self.events_path.exists():
+            return []
+        conn = None
+        try:
+            conn = sqlite3.connect(str(self.events_path), timeout=3)
+            rows = conn.execute("SELECT id FROM interaction_events WHERE id <= ? AND feature='avatar' AND event_type='avatar_interaction'", (int(cutoff_id),)).fetchall()
+            return [int(row[0]) for row in rows]
+        except sqlite3.Error:
+            return None
+        finally:
+            if conn is not None:
+                conn.close()
 
     @staticmethod
     def _definitions():
@@ -132,6 +215,14 @@ class AchievementService:
             ("meet_year", "一年的海", "相遇", "从相遇那天起满一年", "shell", "days_since_meet", 365, False),
             ("tap_tap", "轻轻拍一拍", "彩蛋", "和莲心完成第一次头像互动", "pearl", "avatar", 1, True),
             ("twenty_taps", "海浪的回声", "彩蛋", "完成 20 次头像互动", "pearl", "avatar", 20, True),
+            ("first_tap", "第一声回响", "互动回声", "用户第一次拍了拍莲心", "pearl", "avatar_user_taps", 1, False),
+            ("tap_ten", "十次轻响", "互动回声", "用户拍莲心达到 10 次", "pearl", "avatar_user_taps", 10, False),
+            ("tap_fifty", "海浪不息", "互动回声", "用户拍莲心达到 50 次", "pearl", "avatar_user_taps", 50, False),
+            ("first_headpat", "掌心的温度", "互动回声", "用户第一次摸了摸莲心", "pearl", "avatar_user_headpats", 1, False),
+            ("headpat_ten", "温柔十次", "互动回声", "用户摸莲心达到 10 次", "pearl", "avatar_user_headpats", 10, False),
+            ("counter_tap_five", "莲心的回应", "互动回声", "莲心反拍用户达到 5 次", "pearl", "avatar_counter_taps", 5, True),
+            ("counter_headpat_five", "被风轻轻摸过", "互动回声", "莲心反摸用户达到 5 次", "pearl", "avatar_counter_headpats", 5, True),
+            ("avatar_duet", "双向回声", "互动回声", "用户与莲心都完成过头像互动", "pearl", "avatar_duet", 1, True),
         ]
 
     def _legacy(self):
@@ -201,7 +292,19 @@ class AchievementService:
         elif kind == "tree_note_created": values["notes"] = 1
         elif kind == "vision_completed": values["images"] = 1
         elif kind == "tool_called" and bool(meta.get("user_initiated", False)): values["tools"] = 1
-        elif kind == "avatar_interaction": values["avatar_interactions"] = 1
+        elif kind == "avatar_interaction":
+            values["avatar_interactions"] = 1
+            action = str(meta.get("action") or "tap")
+            actor = str(meta.get("actor") or "")
+            target = str(meta.get("target") or "")
+            source = str(meta.get("source") or "")
+            if actor == "user" and target == "assistant":
+                values["avatar_user_headpats" if action == "headpat" else "avatar_user_taps"] = 1
+            elif actor == "assistant" and target == "user":
+                if source == "counter" or bool(meta.get("is_counter")):
+                    values["avatar_counter_headpats" if action == "headpat" else "avatar_counter_taps"] = 1
+                else:
+                    values["avatar_assistant_headpats" if action == "headpat" else "avatar_assistant_taps"] = 1
         elif kind == "presence_segment":
             try:
                 start = datetime.fromisoformat(str(meta["started_at"])); end = datetime.fromisoformat(str(meta["ended_at"]))
@@ -226,11 +329,14 @@ class AchievementService:
             with self._connection() as conn:
                 row = conn.execute("SELECT value FROM metadata WHERE key='last_interaction_event_id'").fetchone()
                 last_id = int(row["value"]) if row else 0
-            with sqlite3.connect(str(self.events_path), timeout=3) as facts:
+            facts = sqlite3.connect(str(self.events_path), timeout=3)
+            try:
                 facts.row_factory = sqlite3.Row
                 events = [dict(row) for row in facts.execute(
                     "SELECT * FROM interaction_events WHERE id > ? ORDER BY id ASC", (last_id,)
                 )]
+            finally:
+                facts.close()
         except sqlite3.Error:
             return
         if not events:
@@ -322,16 +428,47 @@ class AchievementService:
         by_day = {row["local_date"]: row for row in rows}
         total = Counter()
         for row in rows:
-            total.update({"chats": row["chat_turns"], "focus": row["focus_completed"], "focus_seconds": row["focus_seconds"], "capsules": row["capsules"], "notes": row["notes"], "images": row["images"], "tools": row["tools"], "avatar": row["avatar_interactions"]})
+            total.update({
+                "chats": row["chat_turns"], "focus": row["focus_completed"],
+                "focus_seconds": row["focus_seconds"], "capsules": row["capsules"],
+                "notes": row["notes"], "images": row["images"], "tools": row["tools"],
+                "avatar": row["avatar_interactions"],
+                **{key: row.get(column, 0) for key, column in AVATAR_METRIC_MAP.items()},
+            })
         legacy, stats = self._legacy(), AccompanyStats()
         first = stats.get_first_meet_date() or legacy.get("first_meet_date", "")
         try: days_since = (date.today() - date.fromisoformat(first)).days + 1 if first else 0
         except ValueError: days_since = 0
-        legacy_avatar = int((legacy.get("avatar") or {}).get("total", 0) or 0)
+        legacy_avatar = legacy.get("avatar") or {}
+        with self._connection() as conn:
+            baseline_row = conn.execute("SELECT value FROM metadata WHERE key='avatar_legacy_baseline'").fetchone()
+        try:
+            avatar_baseline = json.loads(baseline_row["value"]) if baseline_row else {}
+        except (TypeError, json.JSONDecodeError):
+            avatar_baseline = {}
+        baseline = {
+            "total": int(avatar_baseline.get("total", legacy_avatar.get("total", 0)) or 0),
+            **{key: int(avatar_baseline.get(key, legacy_avatar.get(key, 0)) or 0) for key in AVATAR_METRIC_MAP},
+        }
         projected_presence = sum(int(row["presence_seconds"] or 0) for row in rows)
         legacy_presence = int(legacy.get("total_seconds", 0) or 0)
         metrics = dict(total)
-        metrics.update(seconds=legacy_presence + projected_presence, today_seconds=int(by_day.get(today, {}).get("presence_seconds", 0)), sessions=stats.get_stats().get("session_count", 0), avatar=total["avatar"] + legacy_avatar, days_since_meet=days_since, active_dates=len([row for row in rows if row["active_events"] > 0]))
+        avatar_detail = {key: baseline[key] + int(total.get(key, 0)) for key in AVATAR_METRIC_MAP}
+        metrics.update({f"avatar_{key}": value for key, value in avatar_detail.items()})
+        metrics.update(
+            seconds=legacy_presence + projected_presence,
+            today_seconds=int(by_day.get(today, {}).get("presence_seconds", 0)),
+            sessions=stats.get_stats().get("session_count", 0),
+            avatar=baseline["total"] + int(total.get("avatar", 0)),
+            avatar_detail=avatar_detail,
+            days_since_meet=days_since,
+            active_dates=len([row for row in rows if row["active_events"] > 0]),
+        )
+        metrics["avatar_duet"] = int(
+            (avatar_detail["user_taps"] + avatar_detail["user_headpats"]) > 0
+            and (avatar_detail["counter_taps"] + avatar_detail["counter_headpats"]
+                 + avatar_detail["assistant_taps"] + avatar_detail["assistant_headpats"]) > 0
+        )
         metrics["active_14"] = sum(1 for day_key, row in by_day.items() if day_key >= (date.today() - timedelta(days=13)).isoformat() and row["active_events"] > 0)
         metrics["active_45"] = sum(1 for day_key, row in by_day.items() if day_key >= (date.today() - timedelta(days=44)).isoformat() and row["active_events"] > 0)
         unlocked = self._unlock(metrics)
@@ -349,6 +486,7 @@ class AchievementService:
             journey_total = int(conn.execute("SELECT COUNT(*) FROM journey_entries").fetchone()[0])
         today_row = by_day.get(today, {})
         return {"user_name": "", "first_meet_date": first, "metrics": metrics,
+                "avatar_summary": avatar_detail,
                 "today": {"chats": today_row.get("chat_turns", 0), "focus": today_row.get("focus_completed", 0), "capsules": today_row.get("capsules", 0), "notes": today_row.get("notes", 0), "tools": today_row.get("tools", 0)},
                 "active_days_30": sum(1 for day_key, row in by_day.items() if day_key >= (date.today() - timedelta(days=29)).isoformat() and row["active_events"] > 0),
                 "trail": trail, "daily_metrics": rows, "achievements": achievements, "events": entries, "journey_total": journey_total,

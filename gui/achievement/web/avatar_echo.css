@@ -1,0 +1,5 @@
+.avatar-echo-card{margin-top:18px}
+.avatar-echo-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.avatar-echo-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px;background:#f8efe2;border:1px solid #eadac5;border-radius:6px;color:#765f50}
+.avatar-echo-item b{font-size:24px;color:#6ea6aa}
+@media(max-width:600px){.avatar-echo-grid{grid-template-columns:1fr 1fr}}

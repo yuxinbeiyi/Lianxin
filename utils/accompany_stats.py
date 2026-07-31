@@ -99,6 +99,7 @@ class AccompanyStats:
         data["interaction_count"] = int(data.get("interaction_count", 0)) + 1
         data["user_tap_count"] = int(data.get("user_tap_count", 0)) + (1 if interaction_type == "user_tap" else 0)
         data["assistant_counter_tap_count"] = int(data.get("assistant_counter_tap_count", 0)) + (1 if interaction_type == "counter_tap" else 0)
+        data["assistant_counter_headpat_count"] = int(data.get("assistant_counter_headpat_count", 0)) + (1 if interaction_type == "counter_headpat" else 0)
         data["last_interaction_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         types = data.setdefault("reaction_types", {})
         types[reaction_type] = int(types.get(reaction_type, 0)) + 1
@@ -116,6 +117,7 @@ class AccompanyStats:
         data = self._avatar_interactions
         for key in (
             "interaction_count", "user_tap_count", "assistant_counter_tap_count",
+            "counter_tap_count", "assistant_counter_headpat_count", "counter_headpat_count",
             "assistant_tap_user_count", "user_self_tap_count", "user_headpat_count",
             "assistant_headpat_user_count", "sound_count", "llm_success_count",
             "fallback_count", "streak_max",
@@ -132,6 +134,8 @@ class AccompanyStats:
         self.record_avatar_interaction(interaction_type, reaction)
         data = self._avatar_interactions
         counter_map = {
+            "counter_tap": "counter_tap_count",
+            "counter_headpat": "counter_headpat_count",
             "assistant_tap_user": "assistant_tap_user_count",
             "user_self_tap": "user_self_tap_count",
             "user_headpat": "user_headpat_count",
@@ -189,6 +193,14 @@ class AccompanyStats:
             "total": int(self._avatar_interactions.get("interaction_count", 0)),
             "user_taps": int(self._avatar_interactions.get("user_tap_count", 0)),
             "counter": int(self._avatar_interactions.get("assistant_counter_tap_count", 0)),
+            "counter_taps": max(
+                int(self._avatar_interactions.get("counter_tap_count", 0)),
+                int(self._avatar_interactions.get("assistant_counter_tap_count", 0)),
+            ),
+            "counter_headpats": max(
+                int(self._avatar_interactions.get("counter_headpat_count", 0)),
+                int(self._avatar_interactions.get("assistant_counter_headpat_count", 0)),
+            ),
             "assistant_taps": int(self._avatar_interactions.get("assistant_tap_user_count", 0)),
             "self_taps": int(self._avatar_interactions.get("user_self_tap_count", 0)),
             "user_headpats": int(self._avatar_interactions.get("user_headpat_count", 0)),

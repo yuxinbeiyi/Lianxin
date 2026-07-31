@@ -111,7 +111,20 @@ function drawWeeklyChart() {
 }
 function toast(message) { const node = document.createElement('div'); node.className = 'unlock-toast'; node.innerHTML = `<div><b>${esc(message)}</b></div>`; document.body.appendChild(node); setTimeout(() => node.remove(), 4200); }
 function showUnlocks() { const fresh = state.new_unlocks || []; if (!fresh.length || !bridge) return; const toastNode = document.createElement('div'); toastNode.className = 'unlock-toast'; toastNode.innerHTML = `<span>${art[fresh[0].art] || '◔'}</span><div><b>拾起一枚贝壳</b><p>${esc(fresh[0].title)}${fresh.length > 1 ? `，还有 ${fresh.length - 1} 枚新回忆` : ''}</p></div>`; document.body.appendChild(toastNode); setTimeout(() => toastNode.remove(), 5200); bridge.mark_unlocks_read(JSON.stringify(fresh.map(item => item.id))); state.new_unlocks = []; }
-function bindCoast() { document.querySelectorAll('[data-journal-event]').forEach(card => { card.onclick = () => showJourneyEvent(card); }); document.querySelectorAll('[data-export]').forEach(button => { button.onclick = () => bridge.export_metrics(button.dataset.export, raw => { const result = JSON.parse(raw); toast(result.ok ? `统计文件已导出：${result.path}` : `导出失败：${result.error || '未知错误'}`); }); }); drawWeeklyChart(); }
+function mountAvatarEcho() {
+  const weekly = document.querySelector('.weekly-card');
+  if (!weekly || document.querySelector('.avatar-echo-card')) return;
+  const source = state.avatar_summary || (state.metrics || {}).avatar_detail || {};
+  const items = [
+    ['user_taps', '拍莲心'], ['user_headpats', '摸莲心'],
+    ['counter_taps', '反拍'], ['counter_headpats', '反摸'],
+  ];
+  const node = document.createElement('section');
+  node.className = 'card avatar-echo-card';
+  node.innerHTML = `<div class="section-heading"><div><h2 class="section-title">互动回声</h2><p class="label">每一次靠近，都留下了一点回应。</p></div><span class="label">累计互动</span></div><div class="avatar-echo-grid">${items.map(([key, label]) => `<div class="avatar-echo-item"><span>${label}</span><b>${Number(source[key] || 0)}</b></div>`).join('')}</div>`;
+  weekly.parentNode.insertBefore(node, weekly);
+}
+function bindCoast() { document.querySelectorAll('[data-journal-event]').forEach(card => { card.onclick = () => showJourneyEvent(card); }); document.querySelectorAll('[data-export]').forEach(button => { button.onclick = () => bridge.export_metrics(button.dataset.export, raw => { const result = JSON.parse(raw); toast(result.ok ? `统计文件已导出：${result.path}` : `导出失败：${result.error || '未知错误'}`); }); }); mountAvatarEcho(); drawWeeklyChart(); }
 function bindShells() { const search = document.querySelector('#shell-search'); if (!search) return; search.onchange = () => { shellQuery = search.value.trim(); render(); }; document.querySelector('#shell-status').value = shellStatus; document.querySelector('#shell-status').onchange = event => { shellStatus = event.target.value; render(); }; document.querySelector('#shell-sort').value = shellSort; document.querySelector('#shell-sort').onchange = event => { shellSort = event.target.value; render(); }; document.querySelectorAll('[data-layout]').forEach(button => { button.onclick = () => { shellLayout = button.dataset.layout; render(); }; }); }
 function render() { const content = document.querySelector('#content'); content.innerHTML = page === 'shells' ? shells() : coast(); document.querySelectorAll('#nav button').forEach(button => button.classList.toggle('active', button.dataset.page === page)); content.querySelectorAll('[data-go]').forEach(button => { button.onclick = () => { page = button.dataset.go; render(); }; }); content.querySelectorAll('[data-chapter]').forEach(button => { button.onclick = () => { chapter = button.dataset.chapter; render(); }; }); content.querySelectorAll('[data-achievement]').forEach(card => { card.onclick = () => showAchievement(card.dataset.achievement); }); if (page === 'shells') bindShells(); else bindCoast(); showUnlocks(); }
 function setState(raw) { try { state = JSON.parse(raw); render(); } catch (error) { const content = document.querySelector('#content'); content.innerHTML = '<section class="empty-state error-state"><h2>数据潮汐暂时无法展开</h2><p>本地统计数据读取失败，请重试。</p><button id="retry-state">重新读取</button></section>'; const retry = document.querySelector('#retry-state'); if (retry) retry.onclick = () => bridge.get_initial_state(setState); } }

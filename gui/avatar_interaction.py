@@ -1,6 +1,7 @@
 """头像拍一拍互动：独立于正常聊天队列的轻量异步控制器。"""
 import random
 import time
+import uuid
 from datetime import datetime
 from PyQt5.QtCore import QObject, QThread, QTimer, pyqtSignal
 
@@ -131,6 +132,7 @@ class AvatarInteractionController(QObject):
         self._last_source = "user"
         self._fallback_used = False
         self._planned_counter_action = ""
+        self._interaction_id = ""
 
     def _time_context(self):
         hour = datetime.now().hour
@@ -328,6 +330,7 @@ class AvatarInteractionController(QObject):
         self._last_trigger_ms = now_ms
         self._last_action = action
         self._last_source = source
+        self._interaction_id = uuid.uuid4().hex
         target = role
         actor = "user" if source == "user" else "assistant"
         self._last_actor = actor
@@ -346,9 +349,13 @@ class AvatarInteractionController(QObject):
             from brain.interaction_events import record_interaction
             record_interaction(
                 feature="avatar", event_type="avatar_interaction",
-                source_id=f"avatar:{int(time.time() * 1000)}:{interaction_type}",
+                source_id=f"avatar:{self._interaction_id}:user",
                 summary="完成了一次头像互动", searchable=False,
-                metadata={"action": action, "actor": actor, "target": target},
+                event_key=f"avatar:{self._interaction_id}:user",
+                metadata={
+                    "schema_version": 2, "action": action, "actor": actor,
+                    "target": target, "source": source, "is_counter": False,
+                },
             )
         except Exception as exc:
             print(f"[成就记录] 头像事件记录失败: {exc}")
@@ -366,9 +373,15 @@ class AvatarInteractionController(QObject):
                 from brain.interaction_events import record_interaction
                 record_interaction(
                     feature="avatar", event_type="avatar_interaction",
-                    source_id=f"avatar-counter:{int(time.time() * 1000)}:{self._planned_counter_action}",
+                    source_id=f"avatar:{self._interaction_id}:counter",
                     summary="莲心回应了一次头像互动", searchable=False,
-                    metadata={"action": self._planned_counter_action, "actor": "assistant", "target": "user"},
+                    event_key=f"avatar:{self._interaction_id}:counter",
+                    metadata={
+                        "schema_version": 2,
+                        "action": self._planned_counter_action,
+                        "actor": "assistant", "target": "user",
+                        "source": "counter", "is_counter": True,
+                    },
                 )
             except Exception as exc:
                 print(f"[成就记录] 头像回应事件记录失败: {exc}")
