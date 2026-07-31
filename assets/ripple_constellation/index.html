@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>涟漪情感系统</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="readability.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">◈</span><div><strong>涟漪情感系统</strong><small>实时情绪控制台 · 五轴状态与影响链</small></div></div>
+    <div class="identity" id="identity">当前人格 · 当前用户</div>
+    <div class="top-actions"><span class="sync-dot" id="sync-dot"></span><span id="sync-label">实时同步</span><button id="refresh" class="top-btn">刷新</button><button id="settings" class="top-btn">设置</button><button id="fullscreen" class="top-btn">全屏</button></div>
+  </header>
+  <main class="dashboard">
+    <section class="card axes-card"><div class="card-head"><div><span class="eyebrow">LIVE AXES</span><h2>五轴实时状态</h2></div><button id="pause" class="mini-btn">暂停刷新</button></div><div id="axes"></div><div class="axis-legend">连接需求、沉浸度：左→右为 0~1；防御/骄傲、情绪基调、唤醒度：中线为 0，向左为负、向右为正。</div></section>
+    <section class="card insight-card"><div class="card-head"><div><span class="eyebrow">INTERPRETATION</span><h2>当前状态解释</h2></div><span id="mood-badge" class="badge">平稳</span></div><div class="hero-state"><span id="mood-label">平稳</span><small id="relationship">关系阶段：—</small></div><div class="insight-row"><span>当前主动动机</span><strong id="motive">观察</strong></div><p id="motive-reason" class="muted">等待状态数据…</p><div class="insight-row"><span>回复指导</span></div><p id="guidance" class="guidance">—</p><div class="influence-grid" id="influence"></div></section>
+    <section class="card events-card"><div class="card-head"><div><span class="eyebrow">EVENT STREAM</span><h2>状态事件流</h2></div><span id="event-count" class="muted">0 条</span></div><div id="events" class="events"></div></section>
+  </main>
+  <footer class="controlbar"><div class="mode-switch"><button data-mode="live" class="mode active">实时</button><button data-mode="history" class="mode">历史</button><button data-mode="simulate" class="mode">模拟</button></div><div id="simulation-controls" class="simulation-controls hidden"><button data-scenario="warm_reply">温暖回应</button><button data-scenario="cold_reply">冷淡回应</button><button data-scenario="waiting">模拟等待</button><button id="restore">撤销模拟</button></div><span id="footer-status">真实状态 · 模拟不会触发主动聊天或工具调用</span></footer>
+  <section id="history-panel" class="history-panel hidden"><div class="card-head"><div><span class="eyebrow">HISTORY</span><h2>情绪历史</h2></div><button class="close-panel" data-close="history-panel">×</button></div><input id="history-range" type="range" min="0" max="100" value="100"><div id="history-summary" class="muted">拖动时间轴查看历史状态</div></section>
+  <section id="event-detail" class="event-detail hidden"><div class="card-head"><div><span class="eyebrow">EVENT DETAIL</span><h2>状态变化详情</h2></div><button class="close-panel" data-close="event-detail">×</button></div><div id="event-detail-body"></div></section>
+  <section id="settings-panel" class="settings-panel hidden"><div class="card-head"><div><span class="eyebrow">SETTINGS</span><h2>情感设置</h2></div><button class="close-panel" data-close="settings-panel">×</button></div><label>语义分析模式<select id="semantic-mode"><option value="off">关闭</option><option value="auto">自动</option><option value="local">本地</option><option value="cloud">云端</option></select></label><p class="setting-help"><b>关闭</b>：只用规则判断，最快且不调用模型。<br><b>自动</b>：优先规则，必要时使用已配置的轻量模型。<br><b>本地</b>：只使用本地语义模型。<br><b>云端</b>：允许调用云端模型，理解更细但延迟和成本更高。</p><label>显著事件阈值<input id="significance" type="range" min="0.5" max="1" step="0.01" value="0.82"><output id="significance-value">0.82</output></label><p class="setting-help">显著事件阈值：只有影响足够明显的情绪事件才会写入长期记忆。</p><label>考虑主动联系阈值<input id="contact-threshold" type="range" min="0.2" max="0.9" step="0.01" value="0.58"><output id="contact-threshold-value">0.58</output></label><label>长期故事线影响强度<input id="story-scale" type="range" min="0" max="2" step="0.1" value="1"><output id="story-scale-value">1.0</output></label><label>沉浸度衰减速度<input id="immersion-decay" type="range" min="0.001" max="0.02" step="0.001" value="0.006"><output id="immersion-decay-value">0.006</output></label><label class="check-label"><input id="motive-enabled" type="checkbox" checked>允许情绪动机参与主动调度</label><button id="save-settings" class="primary-btn">保存设置</button><button id="clear-simulation" class="secondary-btn">清理模拟事件记录</button><p id="settings-note" class="muted">设置只影响情感评估和事件记录，不会改变工具安全策略。</p></section>
+  <div id="toast" class="toast"></div>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script><script src="app.js"></script><script src="axis_motion.js"></script><script src="axis_help.js"></script>
+</body>
+</html>

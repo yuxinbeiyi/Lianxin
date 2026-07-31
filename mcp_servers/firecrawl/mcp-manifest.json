@@ -1,0 +1,20 @@
+{
+  "name": "firecrawl",
+  "displayName": "Firecrawl 网页爬虫",
+  "description": "强大的网页抓取工具，将任意网页转换为干净 Markdown，支持批量爬取和搜索",
+  "version": "1.0.0",
+  "author": "firecrawl",
+  "icon": "🕷️",
+  "agentType": "external",
+  "connection": {
+    "command": [
+      "npx",
+      "-y",
+      "firecrawl-mcp"
+    ],
+    "env": {}
+  },
+  "capabilities": {
+    "tools": "auto"
+  }
+}

@@ -1,0 +1,20 @@
+{
+    "name": "filesystem",
+    "displayName": "文件系统",
+    "description": "读写本地文件系统，支持列出目录、读取文件、搜索文件、创建目录、移动文件",
+    "version": "1.0.0",
+    "author": "modelcontextprotocol",
+    "icon": "📁",
+    "agentType": "external",
+    "connection": {
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "{user_home}/Desktop"
+      ]
+    },
+    "capabilities": {
+      "tools": "auto"
+    }
+  }

@@ -1,0 +1,164 @@
+# Python
+参考项目/
+docs/
+tatus
+莲心自习室.png
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境 / Conda
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 大模型文件
+models/
+# 保留视觉模型（MediaPipe 面部/手势检测）
+# Visual runtime models are downloaded locally; only the setup guide is public.
+!vision/models/
+vision/models/*
+!vision/models/README.md
+
+# 运行时数据库
+memory/*.db
+memory/*.db-*
+
+# 运行时状态文件
+memory/*.json
+
+# Everything 文件搜索（第三方闭源软件，不可提交）
+es.exe
+memory/last_active_side.json
+memory/proactive_settings.json
+memory/qq_session_map.json
+memory/wechat_session_map.json
+
+# 用户运行时数据
+user_data/
+data/
+
+# 时间胶囊日记照片（仅保存在本地，不提交）
+data/dairy_picture/
+
+# OCR 运行时依赖（Tesseract）
+ocr/
+
+# 临时 / 备份目录
+代码备份/
+文档备份/
+杂项/
+测试ocr/
+
+# 打包文件
+*.zip
+*.tar.gz
+*.7z
+package_esp32_index.json.json
+
+# 空文件/系统残留
+nul
+
+# 环境变量（防密钥泄露）
+.env
+.env.*
+!.env.example
+
+# 用户凭据与运行时数据（仅保存在 C:\\Users\\<用户>\\.lianxin）
+user_config.json
+global_settings.json
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.session
+*.cookie
+*.cookies
+injector.log
+# GIF 压缩备份
+*.gif.bak
+assets/原始GIF/
+
+# assets 个人素材（本地保留，不提交）
+assets/头像/
+assets/music/**/*.mp3
+assets/sound/**/*.mp3
+assets/*.jpg
+assets/*.png
+assets/*.mp4
+assets/*.mp3
+claude-code-main/
+test_workspace/
+
+# CodeGraph 本地索引（机器专属，92MB+，不提交）
+.codegraph/
+
+# Graphify 本地缓存和费用记录
+graphify-out/cache/
+graphify-out/cost.json
+
+# Claude Code 本地配置
+.claude/
+
+# Codex / Agent 本地配置
+.agents/
+AGENTS.md
+
+# Graphify 输出目录
+graphify-out/
+
+# 项目配置文件（不提交到 Gitee）
+.graphifyignore
+.mcp.json
+CLAUDE.md
+
+# 音频文件
+*.wav
+
+# 用户自定义表情包：仓库只保留空目录占位，图片由用户自行放入。
+表情包/**
+!表情包/.gitkeep
+
+logs/
+game/
+powershell
+"ovrdoze_data/"
+
+# 个人文件（不提交）
+lianxin_req.txt
+*.docx
+
+# 第三方开源项目（用户自行获取）
+AstrBot/
+NapCatQQ/
+ChatTTS/
+GPT-SoVITS-v2pro/
+
+# 测试工作区
+test_workspace/
+
+# 公开仓库仅提交已完成脱敏与离线验证的回归测试；其余测试保留本地迭代。
+tests/**
+!tests/test_physical_audit.py
+!tests/test_physical_controller.py
+!tests/test_physical_planner.py
+!tests/test_physical_runtime.py
+!tests/test_physical_service.py
+
+# 阿里云语音 SDK（用户自行安装）
+alibabacloud-nls-python-sdk/
+
+# 个人文档/笔记
+docx_backup/"skills/�㷨����/" 
+"skills/ǰ�����/" 
+"skills/MCP������/"
+莲心改进建议.md

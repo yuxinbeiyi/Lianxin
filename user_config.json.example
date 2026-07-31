@@ -1,0 +1,82 @@
+{
+  "api_key": "",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-v4-flash",
+  "max_tokens": 4096,
+  "deepseek": {
+    "api_key": "",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-v4-flash",
+    "max_tokens": 4096,
+    "use_local": false,
+    "local_base_url": "http://localhost:11434/v1",
+    "local_model_name": "my-qwen"
+  },
+  "device_preferences": {
+    "rag": "cpu",
+    "whisper": "cpu",
+    "funasr": "cpu"
+  },
+  "aliyun_stt": {
+    "access_key_id": "",
+    "access_key_secret": "",
+    "app_key": ""
+  },
+  "camera": {
+    "device_index": 0,
+    "save_to_local": false,
+    "save_folder": ""
+  },
+  "web_fetch": {
+    "baidu_cookie": ""
+  },
+  "qq_bridge": {
+    "enabled": false,
+    "ws_url": "ws://127.0.0.1:3001",
+    "qq_account": "",
+    "owner_qq": "",
+    "owner_name": "你的名字",
+    "voice_reply_enabled": true,
+    "timing": {
+      "think_delay_min": 1.0,
+      "think_delay_max": 1.2,
+      "type_speed_min": 850,
+      "type_speed_max": 900,
+      "min_reply_interval": 0.5,
+      "segment_threshold_min": 190,
+      "segment_threshold_max": 250,
+      "segment_interval_min": 1.0,
+      "segment_interval_max": 2.0,
+      "global_send_interval_min": 2.0,
+      "global_send_interval_max": 5.0,
+      "daily_limit_owner": 500,
+      "daily_limit_other": 200,
+      "cross_session_context_limit": 6
+    }
+  },
+  "diary": {
+    "direction": "latest",
+    "max_messages": 30,
+    "scheduled_enabled": true,
+    "scheduled_time": "23:55"
+  },
+  "quick_launch_apps": [
+    {
+      "name": "示例应用",
+      "exe_name": "example.exe",
+      "path": "C:/Path/To/example.exe"
+    }
+  ],
+  "siliconflow": {
+    "api_key": "",
+    "base_url": "https://api.siliconflow.cn/v1",
+    "vision_model": "Qwen/Qwen3-VL-30B-A3B-Instruct"
+  },
+  "memory": {
+    "auto_extract": true,
+    "extract_interval": 15,
+    "extract_message_count": 15,
+    "max_items_per_category": 200,
+    "default_save_category": "knowledge"
+  }
+}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>数据潮汐</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="avatar_echo.css">
+  <style>
+    .drawer-backdrop{position:fixed;inset:0;background:rgba(70,49,39,.22);z-index:20;display:flex;justify-content:flex-end}.achievement-drawer{width:min(430px,92vw);height:100%;overflow:auto;background:#fffaf2;padding:46px 34px;box-shadow:-12px 0 32px rgba(75,52,38,.16);animation:drawer-in .3s ease-out}.drawer-close{float:right;border:0;background:transparent;font-size:28px;line-height:1;color:#765f50}.drawer-art{font-size:74px;color:#c38b55;margin:30px 0 18px}.achievement-drawer h2{font-size:27px;margin:0 0 12px}.drawer-copy,.drawer-note{line-height:1.9;color:#765f50}.drawer-progress{margin:26px 0}.drawer-progress>span{font-size:16px;color:#927a68}.drawer-date{font-size:16px;color:#927a68;border-top:1px solid #eadac5;padding-top:16px}.unlock-toast{position:fixed;right:26px;bottom:26px;z-index:30;display:flex;align-items:center;gap:14px;background:#fffaf2;border:1px solid #e6cda9;border-radius:7px;padding:14px 18px;box-shadow:0 12px 30px rgba(75,52,38,.18);animation:toast-in .35s ease-out}.unlock-toast>span{font-size:32px;color:#c38b55}.unlock-toast b{font-size:16px}.unlock-toast p{margin:4px 0 0;color:#927a68;font-size:16px}@keyframes drawer-in{from{transform:translateX(30px);opacity:.2}to{transform:translateX(0);opacity:1}}@keyframes toast-in{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
+  </style>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">莲心 <span>数据潮汐</span></div>
+      <nav id="nav"><button data-page="coast" class="active">海岸概览</button><button data-page="shells">贝壳收藏</button></nav>
+      <div class="window-actions"><button data-export="json" title="导出统计 JSON">导出 JSON</button><button data-export="csv" title="导出统计 CSV">导出 CSV</button><button title="最小化" id="min">−</button><button title="全屏" id="full">□</button><button title="关闭" id="close">×</button></div>
+    </header>
+    <main id="content"><div class="loading">海风正把回忆轻轻带来...</div></main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

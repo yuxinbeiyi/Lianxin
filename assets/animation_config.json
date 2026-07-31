@@ -1,0 +1,170 @@
+{
+    "modes": {
+      "normal": {
+        "initial": "idle",
+        "states": {
+          "idle": {
+            "animation": "normal.gif",
+            "loop": true,
+            "on_event": {
+              "speak_start": "talking"
+            }
+          },
+          "talking": {
+            "animation": "talk.gif",
+            "loop": true,
+            "on_event": {
+              "speak_end": "idle"
+            }
+          }
+        }
+      },
+      "standby": {
+        "initial": "wear_earphone",
+        "states": {
+          "wear_earphone": {
+            "animation": "待机模式/戴耳机.gif",
+            "duration": 8,
+            "next": "listening1"
+          },
+          "listening1": {
+            "animation": "待机模式/倾听1.gif",
+            "duration": 4,
+            "next": "listening2",
+            "on_event": {
+              "speak_start": "speaking1_1",
+              "standby_end": "hangup"
+            }
+          },
+          "listening2": {
+            "animation": "待机模式/倾听2.gif",
+            "duration": 4,
+            "next": "listening1",
+            "on_event": {
+              "speak_start": "speaking2_1",
+              "standby_end": "hangup"
+            }
+          },
+          "speaking1_1": {
+            "animation": "待机模式/说话1_1.gif",
+            "duration": 5,
+            "next": "speaking1_2",
+            "on_event": {
+              "speak_end": "listening1",
+              "standby_end": "hangup"
+            }
+          },
+          "speaking1_2": {
+            "animation": "待机模式/说话1_2.gif",
+            "duration": 5,
+            "next": "speaking1_1",
+            "on_event": {
+              "speak_end": "listening1",
+              "standby_end": "hangup"
+            }
+          },
+          "speaking2_1": {
+            "animation": "待机模式/说话2_1.gif",
+            "duration": 5,
+            "next": "speaking2_2",
+            "on_event": {
+              "speak_end": "listening2",
+              "standby_end": "hangup"
+            }
+          },
+          "speaking2_2": {
+            "animation": "待机模式/说话2_2.gif",
+            "duration": 5,
+            "next": "speaking2_1",
+            "on_event": {
+              "speak_end": "listening2",
+              "standby_end": "hangup"
+            }
+          },
+          "hangup": {
+            "animation": "待机模式/摘耳机.gif",
+            "duration": 8,
+            "next": "normal_idle"
+          },
+          "normal_idle": {
+            "animation": "normal.gif",
+            "duration": 0.1
+          }
+        }
+      },
+      "arms_cross": {
+        "initial": "cross_start",
+        "states": {
+          "cross_start": {
+            "animation": "抱胸/抱胸1.gif",
+            "duration": 5,
+            "next": "cross_end"
+          },
+          "cross_end": {
+            "animation": "抱胸/抱胸2.gif",
+            "duration": 5
+          }
+        }
+      },
+      "thinking": {
+        "initial": "pickup",
+        "states": {
+          "pickup": {
+            "animation": "思考中/拿起手机.gif",
+            "duration": 2,
+            "next": "typing",
+            "on_event": {
+              "stop_thinking": "putdown"
+            }
+          },
+          "typing": {
+            "animation": "思考中/打字中.gif",
+            "loop": true,
+            "on_event": {
+              "stop_thinking": "putdown"
+            }
+          },
+          "putdown": {
+            "animation": "思考中/放下手机.gif",
+            "duration": 2,
+            "next": "done"
+          },
+          "done": {
+            "animation": "思考中/放下手机.gif",
+            "duration": 0.01
+          }
+        }
+      },
+      "vision": {
+        "initial": "watching",
+        "states": {
+          "watching": {
+            "animation": "normal.gif",
+            "loop": true,
+            "on_event": {
+              "speak_start": "talking",
+              "wave_seen": "wave_back",
+              "smile_seen": "happy_react"
+            }
+          },
+          "talking": {
+            "animation": "talk.gif",
+            "loop": true,
+            "on_event": {
+              "speak_end": "watching"
+            }
+          },
+          "wave_back": {
+            "animation": "talk.gif",
+            "duration": 3,
+            "next": "watching"
+          },
+          "happy_react": {
+            "animation": "talk.gif",
+            "duration": 3,
+            "next": "watching"
+          }
+        }
+      }
+    }
+  }

@@ -1,0 +1,47 @@
+name: 质量检查
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python-check:
+    name: Python 语法与离线回归
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装基础依赖与审计工具
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: 编译检查
+        run: python -m compileall -q brain gui memory utils vision voice workers main.py config.py
+
+      - name: 运行离线具身模拟回归
+        run: python -m unittest discover -s tests -p "test_physical_*.py"
+
+      - name: 审计基础依赖
+        run: pip-audit -r requirements-core.txt
+
+  secret-scan:
+    name: 凭据扫描
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出完整历史
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 扫描提交与当前文件
+        uses: gitleaks/gitleaks-action@v2
