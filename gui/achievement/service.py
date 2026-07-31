@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from utils.accompany_stats import AccompanyStats
+from utils.music_stats import MusicStats
 from utils.paths import get_user_data_dir
 
 
@@ -192,6 +193,8 @@ class AchievementService:
             ("first_words", "第一句悄悄话", "相遇", "完成第一次对话", "shell", "chats", 1, False),
             ("ten_conversations", "聊了十次天", "相遇", "完成 10 次对话", "shell", "chats", 10, False),
             ("hundred_conversations", "百句潮声", "陪伴", "完成 100 次对话", "star", "chats", 100, False),
+            ("thousand_conversations", "无话不谈", "陪伴", "完成 1000 次对话", "star", "chats", 1000, False),
+            ("ten_thousand_conversations", "人生搭子", "陪伴", "完成 10000 次对话", "star", "chats", 10000, False),
             ("seven_sunsets", "七次日落", "陪伴", "在近 14 天里相伴 7 天", "star", "active_14", 7, False),
             ("warm_month", "温柔的一个月", "陪伴", "在近 45 天里相伴 30 天", "star", "active_45", 30, False),
             ("one_hour", "海风一小时", "陪伴", "累计前台陪伴满 1 小时", "star", "seconds", 3600, False),
@@ -201,15 +204,21 @@ class AchievementService:
             ("focus_ten", "专注的海岸", "共同成长", "完成 10 次专注", "anchor", "focus", 10, False),
             ("focus_hour", "一小时的灯塔", "共同成长", "累计专注满 1 小时", "anchor", "focus_seconds", 3600, False),
             ("focus_ten_hours", "沉静海面", "共同成长", "累计专注满 10 小时", "anchor", "focus_seconds", 36000, False),
+            ("focus_hundred_hours", "携手共进", "共同成长", "累计专注满 100 小时", "anchor", "focus_seconds", 360000, False),
+            ("focus_thousand_hours", "学海无涯", "共同成长", "累计专注满 1000 小时", "anchor", "focus_seconds", 3600000, False),
             ("first_capsule", "寄给未来", "时间胶囊", "封存第一枚时间胶囊", "bottle", "capsules", 1, False),
             ("capsule_five", "五封漂流信", "时间胶囊", "封存 5 枚时间胶囊", "bottle", "capsules", 5, False),
             ("capsule_twelve", "十二个月亮瓶", "时间胶囊", "封存 12 枚时间胶囊", "bottle", "capsules", 12, False),
+            ("capsule_hundred", "写满一本", "时间胶囊", "封存 100 枚时间胶囊", "bottle", "capsules", 100, False),
             ("first_note", "树洞回声", "树洞", "留下第一张树洞纸条", "boat", "notes", 1, False),
             ("notes_ten", "纸船成群", "树洞", "留下 10 张树洞纸条", "boat", "notes", 10, False),
             ("image_seen", "所见所闻", "探索", "第一次成功识图", "scope", "images", 1, False),
             ("image_ten", "收藏十个瞬间", "探索", "完成 10 次图片识别", "scope", "images", 10, False),
             ("tool_explorer", "打开望远镜", "探索", "第一次主动使用工具探索世界", "scope", "tools", 1, False),
             ("tool_ten", "远方的回信", "探索", "完成 10 次主动工具探索", "scope", "tools", 10, False),
+            ("tool_hundred", "熟练搭档", "探索", "完成 100 次主动工具探索", "scope", "tools", 100, False),
+            ("music_hour", "孤华乐章", "音乐盒", "与莲心一起听歌累计 1 小时", "music", "music_seconds", 3600, False),
+            ("music_ten_hours", "耳机另一端", "音乐盒", "与莲心一起听歌累计 10 小时", "music", "music_seconds", 36000, False),
             ("meet_month", "相遇满月", "相遇", "从相遇那天起满 30 天", "shell", "days_since_meet", 30, False),
             ("meet_hundred", "第一百天", "相遇", "从相遇那天起满 100 天", "shell", "days_since_meet", 100, False),
             ("meet_year", "一年的海", "相遇", "从相遇那天起满一年", "shell", "days_since_meet", 365, False),
@@ -452,6 +461,11 @@ class AchievementService:
         }
         projected_presence = sum(int(row["presence_seconds"] or 0) for row in rows)
         legacy_presence = int(legacy.get("total_seconds", 0) or 0)
+        # 音乐盒已有独立本地统计，成就只读取累计秒数，不读取曲目或播放历史。
+        try:
+            music_seconds = max(0, int(MusicStats().data.get("total_seconds", 0) or 0))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            music_seconds = 0
         metrics = dict(total)
         avatar_detail = {key: baseline[key] + int(total.get(key, 0)) for key in AVATAR_METRIC_MAP}
         metrics.update({f"avatar_{key}": value for key, value in avatar_detail.items()})
@@ -461,6 +475,7 @@ class AchievementService:
             sessions=stats.get_stats().get("session_count", 0),
             avatar=baseline["total"] + int(total.get("avatar", 0)),
             avatar_detail=avatar_detail,
+            music_seconds=music_seconds,
             days_since_meet=days_since,
             active_dates=len([row for row in rows if row["active_events"] > 0]),
         )
@@ -491,6 +506,8 @@ class AchievementService:
                 "active_days_30": sum(1 for day_key, row in by_day.items() if day_key >= (date.today() - timedelta(days=29)).isoformat() and row["active_events"] > 0),
                 "trail": trail, "daily_metrics": rows, "achievements": achievements, "events": entries, "journey_total": journey_total,
                 "new_unlocks": [item for item in all_achievements if item["unlocked_at"] and not item["is_read"]],
-                "unlocked_count": len(unlocked), "total_count": len([item for item in self._definitions() if not item[7]]),
+                # 收藏页只展示普通成就和已经发现的隐藏成就，分子分母必须同口径。
+                "unlocked_count": len([item for item in achievements if item["unlocked_at"]]),
+                "total_count": len(achievements),
                 "discovered_hidden_count": len([item for item in all_achievements if item["hidden"] and item["unlocked_at"]]),
                 "recent_unlock": next((item for item in sorted(achievements, key=lambda item: item["unlocked_at"] or "", reverse=True) if item["unlocked_at"]), None)}

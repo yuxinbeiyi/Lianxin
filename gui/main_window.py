@@ -141,6 +141,13 @@ class MainWindow(QMainWindow):
         self._achievement_presence_timer.setInterval(30_000)
         self._achievement_presence_timer.timeout.connect(self._roll_achievement_presence)
         self._achievement_presence_timer.start()
+        self._achievement_unlock_check_queued = False
+        self._achievement_unlock_toast = None
+        self._achievement_unlock_poll = QTimer(self)
+        self._achievement_unlock_poll.setInterval(10_000)
+        self._achievement_unlock_poll.timeout.connect(self._check_new_achievement_unlocks)
+        self._achievement_unlock_poll.start()
+        QTimer.singleShot(900, self._schedule_achievement_unlock_check)
 
         # ── 全局设置 ──────────────────────────────────────────
         self._global_settings = get_settings()
@@ -635,6 +642,30 @@ class MainWindow(QMainWindow):
             return
         self._flush_achievement_presence()
         self._start_achievement_presence()
+
+    def _schedule_achievement_unlock_check(self):
+        """将成就检查合并到下一轮事件循环，避免阻塞当前交互动画。"""
+        if self._achievement_unlock_check_queued:
+            return
+        self._achievement_unlock_check_queued = True
+        QTimer.singleShot(180, self._check_new_achievement_unlocks)
+
+    def _check_new_achievement_unlocks(self):
+        """同步新事件并在主窗口右下角展示新解锁成就。"""
+        self._achievement_unlock_check_queued = False
+        try:
+            from gui.achievement.service import AchievementService
+            service = AchievementService()
+            fresh = service.state().get("new_unlocks", [])
+            if not fresh:
+                return
+            service.mark_unlocks_read([item.get("id", "") for item in fresh])
+            from gui.achievement.unlock_toast import AchievementUnlockToast
+            if self._achievement_unlock_toast is None:
+                self._achievement_unlock_toast = AchievementUnlockToast(self)
+            self._achievement_unlock_toast.show_achievements(fresh)
+        except Exception as exc:
+            print(f"[成就记录] 解锁提示检查失败: {exc}")
 
     # ── 界面构建 ─────────────────────────────────────────────
 
@@ -1361,6 +1392,7 @@ class MainWindow(QMainWindow):
             elif i in self._staged_image_errors:
                 bubble.update_text(f"分析失败: {self._staged_image_errors[i]}")
 
+        self._schedule_achievement_unlock_check()
         context_parts = []
         for i, (_, _) in enumerate(self._staged_bubbles):
             if i in self._staged_image_results:
@@ -1422,6 +1454,7 @@ class MainWindow(QMainWindow):
                 )
             except Exception as exc:
                 print(f"[成就记录] 工具事件记录失败: {exc}")
+            self._schedule_achievement_unlock_check()
 
     def _on_tool_enable_requested(self, tool_key: str, display_name: str,
                                   reason: str, request):
@@ -1535,6 +1568,7 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             print(f"[成就记录] 对话事件记录失败: {exc}")
+        self._schedule_achievement_unlock_check()
 
         play_sound("lianxinSend.mp3")
 
@@ -2107,6 +2141,7 @@ class MainWindow(QMainWindow):
                 )
                 self._chat_widget.add_system_tip(counter_text)
             QTimer.singleShot(160, play_counter_action)
+        self._schedule_achievement_unlock_check()
 
     def _on_avatar_context(self, role: str):
         if role != "assistant":
@@ -3424,6 +3459,7 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             print(f"[成就记录] 图片事件记录失败: {exc}")
+        self._schedule_achievement_unlock_check()
 
         context = f"[用户发了一张图片，视觉分析结果如下]\n{description}\n\n请根据你看到的内容自然地回应，描述你看到了什么。"
         self._send_user_text_to_agent(context, skip_bubble=True)
@@ -3506,6 +3542,7 @@ class MainWindow(QMainWindow):
         # 以下是原有关闭逻辑（确认退出时执行）
         self._flush_achievement_presence()
         self._achievement_presence_timer.stop()
+        self._achievement_unlock_poll.stop()
         self._accompany_stats.end_session()
         self._duty_scheduler.stop()
         self._alarm_timer.stop()

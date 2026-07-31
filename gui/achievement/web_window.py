@@ -29,7 +29,7 @@ class AchievementWindow(QMainWindow):
 
     def _load(self):
         root = self._index.parent; html = self._index.read_text(encoding="utf-8")
-        for asset in ("styles.css", "app.js"):
+        for asset in ("styles.css", "avatar_echo.css", "app.js"):
             digest = hashlib.sha256((root / asset).read_bytes()).hexdigest()[:12]
             html = re.sub(rf'{re.escape(asset)}(?:\?v=[^"\']+)?', f"{asset}?v={digest}", html)
         self._view.setHtml(html, QUrl.fromLocalFile(str(root.resolve()) + "/"))
