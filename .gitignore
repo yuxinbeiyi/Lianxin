@@ -1,6 +1,11 @@
 # Python
 参考项目/
 docs/
+# Internal implementation plans are kept locally and are not part of releases.
+test_browser.py
+莲心下一阶段架构基线与改造清单.md
+莲心虚拟世界.md
+记忆胶囊改造方案/
 tatus
 莲心自习室.png
 __pycache__/
