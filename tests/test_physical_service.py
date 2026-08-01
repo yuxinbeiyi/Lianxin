@@ -36,6 +36,14 @@ class PhysicalSimServiceTests(unittest.TestCase):
         self.assertEqual("world_snapshot", payload["type"])
         self.assertEqual([30, 30], payload["snake"]["body"][0])
 
+    def test_health_endpoint_reports_service_status(self):
+        response = self.loop.run_until_complete(self.client.get("/healthz"))
+        payload = self.loop.run_until_complete(response.json())
+
+        self.assertEqual(200, response.status)
+        self.assertEqual("ok", payload["status"])
+        self.assertEqual("physical-sim", payload["service"])
+
     def test_commands_modify_authoritative_runtime_state(self):
         socket = self.loop.run_until_complete(self.client.ws_connect("/ws"))
         self.loop.run_until_complete(socket.receive_json())

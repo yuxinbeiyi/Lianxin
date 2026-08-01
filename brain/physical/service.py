@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import threading
 from contextlib import nullcontext
 from pathlib import Path
@@ -37,6 +38,7 @@ class PhysicalSimService:
         app = web.Application()
         app[SERVICE_KEY] = self
         app.router.add_get("/", self.index)
+        app.router.add_get("/healthz", self.healthz)
         app.router.add_get("/ws", self.websocket)
         app.router.add_get("/debug/report", self.debug_report)
         app.router.add_static("/assets/", ASSETS_DIR, show_index=False)
@@ -71,6 +73,13 @@ class PhysicalSimService:
 
     async def index(self, _request: web.Request) -> web.FileResponse:
         return web.FileResponse(ASSETS_DIR / "index.html")
+
+    async def healthz(self, _request: web.Request) -> web.Response:
+        return web.json_response({
+            "status": "ok",
+            "service": "physical-sim",
+            "revision": self.runtime.world.revision,
+        })
 
     async def debug_report(self, _request: web.Request) -> web.Response:
         report = self.snapshot()
@@ -315,7 +324,12 @@ def stop_physical_sim_server() -> None:
 
 
 def main() -> None:
-    web.run_app(create_app(), host="127.0.0.1", port=8765)
+    host = os.getenv("LIANXIN_PHYSICAL_HOST", "127.0.0.1")
+    try:
+        port = int(os.getenv("LIANXIN_PHYSICAL_PORT", "8765"))
+    except ValueError:
+        port = 8765
+    web.run_app(create_app(), host=host, port=port)
 
 
 if __name__ == "__main__":

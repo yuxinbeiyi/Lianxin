@@ -24,9 +24,9 @@
 
 ## Docker 规划
 
-当前首发形态为 Windows PyQt 桌面应用，不将完整 GUI 放入 Docker。后续容器化应只承载无界面服务，例如物理模拟器、任务执行 API 或 Web 服务：
+当前首发形态为 Windows PyQt 桌面应用，不将完整 GUI 放入 Docker。已提供首个无界面容器目标：物理模拟器 Web 服务。它不包含聊天数据、API Key、视觉模型或语音模型：
 
-1. 将 GUI 与后台服务拆分为独立入口。
-2. 容器默认只绑定 `127.0.0.1`，健康检查只暴露必要端点。
-3. 通过 volume 保存数据，通过 `.env` 或 Docker secrets 注入凭据。
-4. PyQt 桌面版继续使用本地 `run.bat` 或 PyInstaller 发行包。
+1. `Dockerfile` 与 `docker-compose.yml` 只构建 `brain/physical` 和 Canvas 静态文件。
+2. 容器内部监听 `0.0.0.0:8765`，Compose 默认只映射宿主机 `127.0.0.1:8765`。
+3. `/healthz` 用于 Docker 健康检查；当前世界状态是内存态，重启后恢复初始状态。
+4. PyQt 桌面版继续使用本地 `run.bat` 或 PyInstaller 发行包；未来需要持久化或鉴权时另行设计数据卷和密钥注入。
