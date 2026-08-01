@@ -24,6 +24,13 @@ class PhysicalSimServiceTests(unittest.TestCase):
         self.loop.run_until_complete(self.client.close())
         self.loop_context.__exit__(None, None, None)
 
+    def receive_command_response(self, socket):
+        for _ in range(5):
+            payload = self.loop.run_until_complete(socket.receive_json())
+            if payload.get("type") != "world_snapshot":
+                return payload
+        self.fail("命令确认被连续世界快照淹没")
+
     def test_index_and_initial_websocket_snapshot(self):
         response = self.loop.run_until_complete(self.client.get("/"))
         self.assertEqual(200, response.status)
@@ -48,10 +55,9 @@ class PhysicalSimServiceTests(unittest.TestCase):
         socket = self.loop.run_until_complete(self.client.ws_connect("/ws"))
         self.loop.run_until_complete(socket.receive_json())
         self.loop.run_until_complete(socket.send_json({"type": "place_marker", "x": 180, "y": 20}))
-        marker_ack = self.loop.run_until_complete(socket.receive_json())
-        self.loop.run_until_complete(socket.receive_json())
+        marker_ack = self.receive_command_response(socket)
         self.loop.run_until_complete(socket.send_json({"type": "start_debug_navigation"}))
-        navigation_ack = self.loop.run_until_complete(socket.receive_json())
+        navigation_ack = self.receive_command_response(socket)
         self.loop.run_until_complete(socket.close())
 
         self.assertEqual("ack", marker_ack["type"])
@@ -63,7 +69,7 @@ class PhysicalSimServiceTests(unittest.TestCase):
         socket = self.loop.run_until_complete(self.client.ws_connect("/ws"))
         self.loop.run_until_complete(socket.receive_json())
         self.loop.run_until_complete(socket.send_json({"type": "add_obstacle", "x": "bad", "y": 0, "w": 20, "h": 20}))
-        payload = self.loop.run_until_complete(socket.receive_json())
+        payload = self.receive_command_response(socket)
         self.loop.run_until_complete(socket.close())
 
         self.assertEqual("error", payload["type"])
@@ -73,10 +79,9 @@ class PhysicalSimServiceTests(unittest.TestCase):
         socket = self.loop.run_until_complete(self.client.ws_connect("/ws"))
         self.loop.run_until_complete(socket.receive_json())
         self.loop.run_until_complete(socket.send_json({"type": "add_obstacle", "x": 40, "y": 40, "w": 20, "h": 20}))
-        self.loop.run_until_complete(socket.receive_json())
-        self.loop.run_until_complete(socket.receive_json())
+        self.receive_command_response(socket)
         self.loop.run_until_complete(socket.send_json({"type": "remove_obstacle", "x": 45, "y": 45}))
-        payload = self.loop.run_until_complete(socket.receive_json())
+        payload = self.receive_command_response(socket)
         self.loop.run_until_complete(socket.close())
 
         self.assertEqual("障碍物已删除", payload["message"])

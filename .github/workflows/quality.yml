@@ -29,7 +29,7 @@ jobs:
         run: python -m compileall -q brain gui memory utils vision voice workers main.py config.py
 
       - name: 运行离线具身模拟回归
-        run: python -m unittest discover -s tests -p "test_physical_*.py"
+        run: python -m unittest discover -s tests -p "test_physical_*.py" -v
 
       - name: 审计基础依赖
         run: pip-audit -r requirements-core.txt
