@@ -291,7 +291,6 @@ class MainWindow(QMainWindow):
         self._todo_reminder_timer.timeout.connect(self._check_overdue_todos)
         self._todo_reminder_timer.start(30 * 60 * 1000)  # 30分钟
         self._reminded_todo_ids = set()  # 今日已提醒过的待办ID，防止重复提醒
-        self._check_overdue_todos()  # 启动时立即检查一次
 
         # ── 初始化情感系统（涟漪） ─────────────────────────────
         try:
@@ -422,6 +421,8 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         self._window_experience.apply_startup_state(autostart=self._autostart_mode)
+        # 首次提醒可能触发 TTS，必须等动作路由器与窗口体验完成初始化。
+        QTimer.singleShot(0, self._check_overdue_todos)
 
         # ── 全局热键过滤器 + 注册热键（启动即生效） ──────────
         self._hotkey_filter = None
@@ -1864,16 +1865,19 @@ class MainWindow(QMainWindow):
         if self._global_settings.silent_mode:
             return
         self._speaker_worker = SpeakerWorker(self._speaker, text, self)
-        self._speaker_worker.speaking_started.connect(
-            lambda: self._avatar_actions.speaking_started("tts")
-        )
+        avatar_actions = getattr(self, "_avatar_actions", None)
+        if avatar_actions is not None:
+            self._speaker_worker.speaking_started.connect(
+                lambda: avatar_actions.speaking_started("tts")
+            )
         self._speaker_worker.speaking_started.connect(lambda: self._input_panel.set_mute_visible(True))
         self._speaker_worker.speaking_started.connect(self._on_galgame_speaking_start)
         # 全双工模式：TTS 播放时暂停 VAD，防止莲心声音被麦克风拾取→打断循环
         if self._voice_duplex:
             self._speaker_worker.speaking_started.connect(self._voice_duplex.pause_vad)
         self._speaker_worker.speaking_finished.connect(self._on_galgame_speaking_stop)
-        self._speaker_worker.speaking_finished.connect(self._avatar_actions.speaking_finished)
+        if avatar_actions is not None:
+            self._speaker_worker.speaking_finished.connect(avatar_actions.speaking_finished)
         self._speaker_worker.speaking_finished.connect(lambda: self._input_panel.set_mute_visible(False))
         if self._voice_duplex:
             self._speaker_worker.speaking_finished.connect(self._voice_duplex.resume_vad)
