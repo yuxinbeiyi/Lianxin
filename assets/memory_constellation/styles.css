@@ -1,8 +1,6 @@
 :root{--ink:#e8edff;--muted:#8d9ac8;--line:rgba(150,180,255,.18);--glass:rgba(8,14,38,.84)}
-#mini-map,.topbar,.panel,.floating-panel,.bottom-dock,.cognition-card,.journal-card,.timeline-panel,.health-panel,.settings-panel{isolation:isolate;}
 *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#020410;color:var(--ink);font:13px "Microsoft YaHei UI","Segoe UI",sans-serif;isolation:isolate}
 canvas{position:absolute;inset:0;width:100%;height:100%}#bg{z-index:0;pointer-events:none}#map{z-index:1;cursor:grab}#map.dragging{cursor:grabbing}
-#mini-map{z-index:4;inset:auto;right:28px;bottom:82px;width:180px;height:110px;border:1px solid var(--line);border-radius:10px;background:rgba(5,10,28,.82);cursor:pointer}
 .topbar{position:absolute;z-index:5;left:22px;right:22px;top:18px;height:48px;display:flex;align-items:center;gap:10px;padding:0 14px;border:1px solid var(--line);border-radius:14px;background:rgba(4,9,26,.94);box-shadow:0 12px 40px rgba(0,0,0,.25)}
 .brand{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;white-space:nowrap}.brand-mark{color:#ffe0aa;font-size:22px;text-shadow:0 0 14px #ffe0aa}.brand small{margin-left:8px;color:var(--muted);font-weight:400}
 #filters{display:flex;gap:6px;overflow:auto;margin-left:20px}.pill,.icon-btn{border:1px solid var(--line);background:rgba(120,140,220,.08);color:var(--muted);border-radius:9px;padding:6px 11px;cursor:pointer}.pill:hover,.pill.active,.icon-btn:hover{color:#fff;border-color:rgba(170,200,255,.5);background:rgba(120,160,255,.18)}.icon-btn{margin-left:auto;font-size:16px;padding:4px 10px}.icon-btn+#stardust{margin-left:0}

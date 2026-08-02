@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PyQt5.QtCore import QUrl, Qt, QObject, pyqtSlot
+from PyQt5.QtCore import QEvent, QUrl, Qt, QObject, pyqtSlot
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QDialog, QMainWindow, QVBoxLayout, QTextBrowser, QPushButton, QWidget
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
@@ -271,6 +271,27 @@ class MemoryConstellationWebWindow(QMainWindow):
         ) + ";</script>"
         html = template.replace("<!-- LIANXIN_DATA -->", injected)
         self._view.setHtml(html, QUrl.fromLocalFile(str(self._asset_dir) + "/"))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._view.page().runJavaScript(
+            "window.lianxinSetConstellationActive && window.lianxinSetConstellationActive(true);"
+        )
+
+    def hideEvent(self, event):
+        self._view.page().runJavaScript(
+            "window.lianxinSetConstellationActive && window.lianxinSetConstellationActive(false);"
+        )
+        super().hideEvent(event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            active = not self.isMinimized() and self.isVisible()
+            self._view.page().runJavaScript(
+                "window.lianxinSetConstellationActive && "
+                f"window.lianxinSetConstellationActive({'true' if active else 'false'});"
+            )
 
     def refresh(self):
         self._load_map()
