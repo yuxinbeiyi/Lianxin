@@ -122,7 +122,9 @@ class ChatWidget(QScrollArea):
         self._layout_refresh_pending = False
         self._layout_verify_pending = False
         self._skip_next_layout_verify = False
-        self._scroll_after_layout = False
+        # 滚动意图必须跨过两轮布局刷新保留到最终高度稳定后，不能在
+        # 第一次 sizeHint 计算完成时就清空，否则长文本换行后会留在视口下方。
+        self._pending_scroll_mode: str | None = None
         self._build_ui()
 
     def _build_ui(self):
@@ -183,7 +185,8 @@ class ChatWidget(QScrollArea):
         return super().eventFilter(obj, event)
 
     def _cancel_pending_scroll(self):
-        self._scroll_after_layout = False
+        # 用户开始手动滚动时，取消尚未执行的自动跟随，避免抢回阅读位置。
+        self._pending_scroll_mode = None
 
     def resizeEvent(self, event):
         """视口变化后，按新宽度重算所有气泡的真实换行高度。"""
@@ -361,7 +364,7 @@ class ChatWidget(QScrollArea):
         self._current_tool_group = None
         self._tool_groups.clear()
         self._tool_round_count = 0
-        self._scroll_after_layout = False
+        self._pending_scroll_mode = None
         self._layout_refresh_pending = False
         if self._layout_refresh_timer is not None:
             self._layout_refresh_timer.stop()
@@ -519,10 +522,30 @@ class ChatWidget(QScrollArea):
         return True
 
     def _request_scroll_to_bottom(self, force: bool = False):
-        """把滚动动作合并到同一次几何刷新之后，避免读取过期的 maximum。"""
-        if force or self._is_near_bottom():
-            self._scroll_after_layout = True
-            self._schedule_layout_refresh()
+        """登记滚动意图，等两阶段布局稳定后再读取最新 maximum。"""
+        if force:
+            self._pending_scroll_mode = "force"
+        elif self._is_near_bottom():
+            # 强制跟随优先级更高，普通跟随不能覆盖它。
+            if self._pending_scroll_mode != "force":
+                self._pending_scroll_mode = "follow"
+        else:
+            return
+        self._schedule_layout_refresh()
+
+    def _apply_pending_scroll(self):
+        """在最终布局完成后执行一次滚动，避免使用过期的滚动范围。"""
+        mode = self._pending_scroll_mode
+        if mode is None:
+            return
+        self._pending_scroll_mode = None
+        scrollbar = self.verticalScrollBar()
+        # follow 模式是在消息追加前确认过“用户位于底部”的结果；在布局
+        # 完成后 maximum 已经增长，不能再次用当前差值判断，否则新增气泡
+        # 恰好会被误判为“用户不在底部”。用户若在等待期间手动滚动，
+        # wheelEvent/sliderPressed 会先清除该待执行意图。
+        if mode in {"force", "follow"}:
+            scrollbar.setValue(scrollbar.maximum())
 
     def _schedule_layout_refresh(self):
         self._layout_refresh_pending = True
@@ -554,14 +577,14 @@ class ChatWidget(QScrollArea):
         self._layout.setGeometry(QRect(0, 0, width, content_height))
         self._layout.activate()
         self._container.updateGeometry()
-        if self._scroll_after_layout:
-            self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
-        self._scroll_after_layout = False
-
         # QLabel 会在获得实际宽度后的下一轮事件循环完成最后一次换行。
         # 补做一次幂等校验，保证首条消息不会等到下一条消息才恢复高度。
         if self._skip_next_layout_verify:
             self._skip_next_layout_verify = False
+            # 这一轮是换行校验后的最终布局，直到此时才能可靠地读取
+            # QScrollBar.maximum() 并将新消息带入视口。
+            if self._pending_scroll_mode is not None:
+                QTimer.singleShot(0, self._apply_pending_scroll)
         elif not self._layout_verify_pending:
             self._layout_verify_pending = True
             QTimer.singleShot(0, self._verify_layout_after_wrap)
