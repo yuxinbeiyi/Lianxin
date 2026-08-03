@@ -6,6 +6,8 @@ import importlib
 import importlib.util
 import sys
 import logging
+import os
+import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -198,12 +200,6 @@ def _create_agent(manifest: Dict, service_dir: Path) -> Optional[Any]:
             tv_cfg = get_tavily_config()
             if tv_cfg.get("api_key", "").strip():
                 env["TAVILY_API_KEY"] = tv_cfg["api_key"]
-        # 如果是 tavily_search，从用户配置读取 API Key（优先级高于 manifest）
-        if manifest["name"] == "tavily_search":
-            from config import get_tavily_config
-            tv_cfg = get_tavily_config()
-            if tv_cfg.get("api_key", "").strip():
-                env["TAVILY_API_KEY"] = tv_cfg["api_key"]
 
         # 如果是 firecrawl，从用户配置读取 API Key；未配置则跳过
         if manifest["name"] == "firecrawl":
@@ -244,6 +240,12 @@ def _expand_external_command(command: list) -> list:
         for placeholder, replacement in replacements.items():
             value = value.replace(placeholder, replacement)
         resolved.append(value)
+    # subprocess.Popen(..., shell=False) 无法执行 PowerShell 的 npx.ps1。
+    # Windows 上优先使用同目录的 npx.cmd，确保外部 MCP 能被真正拉起。
+    if resolved and os.name == "nt" and resolved[0].lower() == "npx":
+        npx_cmd = shutil.which("npx.cmd")
+        if npx_cmd:
+            resolved[0] = npx_cmd
     return resolved
 
 

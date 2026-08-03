@@ -29,7 +29,7 @@ from brain.tool_router import (
 )
 from brain.request_router import (
     CAPABILITY_TO_TOOLS, REQUEST_TOOLS_DEFINITION, RequestMode, ToolSessionState,
-    classify_request, format_capability_result, normalize_capabilities,
+    classify_request, format_capability_result, normalize_capabilities, required_execution_tool,
 )
 from memory.history_manager import HistoryManager
 from brain.context_compressor import (
@@ -2100,6 +2100,7 @@ class AgentCore:
             })
         _text_protocol_retry_count = 0
         _web_verification_retry_count = 0
+        _execution_contract_retry_count = 0
 
         def _guarded_progress(text: str):
             """流式阶段即阻止内部工具协议进入界面。"""
@@ -2575,19 +2576,18 @@ class AgentCore:
         _empty_length_retry_count = 0          # 空正文 + length 只恢复一次，避免无限重试
 
         from brain.request_tool_policy import extract_urls
-        if ("time" in route.capabilities
-                and any(t.get("function", {}).get("name") == "get_current_time" for t in all_tools)):
-            forced_tool = "get_current_time"
-        elif ("weather" in route.capabilities
-                and any(t.get("function", {}).get("name") == "get_weather" for t in all_tools)):
-            forced_tool = "get_weather"
-        elif (extract_urls(_msg_for_match)
-                and any(t.get("function", {}).get("name") == "fetch_webpage" for t in all_tools)):
-            forced_tool = "fetch_webpage"
-        elif ("embodied" in route.capabilities
-                and any(token in _msg_for_match.lower() for token in ("标记", "前往", "到达", "去"))
-                and any(t.get("function", {}).get("name") == "navigate_to_marker" for t in all_tools)):
-            forced_tool = "navigate_to_marker"
+        available_tool_names = {
+            item.get("function", {}).get("name", "") for item in all_tools
+        }
+        required_tool = required_execution_tool(route, available_tool_names)
+        if required_tool == "navigate_to_marker" and not any(
+            token in _msg_for_match.lower() for token in ("标记", "前往", "到达", "去")
+        ):
+            required_tool = None
+        if required_tool:
+            forced_tool = required_tool
+            print(f"[工具契约] request={required_tool} required=True available=True", flush=True)
+        if forced_tool == "navigate_to_marker":
             messages.append({
                 "role": "system",
                 "content": "用户正在命令虚拟世界中的贪吃蛇前往食物标记。必须调用 navigate_to_marker，标记 ID 使用 marker_001；不得声称自己无法移动。",
@@ -2822,6 +2822,30 @@ class AgentCore:
                 )
                 with self._tool_audit_lock:
                     request_audit = list(self._request_tool_audit)
+
+                # 明确工具任务的第一步必须留下真实审计记录。模型偶尔会先说
+                # “收到/我去查”，这不是完成结果，也不能交付给用户。
+                if (required_tool
+                        and not has_successful_tool_call(request_audit, {required_tool})
+                        and _execution_contract_retry_count < 1):
+                    _execution_contract_retry_count += 1
+                    forced_tool = required_tool
+                    print(
+                        f"[工具契约] {required_tool} 未执行，强制补救第{_execution_contract_retry_count}次",
+                        flush=True,
+                    )
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            f"本轮尚未成功调用 {required_tool}，刚才的文字不是最终回复。"
+                            f"现在必须使用原生工具调用 {required_tool} 执行用户请求；"
+                            "不要回复‘收到’‘马上’‘我去查’等执行承诺。"
+                        ),
+                    })
+                    continue
+                if required_tool and not has_successful_tool_call(request_audit, {required_tool}):
+                    print(f"[工具契约] {required_tool} 未能成功执行", flush=True)
+                    return f"本轮没有成功执行所需工具 {required_tool}，因此我不能假装已经完成任务。"
 
                 # 用户要求核验正文时，搜索摘要不能被当作正文证据。
                 if (requires_verified_web_content(_msg_for_match)

@@ -66,6 +66,25 @@ _SOCIAL_RE = re.compile(
     r"谢谢|辛苦了|抱抱|想你了|我回来了|你怎么样|今天心情怎么样)[呀啊哦呢嘛吗~～！!。,.， ]*$"
 )
 
+# 用户直接点名工具或其服务提供方时，不应再退回到模糊能力发现。
+_DIRECT_WEB_SEARCH_RE = re.compile(
+    r"(?:web[_\s-]?search|tavily|使用.{0,8}(?:搜索工具|联网工具)|调用.{0,8}(?:搜索工具|联网工具))",
+    re.IGNORECASE,
+)
+_DIRECT_WEB_FETCH_RE = re.compile(
+    r"(?:fetch[_\s-]?webpage|firecrawl|使用.{0,8}(?:抓取工具|网页工具)|调用.{0,8}(?:抓取工具|网页工具))",
+    re.IGNORECASE,
+)
+
+# 这些能力对应的操作没有歧义：用户一旦明确提出，就必须先取得真实执行记录。
+_PRIMARY_EXECUTION_TOOLS = {
+    "web_fetch": "fetch_webpage",
+    "web_search": "web_search",
+    "weather": "get_weather",
+    "time": "get_current_time",
+    "embodied": "navigate_to_marker",
+}
+
 
 @dataclass(frozen=True)
 class RequestRoute:
@@ -108,6 +127,21 @@ class ToolSessionState:
         self.capabilities.update(route.capabilities)
         self.opened_tool_names.update(route.tool_names)
         self.last_intent = str(message or "")[:500]
+
+
+def required_execution_tool(route: RequestRoute, available_tool_names: Iterable[str]) -> str | None:
+    """Return the deterministic first tool for an explicit external task.
+
+    ``None`` deliberately means that the model may choose among several valid
+    tools.  A returned name is safe to force through the provider tool API.
+    """
+    if route.mode not in {RequestMode.TASK_DIRECT, RequestMode.TASK_CONTINUATION}:
+        return None
+    available = set(available_tool_names)
+    for capability, tool_name in _PRIMARY_EXECUTION_TOOLS.items():
+        if capability in route.capabilities and tool_name in available:
+            return tool_name
+    return None
 
 
 def _looks_like_action(text: str) -> bool:
@@ -175,6 +209,12 @@ def classify_request(message: str, *, recent_messages: Iterable[dict] = (),
 
     capabilities: set[str] = set()
     reasons: list[str] = []
+    if not _NEGATED_SEARCH_RE.search(text) and _DIRECT_WEB_SEARCH_RE.search(text):
+        capabilities.add("web_search")
+        reasons.append("用户明确点名联网搜索工具")
+    if _DIRECT_WEB_FETCH_RE.search(text):
+        capabilities.add("web_fetch")
+        reasons.append("用户明确点名网页读取工具")
     if _URL_RE.search(text):
         capabilities.add("web_fetch")
         reasons.append("包含 URL")

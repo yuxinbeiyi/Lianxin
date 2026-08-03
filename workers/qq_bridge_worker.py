@@ -768,15 +768,15 @@ class QQBridgeWorker(QThread):
             try:
                 route = decide(text)
                 is_chat = route == "chat"
-                if is_chat:
-                    self._log(f"[路由] [{session_key}] 角色扮演模式（纯聊天）")
-                else:
-                    self._log(f"[路由] [{session_key}] 全 Agent 模式（含工具）")
+                self._log(
+                    f"[路由] [{session_key}] 旧路由建议={'纯聊天' if is_chat else 'Agent'}；"
+                    "实际工具决策交由 AgentCore"
+                )
                 response = _strip_roleplay(agent.chat(
                     text,
                     on_tool_call=_on_tool_call,
                     on_tool_result=_on_tool_result,
-                    disable_tools=is_chat,
+                    disable_tools=False,
                     response_guard=lambda: self._is_request_current(
                         session_key, request_generation
                     ),
@@ -1816,15 +1816,15 @@ class QQBridgeWorker(QThread):
             try:
                 route = decide(merged_text)
                 is_chat = route == "chat"
-                if is_chat:
-                    self._log(f"[路由] [{session_key}] 角色扮演模式（纯聊天，分段合并）")
-                else:
-                    self._log(f"[路由] [{session_key}] 全 Agent 模式（含工具，分段合并）")
+                self._log(
+                    f"[路由] [{session_key}] 旧路由建议={'纯聊天' if is_chat else 'Agent'}（分段合并）；"
+                    "实际工具决策交由 AgentCore"
+                )
                 response = _strip_roleplay(agent.chat(
                     merged_text,
                     on_tool_call=_on_tool_call,
                     on_tool_result=_on_tool_result,
-                    disable_tools=is_chat,
+                    disable_tools=False,
                     response_guard=lambda: self._is_request_current(
                         session_key, request_generation
                     ),

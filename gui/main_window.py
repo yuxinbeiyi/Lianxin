@@ -466,7 +466,9 @@ class MainWindow(QMainWindow):
         self.current_song_start_time = None
 
     def _on_route_ready(self, text: str, is_chat: bool, route_result):
-        self._agent_worker = AgentWorker(self._agent, text, self, disable_tools=is_chat)
+        # IntentRouter 仅用于快速 UI 分类；真正的工具边界由 AgentCore 的
+        # RequestRouter 统一决定。否则旧分类漏判会在工具循环前永久关闭能力。
+        self._agent_worker = AgentWorker(self._agent, text, self, disable_tools=False)
         self._last_route_result = route_result
         self._agent_worker.response_ready.connect(self._on_ai_response)
         self._agent_worker.progress_update.connect(self._on_progress_update)
