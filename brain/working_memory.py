@@ -113,6 +113,24 @@ def update_working_topic(*, user_message: str, recent_messages: list[dict] | Non
     return get_working_topic(topic_id)
 
 
+def acknowledge_quote_reply(*, session_id: int | None = None) -> int:
+    """引用确认型消息到达时，关闭当前话题的未闭环任务。
+
+    话题摘要本身仍保留，便于后续自然回忆；这里只清除“待继续执行”的
+    open loop，避免用户说“我看过了/谢谢推荐”后旧任务再次被捞起。
+    """
+    conn = _ensure()
+    now = _now().isoformat(timespec="seconds")
+    cur = conn.execute(
+        """UPDATE memory_working_topics
+           SET open_loops_json='[]', task_state='acknowledged', updated_at=?
+           WHERE status='active' AND session_id IS ?""",
+        (now, session_id),
+    )
+    conn.commit()
+    return int(cur.rowcount or 0)
+
+
 def get_working_topic(topic_id: int | None = None, session_id: int | None = None) -> dict | None:
     conn = _ensure()
     if topic_id:

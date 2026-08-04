@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
+from brain.request_context import parse_request_context
+
 
 URL_RE = re.compile(r"https?://[^\s<>\]\[\)（）。]+", re.IGNORECASE)
 
@@ -53,8 +55,13 @@ _MEMORY_SAVE_WORDS = (
 )
 
 
+def _normalized_request_text(text: str) -> str:
+    """只将当前用户意图交给权限层，隔离引用中的旧 URL/任务。"""
+    return parse_request_context(text).routing_text
+
+
 def network_change_requested(text: str) -> bool:
-    value = str(text or "").lower()
+    value = _normalized_request_text(text).lower()
     has_context = any(token in value for token in (
         "联网", "网络工具", "搜索工具", "抓取工具", "知乎搜索", "tavily", "firecrawl",
     ))
@@ -62,7 +69,7 @@ def network_change_requested(text: str) -> bool:
 
 
 def requires_verified_web_content(text: str) -> bool:
-    value = str(text or "").lower()
+    value = _normalized_request_text(text).lower()
     return bool(extract_urls(value)) or any(token in value for token in (
         "核实正文", "核验正文", "核实原文", "核验原文", "打开原文", "读取正文",
         "抓取正文", "看完正文", "verify the article", "fetch the page",
@@ -107,7 +114,7 @@ def extract_urls(text: str) -> list[str]:
 
 def is_external_lookup_request(text: str) -> bool:
     """是否属于不应被本地文件/RAG 抢占的外部信息请求。"""
-    value = str(text or "").lower()
+    value = _normalized_request_text(text).lower()
     return bool(extract_urls(value)) or any(token in value for token in (
         "联网", "上网", "网页", "搜索一下", "查一下最新", "最新消息",
         "最新新闻", "实时", "官网", "web search", "search online",
@@ -116,10 +123,11 @@ def is_external_lookup_request(text: str) -> bool:
 
 def request_tool_allowlist(text: str) -> set[str] | None:
     """URL 请求使用严格读取白名单；普通请求返回 ``None``。"""
-    if extract_urls(text):
+    normalized = _normalized_request_text(text)
+    if extract_urls(normalized):
         allowed = set(URL_FETCH_TOOLS) | {"get_current_time"}
         # 明确的浏览器交互不能被普通 URL 阅读策略降级掉。
-        if _BROWSER_INTERACTION_RE.search(str(text or "")):
+        if _BROWSER_INTERACTION_RE.search(normalized):
             allowed.update(BROWSER_TOOLS)
         return allowed
     return None
@@ -150,7 +158,7 @@ def filter_definitions_for_request(definitions: Iterable[dict], text: str) -> li
 def authorize_tool_call(name: str, args: dict, request_text: str,
                         audit: Iterable[dict] | None = None) -> tuple[bool, str]:
     """执行前进行确定性授权，返回 ``(允许, 给模型的原因)``。"""
-    request = str(request_text or "")
+    request = _normalized_request_text(request_text)
     lowered = request.lower()
 
     if name in BROWSER_TOOLS:

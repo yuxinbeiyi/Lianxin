@@ -1226,6 +1226,9 @@ class MainWindow(QMainWindow):
 
 
     def _on_user_message(self, text: str, images: list = None):
+        from brain.request_context import parse_request_context
+        request_context = parse_request_context(text)
+        active_text = request_context.active_text
         # 取消语音转录的自动发送定时器（用户手动发送了）
         if hasattr(self, '_voice_auto_send_timer') and self._voice_auto_send_timer:
             self._voice_auto_send_timer.stop()
@@ -1245,13 +1248,13 @@ class MainWindow(QMainWindow):
         display_text = text  # 气泡显示用原始文本，注入提示不显示
         if selected_tool is None:
             action_keywords = ["打开", "启动", "运行", "执行", "开启"]
-            if any(kw in text for kw in action_keywords):
+            if any(kw in active_text for kw in action_keywords):
                 text = "[重要：你必须调用相应工具来执行(比如open_app)，不要直接回复结果。]\n" + text
             diary_keywords = [
                 "读日记", "日记里", "回忆一下日记", "看看日记", "日记写了什么",
                 "时间胶囊", "共同书页", "回忆某天", "读一下", "最近日记",
             ]
-            if any(kw in text for kw in diary_keywords):
+            if any(kw in active_text for kw in diary_keywords):
                 text = "[重要：你必须调用 read_diary 工具读取时间胶囊中的真实内容，不要凭空回答。]\n" + text
         if self._speaker_worker and self._speaker_worker.isRunning():
             self._speaker.stop()
@@ -1299,15 +1302,15 @@ class MainWindow(QMainWindow):
 
         if text.strip():
             self._chat_widget.add_user_message(display_text)
-            avatar_action = self._detect_avatar_command(text)
+            avatar_action = self._detect_avatar_command(active_text)
             if avatar_action and hasattr(self, "_avatar_interaction"):
                 self._avatar_interaction.trigger_outbound(avatar_action)
                 self._input_panel.clear_selection()
                 return
         # ── 自动化任务检测 ──────────────────────────────
-            if text.strip() and self._detect_auto_task_intent(text):
+            if active_text.strip() and self._detect_auto_task_intent(active_text):
                 # 剥离【自动化】标签后传给解析器
-                clean = text.replace("【自动化】", "").strip()
+                clean = active_text.replace("【自动化】", "").strip()
                 self._try_parse_auto_task(clean)
                 return
             play_sound("ButtonAll.mp3") 
@@ -3540,7 +3543,7 @@ class MainWindow(QMainWindow):
         from threading import Thread
         def route_and_start():
             from brain.intent_router import get_router
-            route_result = get_router().route(text)
+            route_result = get_router().route(active_text)
             is_chat = route_result.route == "chat"
             self._route_ready.emit(text, is_chat, route_result)
         
