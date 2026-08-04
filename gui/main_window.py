@@ -476,6 +476,7 @@ class MainWindow(QMainWindow):
         self._agent_worker.tool_called.connect(self._on_tool_called)
         self._agent_worker.tool_result.connect(self._on_tool_result)
         self._agent_worker.tool_enable_requested.connect(self._on_tool_enable_requested)
+        self._agent_worker.browser_confirmation_requested.connect(self._on_browser_confirmation_requested)
         self._agent_worker.observation_image.connect(self._on_observation_image)
         self._agent_worker.checklist_proposed.connect(self._on_checklist_proposed)
         self._agent_worker.error_occurred.connect(self._on_error)
@@ -1338,6 +1339,7 @@ class MainWindow(QMainWindow):
             self._agent_worker.tool_called.connect(self._on_tool_called)
             self._agent_worker.tool_result.connect(self._on_tool_result)
             self._agent_worker.tool_enable_requested.connect(self._on_tool_enable_requested)
+            self._agent_worker.browser_confirmation_requested.connect(self._on_browser_confirmation_requested)
             self._agent_worker.observation_image.connect(self._on_observation_image)
             self._agent_worker.error_occurred.connect(self._on_error)
             self._agent_worker.start()
@@ -1423,6 +1425,7 @@ class MainWindow(QMainWindow):
         self._agent_worker.tool_called.connect(self._on_tool_called)
         self._agent_worker.tool_result.connect(self._on_tool_result)
         self._agent_worker.tool_enable_requested.connect(self._on_tool_enable_requested)
+        self._agent_worker.browser_confirmation_requested.connect(self._on_browser_confirmation_requested)
         self._agent_worker.observation_image.connect(self._on_observation_image)
         self._agent_worker.error_occurred.connect(self._on_error)
         self._duty_scheduler.set_agent_busy(True)
@@ -1478,6 +1481,40 @@ class MainWindow(QMainWindow):
                 self._chat_widget.add_system_tip(f"已允许莲心启用：{display_name}")
             else:
                 self._chat_widget.add_system_tip(f"未允许启用：{display_name}")
+        finally:
+            request.event.set()
+
+    def _on_browser_confirmation_requested(self, tool_name: str, risk_level: str,
+                                           reason: str, request):
+        """高风险浏览器动作确认。
+
+        “仅此操作”不会改变任务授权；“本次任务允许”只在当前 Agent 请求内
+        放行同等级动作，不写入持久配置。
+        """
+        try:
+            from PyQt5.QtWidgets import QMessageBox
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("浏览器操作确认")
+            box.setText(
+                f"莲心准备执行浏览器高风险操作：{tool_name}\n\n"
+                f"风险等级：{risk_level}\n"
+                f"原因：{reason}\n\n"
+                "不会显示或保存密码、Cookie 等敏感内容。是否继续？"
+            )
+            once_btn = box.addButton("仅此操作", QMessageBox.AcceptRole)
+            task_btn = box.addButton("本次任务允许", QMessageBox.AcceptRole)
+            deny_btn = box.addButton("拒绝", QMessageBox.RejectRole)
+            box.setDefaultButton(deny_btn)
+            box.exec_()
+            clicked = box.clickedButton()
+            request.approved = clicked in (once_btn, task_btn)
+            request.remember = clicked is task_btn
+            if request.approved:
+                label = "本次任务已允许" if request.remember else "已允许一次"
+                self._chat_widget.add_system_tip(f"浏览器安全确认：{label}（{tool_name}）")
+            else:
+                self._chat_widget.add_system_tip(f"已拒绝浏览器高风险操作：{tool_name}")
         finally:
             request.event.set()
 

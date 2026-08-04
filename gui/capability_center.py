@@ -125,6 +125,12 @@ class CapabilityCenter(QDialog):
         """)
         self._refresh_btn.clicked.connect(self._on_refresh)
         header.addWidget(self._refresh_btn)
+        self._browser_debug_btn = QPushButton("🌐 浏览器日志")
+        self._browser_debug_btn.setFixedSize(112, 28)
+        self._browser_debug_btn.setFont(QFont("Microsoft YaHei UI", 9))
+        self._browser_debug_btn.setCursor(Qt.PointingHandCursor)
+        self._browser_debug_btn.clicked.connect(self._open_browser_debug)
+        header.addWidget(self._browser_debug_btn)
         root.addLayout(header)
 
         # 统计卡片
@@ -516,6 +522,18 @@ class CapabilityCenter(QDialog):
         self._refresh_btn.setEnabled(False)
         QTimer.singleShot(100, self._do_refresh)
 
+    def _open_browser_debug(self):
+        try:
+            from gui.browser_debug_dialog import BrowserDebugDialog
+            dialog = BrowserDebugDialog(self)
+            dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+            self._browser_debug_dialog = dialog
+        except Exception as exc:
+            self._global_log_msg(f"打开浏览器调试面板失败：{exc}", "err")
+
     def _do_refresh(self):
         try:
             from brain.skill_manager import discover_skills, activate_all_skills
@@ -561,6 +579,12 @@ class CapabilityCenter(QDialog):
         for skill in skills:
             name = skill["name"]
             active = name in _active_skills
+            if name == "浏览器自动化":
+                try:
+                    from config import get_browser_config
+                    active = active and bool(get_browser_config().get("enabled", True))
+                except Exception:
+                    pass
             tools = skill.get("tool_definitions", [])
             tool_count = len(tools)
             icon = self._skill_icon(name)
@@ -1156,13 +1180,33 @@ class CapabilityCenter(QDialog):
 
     def _on_toggle_skill(self, name):
         from brain.skill_manager import _active_skills, activate_skill, deactivate_skill, save_skill_config
-        if name in _active_skills:
+        browser_enabled = True
+        if name == "浏览器自动化":
+            try:
+                from config import get_browser_config
+                browser_enabled = bool(get_browser_config().get("enabled", True))
+            except Exception:
+                browser_enabled = True
+        currently_active = name in _active_skills and browser_enabled
+        if currently_active:
             deactivate_skill(name)
             self._log(f"⏸ 技能「{name}」已停用", "warn")
         else:
             activate_skill(name)
             self._log(f"▶ 技能「{name}」已启用", "ok")
         save_skill_config()
+        if name == "浏览器自动化":
+            try:
+                from config import get_browser_config, save_browser_config
+                browser_cfg = get_browser_config()
+                browser_cfg["enabled"] = name in _active_skills
+                save_browser_config(browser_cfg)
+                self._log(
+                    "🌐 浏览器能力开关已同步：" + ("开启" if browser_cfg["enabled"] else "关闭"),
+                    "ok" if browser_cfg["enabled"] else "warn",
+                )
+            except Exception as exc:
+                self._log(f"浏览器能力开关同步失败：{exc}", "err")
         self._refresh_all()
 
     def _on_uninstall_skill(self, name):

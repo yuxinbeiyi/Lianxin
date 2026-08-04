@@ -1153,6 +1153,10 @@ def save_heartbeat_config(config: dict):
 
 # ── 浏览器自动化配置默认值 ────────────────────────────────────
 _BROWSER_DEFAULTS = {
+    "enabled": True,          # 浏览器能力总开关；关闭后不会向模型开放浏览器工具
+    "connection_mode": "launch",  # launch=莲心启动；cdp=接管本机已启动浏览器
+    "cdp_endpoint": "http://127.0.0.1:9222",
+    "cdp_timeout": 10_000,
     "headless": False,         # False = 可见窗口，True = 后台运行
     "channel": "msedge",       # 浏览器类型: ""=Chromium, "msedge"=Edge, "chrome"=Chrome
     "timeout": 30_000,

@@ -58,13 +58,17 @@ CATEGORIES = {
     ],
     "🎙️ 语音外设": [
         "speak_voice", "set_voice_mood", "list_voice_styles",
-        "browser_navigate", "browser_snapshot", "browser_click",
-        "browser_fill", "browser_screenshot",
         "shoulder_photo", "shoulder_pan", "shoulder_tilt",
         "shoulder_center", "shoulder_status", "shoulder_temp",
         "start_observation_mode", "stop_observation_mode",
         "shoulder_observe", "shoulder_human_track", "stop_human_track",
         "bilibili_search", "bilibili_add_tag", "bilibili_list_tags",
+    ],
+    "🌐 浏览器自动化": [
+        "browser_navigate", "browser_snapshot", "browser_click",
+        "browser_fill", "browser_press", "browser_scroll",
+        "browser_wait", "browser_tabs", "browser_screenshot",
+        "browser_connect", "browser_disconnect",
     ],
     "🔧 其他": [
         "get_weather", "set_user_city", "set_expression",

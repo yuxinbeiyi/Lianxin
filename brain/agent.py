@@ -31,6 +31,7 @@ from brain.request_router import (
     CAPABILITY_TO_TOOLS, REQUEST_TOOLS_DEFINITION, RequestMode, ToolSessionState,
     classify_request, format_capability_result, normalize_capabilities, required_execution_tool,
 )
+from brain.web_research_task import WebResearchTaskState
 from memory.history_manager import HistoryManager
 from brain.context_compressor import (
     build_fallback_summary,
@@ -130,7 +131,13 @@ _RESOURCE_GROUPS = {
     "browser_snapshot": "browser",
     "browser_click": "browser",
     "browser_fill": "browser",
+    "browser_press": "browser",
+    "browser_scroll": "browser",
+    "browser_wait": "browser",
+    "browser_tabs": "browser",
     "browser_screenshot": "browser",
+    "browser_connect": "browser",
+    "browser_disconnect": "browser",
     "fetch_webpage_browser": "browser",
     # SQLite 写入（共享数据库连接）
     "save_memory": "db_write",
@@ -453,9 +460,39 @@ class AgentCore:
         """本轮回复的 COT 推理链（供 GUI 展示思考过程）。"""
         return self._last_reasoning
 
+    def get_browser_task_debug(self) -> dict:
+        """返回当前浏览器任务的脱敏调试摘要，供调试面板读取。"""
+        state = getattr(self, "_browser_task_state", None)
+        if state is None:
+            return {"status": "idle", "steps": []}
+        return {
+            "task_id": state.task_id,
+            "status": state.status,
+            "actions": state.actions,
+            "max_actions": state.max_actions,
+            "failures": state.failures,
+            "round": state.round_index,
+            "steps": list(state.steps[-20:]),
+        }
+
+    @staticmethod
+    def get_recent_browser_task_log(limit: int = 100, task_id: str = "") -> list[dict]:
+        """读取最近的浏览器脱敏审计事件，供调试面板或诊断脚本使用。"""
+        try:
+            from brain.browser_task_log import read_recent
+            return read_recent(limit=limit, task_id=task_id)
+        except Exception:
+            return []
+
     def cancel_active_request(self, reason: str = "用户发送了新消息") -> bool:
         """Persist a boundary so an interrupted request cannot resume later."""
         self._cancel_event.set()
+        browser_task = getattr(self, "_browser_task_state", None)
+        if browser_task is not None:
+            try:
+                browser_task.cancel(reason)
+            except Exception as exc:
+                logger.debug("取消浏览器任务状态失败: %s", exc)
         if not self.history or self.history[-1].get("role") != "user":
             return False
 
@@ -489,7 +526,8 @@ class AgentCore:
             on_interrupt=None,
             on_progress=None,
             response_guard=None,
-            on_tool_enable_request=None) -> str:
+            on_tool_enable_request=None,
+            on_browser_confirmation=None) -> str:
         """
         处理用户消息并返回 AI 回复。
 
@@ -668,7 +706,8 @@ class AgentCore:
                                                           on_round_start=on_round_start,
                                                           persona_snapshot=persona_snapshot,
                                                           persona_transition=persona_transition,
-                                                          on_tool_enable_request=on_tool_enable_request)
+                                                          on_tool_enable_request=on_tool_enable_request,
+                                                          on_browser_confirmation=on_browser_confirmation)
         except Exception as exc:
             if workflow_store and workflow_run_id:
                 workflow_store.finish_run(workflow_run_id, status="failed", error=str(exc))
@@ -1400,7 +1439,8 @@ class AgentCore:
 
 
     def _execute_tool_calls_parallel(self, tool_calls, messages, on_tool_call=None, on_tool_result=None,
-                                     on_tool_enable_request=None):
+                                     on_tool_enable_request=None,
+                                     on_browser_confirmation=None):
         """资源感知的工具并行执行。
 
         同一轮 LLM 返回的多个工具调用按资源组分类：
@@ -1533,6 +1573,11 @@ class AgentCore:
             if not allowed:
                 event = {"name": name, "args": args, "result": denial,
                          "is_error": True, "authorized": False}
+                from brain.browser_task import BROWSER_TOOL_NAMES
+                if name in BROWSER_TOOL_NAMES:
+                    from brain.browser_security import redact_browser_args, redact_browser_text
+                    event["args"] = redact_browser_args(name, event["args"])
+                    event["result"] = redact_browser_text(event["result"], max_chars=1000)
                 with self._tool_audit_lock:
                     self._request_tool_audit.append(event)
                     self._recent_tool_audit = (self._recent_tool_audit + [event])[-20:]
@@ -1543,6 +1588,26 @@ class AgentCore:
                 if on_tool_result:
                     on_tool_result(name, denial, True, 0.0)
                 continue
+
+            # 复合网页任务的顺序边界：搜索尚未完成时禁止跳过搜索，
+            # 搜索完成后禁止绕过交接工具。
+            web_research_task = getattr(self, "_web_research_task_state", None)
+            if web_research_task:
+                web_denial = web_research_task.admit(name)
+                if web_denial:
+                    event = {"name": name, "args": args, "result": web_denial,
+                             "is_error": True, "authorized": False,
+                             "web_research_task_id": web_research_task.task_id,
+                             "web_research_phase": web_research_task.phase}
+                    with self._tool_audit_lock:
+                        self._request_tool_audit.append(event)
+                        self._recent_tool_audit = (self._recent_tool_audit + [event])[-20:]
+                    messages.append({
+                        "role": "tool", "tool_call_id": tc.id, "content": web_denial,
+                    })
+                    if on_tool_result:
+                        on_tool_result(name, web_denial, True, 0.0)
+                    continue
 
             if name == "web_search":
                 remaining = getattr(self, "_remaining_search_calls", None)
@@ -1593,6 +1658,84 @@ class AgentCore:
                     ),
                 })
                 continue
+            browser_task = getattr(self, "_browser_task_state", None)
+            if browser_task and browser_task.is_browser_tool(name):
+                # 高风险浏览器动作必须经过用户确认；普通读取动作不打断任务。
+                browser_ref_info = None
+                if args.get("ref"):
+                    try:
+                        from brain.browser_controller import get_browser
+                        browser_ref_info = get_browser()._find_ref_info(str(args.get("ref")))
+                    except Exception:
+                        browser_ref_info = None
+                risk = browser_task.risk_for(name, args, browser_ref_info)
+                if browser_task.needs_confirmation(risk):
+                    approval = None
+                    if on_browser_confirmation is not None:
+                        try:
+                            approval = on_browser_confirmation(
+                                name, risk.level, risk.reason, dict(args)
+                            )
+                        except Exception as exc:
+                            logger.warning("浏览器高风险动作确认失败: %s", exc)
+                    if isinstance(approval, dict):
+                        approved = bool(approval.get("approved", False))
+                        remember = bool(approval.get("remember", False))
+                    else:
+                        approved = bool(approval)
+                        remember = False
+                    if approved:
+                        browser_task.approve(risk, remember=remember)
+                    else:
+                        denial = (
+                            "[PERMISSION_REQUIRED] 浏览器动作需要用户确认，当前未获批准。\n"
+                            f"动作={name}，风险等级={risk.level}，原因：{risk.reason}"
+                        )
+                        browser_task.record(name, denial, is_error=True, args=args)
+                        event = {
+                            "name": name,
+                            "args": dict(args),
+                            "result": denial,
+                            "is_error": True,
+                            "authorized": False,
+                            "browser_task_id": browser_task.task_id,
+                            "browser_status": browser_task.status,
+                            "risk_level": risk.level,
+                            "confirmation": "denied",
+                        }
+                        from brain.browser_security import append_browser_audit, redact_browser_args, redact_browser_text
+                        event["args"] = redact_browser_args(name, event["args"])
+                        event["result"] = redact_browser_text(event["result"], max_chars=500)
+                        append_browser_audit(event)
+                        with self._tool_audit_lock:
+                            self._request_tool_audit.append(event)
+                            self._recent_tool_audit = (self._recent_tool_audit + [event])[-20:]
+                        messages.append({
+                            "role": "tool", "tool_call_id": tc.id,
+                            "content": denial,
+                        })
+                        if on_tool_result:
+                            on_tool_result(name, denial, True, 0.0)
+                        continue
+                browser_denial = browser_task.admit(name)
+                if browser_denial:
+                    browser_task.record(name, browser_denial, is_error=True, args=args)
+                    event = {
+                        "name": name, "args": args, "result": browser_denial,
+                        "is_error": True, "authorized": False,
+                        "browser_task_id": browser_task.task_id,
+                        "browser_status": browser_task.status,
+                    }
+                    with self._tool_audit_lock:
+                        self._request_tool_audit.append(event)
+                        self._recent_tool_audit = (self._recent_tool_audit + [event])[-20:]
+                    messages.append({
+                        "role": "tool", "tool_call_id": tc.id,
+                        "content": browser_denial,
+                    })
+                    if on_tool_result:
+                        on_tool_result(name, browser_denial, True, 0.0)
+                    continue
             self._last_tool_call_key = call_key
             self._loop_tool_call_history.add(call_key)
             parsed.append({"tc": tc, "name": name, "args": args})
@@ -1644,7 +1787,11 @@ class AgentCore:
             t0 = _perf_time.perf_counter()
             is_error = False
             try:
-                print(f"\n  [工具调用] {name}({json.dumps(args, ensure_ascii=False)})", flush=True)
+                log_args = args
+                if str(name or "").startswith("browser_"):
+                    from brain.browser_security import redact_browser_args
+                    log_args = redact_browser_args(name, args)
+                print(f"\n  [工具调用] {name}({json.dumps(log_args, ensure_ascii=False)})", flush=True)
                 if name == "run_shell":
                     args["cancel_event"] = self._cancel_event
                 from brain.workflow import workflow_context
@@ -1660,12 +1807,24 @@ class AgentCore:
                     result = _exec(name, args, invocation_mode=invocation_mode)
 
                 preview = result[:200].replace("\n", " ") + ("..." if len(result) > 200 else "")
+                if str(name or "").startswith("browser_"):
+                    from brain.browser_security import redact_browser_text
+                    preview = redact_browser_text(preview, max_chars=240)
                 print(f"  [工具结果] {name} → {preview}\n", flush=True)
             except Exception as e:
                 result = f"工具执行错误: {e}"
                 is_error = True
                 print(f"  [工具错误] {name} → {e}\n", flush=True)
             elapsed_ms = (_perf_time.perf_counter() - t0) * 1000
+            web_research_task = getattr(self, "_web_research_task_state", None)
+            if web_research_task:
+                web_research_task.record(name, result, is_error=is_error)
+            browser_task = getattr(self, "_browser_task_state", None)
+            browser_step = None
+            if browser_task and browser_task.is_browser_tool(name):
+                browser_step = browser_task.record(
+                    name, result, is_error=is_error, args=args, duration_ms=elapsed_ms
+                )
             if name in _OWNER_MEMORY_TOOLS and self._active_memory_trace_id:
                 try:
                     from brain.memory_diagnostics import record_memory_event
@@ -1673,10 +1832,27 @@ class AgentCore:
                                         reason=name, payload={"tool": name, "is_error": is_error,
                                         "elapsed_ms": round(elapsed_ms, 1), "result": str(result)[:1000]})
                 except Exception: pass
+            from brain.browser_security import append_browser_audit, redact_browser_args, redact_browser_text
+            ui_result = (
+                redact_browser_text(result, tool=name, max_chars=500)
+                if browser_task and browser_task.is_browser_tool(name)
+                else str(result)
+            )
             if on_tool_result:
-                on_tool_result(name, result, is_error, elapsed_ms)
+                on_tool_result(name, ui_result, is_error, elapsed_ms)
             event = {"name": name, "args": dict(args), "result": str(result),
                      "is_error": is_error, "authorized": True}
+            if browser_task and browser_task.is_browser_tool(name):
+                event.update({
+                    "browser_task_id": browser_task.task_id,
+                    "browser_step": browser_step.get("step") if browser_step else None,
+                    "browser_status": browser_task.status,
+                    "duration_ms": round(elapsed_ms, 1),
+                    "risk_level": browser_task.risk_for(name, args).level,
+                })
+                event["args"] = redact_browser_args(name, event["args"])
+                event["result"] = redact_browser_text(event["result"], max_chars=1000)
+                append_browser_audit(event)
             with self._tool_audit_lock:
                 self._request_tool_audit.append(event)
                 self._recent_tool_audit = (self._recent_tool_audit + [event])[-20:]
@@ -2055,7 +2231,8 @@ class AgentCore:
                                on_progress=None, user_message: str = "",
                                on_round_start=None, persona_snapshot=None,
                                persona_transition: str = "",
-                               on_tool_enable_request=None) -> str:
+                               on_tool_enable_request=None,
+                               on_browser_confirmation=None) -> str:
 
        
         _t0 = time.time()
@@ -2079,6 +2256,13 @@ class AgentCore:
         )
         self._tool_session_state.begin(route, user_message)
         self._request_route = route
+        from brain.browser_task import BrowserTaskState
+        self._browser_task_state = (
+            BrowserTaskState() if "browser" in route.capabilities else None
+        )
+        # 复合网页任务使用独立的本地状态机协调 web_search 与后续交接；
+        # 普通搜索、普通网页读取和单独浏览器任务不受影响。
+        self._web_research_task_state = WebResearchTaskState.from_request(user_message)
         self._request_discovered_tool_names: set[str] = set()
         self._requested_capability_sets: set[tuple[str, ...]] = set()
         with self._tool_audit_lock:
@@ -2089,6 +2273,32 @@ class AgentCore:
             messages.append({"role": "system", "content": _COMPACT_MEMORY_POLICY,
                              "_module": "memory_policy"})
         print(f"[请求路由] {route.mode.value}: {route.reason or '默认'}", flush=True)
+        if self._browser_task_state:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "【浏览器任务循环】\n"
+                    "必须遵循：观察最新页面 → 每轮只执行一个浏览器主要动作 → "
+                    "读取动作返回的新快照 → 验证是否完成。"
+                    "点击、填写、按键或按 ref 滚动时，必须携带最近快照中的 snapshot_id。"
+                    "如果返回 STALE_SNAPSHOT 或 STALE_REF，立即调用 browser_snapshot，"
+                    "不要继续使用旧 ref；不要在同一轮并行调用多个浏览器动作。"
+                    "涉及提交、发送、删除、上传、支付、登录或关闭标签页时，必须等待用户确认；"
+                    "用户拒绝后不得换工具绕过确认。"
+                ),
+            })
+        if self._web_research_task_state:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "【网页研究与浏览器交互复合任务】\n"
+                    "本任务必须按‘先搜索证据，再交接执行’的顺序完成。"
+                    "第一阶段只调用 web_search；搜索结果返回后，选择其中的原始链接，"
+                    "再按任务目标调用 fetch_webpage 或浏览器工具。"
+                    "不得把‘我去搜索/我已打开’等计划性文字当成执行结果。\n"
+                    + self._web_research_task_state.next_prompt()
+                ),
+            })
         if _recent_assistant_repetition(self.history, user_message):
             messages.append({
                 "role": "system",
@@ -2579,7 +2789,9 @@ class AgentCore:
         available_tool_names = {
             item.get("function", {}).get("name", "") for item in all_tools
         }
-        required_tool = required_execution_tool(route, available_tool_names)
+        required_tool = required_execution_tool(
+            route, available_tool_names, self._current_request_text
+        )
         if required_tool == "navigate_to_marker" and not any(
             token in _msg_for_match.lower() for token in ("标记", "前往", "到达", "去")
         ):
@@ -2625,6 +2837,24 @@ class AgentCore:
         while iteration < MAX_ITERATIONS:
             iteration += 1
             _prompt_build_started = _t0 if iteration == 1 else time.time()
+
+            # 复合任务每一阶段只强制当前应执行的工具；搜索完成后自动
+            # 放行交接工具，避免一直把 web_search 固定到整个循环。
+            web_research_task = getattr(self, "_web_research_task_state", None)
+            if web_research_task:
+                web_research_task.begin_round()
+                expected_web_tool = web_research_task.expected_tool
+                forced_tool = expected_web_tool
+                if expected_web_tool:
+                    messages.append({
+                        "role": "system",
+                        "content": web_research_task.next_prompt(),
+                    })
+
+            if self._browser_task_state:
+                self._browser_task_state.begin_round()
+                if self._browser_task_state.status != "running":
+                    return self._browser_task_state.stop_message()
 
             if self._cancel_event.is_set():
                 print("  [循环终止] 收到取消信号", flush=True)
@@ -2825,6 +3055,28 @@ class AgentCore:
 
                 # 明确工具任务的第一步必须留下真实审计记录。模型偶尔会先说
                 # “收到/我去查”，这不是完成结果，也不能交付给用户。
+                # 复合网页任务的阶段交接必须留下真实审计记录。模型偶尔会
+                # 在搜索后直接输出“我去打开”，这里把下一步工具强制补上。
+                web_research_task = getattr(self, "_web_research_task_state", None)
+                if web_research_task and web_research_task.phase == "handoff":
+                    expected_web_tool = web_research_task.expected_tool
+                    if expected_web_tool and not has_successful_tool_call(
+                        request_audit, {expected_web_tool}
+                    ):
+                        if web_research_task.retry_count < 2:
+                            web_research_task.retry_count += 1
+                            forced_tool = expected_web_tool
+                            messages.append({
+                                "role": "system",
+                                "content": web_research_task.next_prompt(),
+                            })
+                            continue
+                        return web_research_task.stop_message()
+                # 浏览器导航已经返回页面快照时，打开网页这一类复合任务
+                # 可以安全收尾；后续浏览器动作仍由浏览器任务状态机负责。
+                if web_research_task and web_research_task.phase == "browser":
+                    web_research_task.phase = "completed"
+
                 if (required_tool
                         and not has_successful_tool_call(request_audit, {required_tool})
                         and _execution_contract_retry_count < 1):
@@ -2957,6 +3209,8 @@ class AgentCore:
                     final_content, _msg_for_match, request_audit,
                     capabilities=route.capabilities, mode=route.mode.value,
                 )
+                if self._browser_task_state:
+                    self._browser_task_state.complete()
                 return final_content
             elif finish == "tool_calls":
                 from types import SimpleNamespace
@@ -3000,6 +3254,7 @@ class AgentCore:
                     on_tool_call=on_tool_call,
                     on_tool_result=on_tool_result,
                     on_tool_enable_request=on_tool_enable_request,
+                    on_browser_confirmation=on_browser_confirmation,
                 )
 
                 if getattr(self, "_search_budget_exhausted", False):

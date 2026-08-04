@@ -17,6 +17,24 @@ NETWORK_READ_TOOLS = {
     "fetch_webpage_stealth", "fetch_webpage_browser",
 }
 URL_FETCH_TOOLS = {"fetch_webpage"}
+BROWSER_TOOLS = {
+    "browser_navigate", "browser_snapshot", "browser_click",
+    "browser_fill", "browser_press", "browser_scroll",
+    "browser_wait", "browser_tabs", "browser_screenshot",
+    "browser_connect", "browser_disconnect",
+}
+
+_BROWSER_INTERACTION_RE = re.compile(
+    r"(?:"
+    r"用浏览器|浏览器(?:打开|访问|进入|操作|点击|输入|填写|登录|截图|滚动)|"
+    r"打开网页|网页上(?:点击|输入|填写|登录|搜索|滚动)|"
+    r"页面上(?:点击|输入|填写|登录|选择|滚动)|"
+    r"网页(?:点击|填表|自动登录|自动化)|"
+    r"浏览器自动化|接管(?:我)?(?:已经|已)?打开的浏览器|接管浏览器|CDP|"
+    r"(?:搜|搜索|查找|检索).{0,48}(?:打开|访问|进入|浏览器|接管)"
+    r")",
+    re.IGNORECASE,
+)
 
 _NETWORK_CODE_RE = re.compile(
     r"\b(?:requests?|urllib|httpx|aiohttp|socket)\b|https?://",
@@ -99,19 +117,33 @@ def is_external_lookup_request(text: str) -> bool:
 def request_tool_allowlist(text: str) -> set[str] | None:
     """URL 请求使用严格读取白名单；普通请求返回 ``None``。"""
     if extract_urls(text):
-        return set(URL_FETCH_TOOLS) | {"get_current_time"}
+        allowed = set(URL_FETCH_TOOLS) | {"get_current_time"}
+        # 明确的浏览器交互不能被普通 URL 阅读策略降级掉。
+        if _BROWSER_INTERACTION_RE.search(str(text or "")):
+            allowed.update(BROWSER_TOOLS)
+        return allowed
     return None
 
 
 def filter_definitions_for_request(definitions: Iterable[dict], text: str) -> list[dict]:
     """在工具定义注入前应用请求级白名单。"""
     definitions = list(definitions)
+    browser_enabled = True
+    try:
+        from config import get_browser_config
+        browser_enabled = bool(get_browser_config().get("enabled", True))
+    except Exception:
+        pass
     allowed = request_tool_allowlist(text)
     if allowed is None:
-        return definitions
+        return [
+            item for item in definitions
+            if browser_enabled or item.get("function", {}).get("name", "") not in BROWSER_TOOLS
+        ]
     return [
         item for item in definitions
         if item.get("function", {}).get("name", "") in allowed
+        and (browser_enabled or item.get("function", {}).get("name", "") not in BROWSER_TOOLS)
     ]
 
 
@@ -121,11 +153,24 @@ def authorize_tool_call(name: str, args: dict, request_text: str,
     request = str(request_text or "")
     lowered = request.lower()
 
+    if name in BROWSER_TOOLS:
+        try:
+            from config import get_browser_config
+            if not bool(get_browser_config().get("enabled", True)):
+                return False, "浏览器自动化能力当前已关闭，请先在浏览器能力设置中启用。"
+        except Exception:
+            pass
+
     allowed = request_tool_allowlist(request)
     if allowed is not None and name not in allowed:
         return False, (
             f"本轮是 URL 阅读请求，已阻止无关工具 {name}。"
-            "请仅使用 fetch_webpage 获取该 URL 的正文。"
+            + (
+                "请使用 browser_navigate/browser_snapshot/browser_click/browser_fill/browser_press/browser_scroll/browser_wait/browser_tabs 完成浏览器交互；"
+                "如用户明确要求接管已打开浏览器，可使用 browser_connect。"
+                if _BROWSER_INTERACTION_RE.search(request)
+                else "请仅使用 fetch_webpage 获取该 URL 的正文。"
+            )
         )
 
     if (name in NETWORK_READ_TOOLS and network_change_requested(request)

@@ -33,6 +33,7 @@ class AgentWorker(QThread):
     tool_called    = pyqtSignal(str, str, int)                  # name, args_json, round_num
     tool_result    = pyqtSignal(str, str, bool, int, float)     # name, preview, is_error, round_num, elapsed_ms
     tool_enable_requested = pyqtSignal(str, str, str, object)   # key, display_name, reason, request
+    browser_confirmation_requested = pyqtSignal(str, str, str, object)  # tool, risk, reason, request
     observation_image = pyqtSignal(str, str)  # 观察图片 (path, desc) 用于气泡显示
     checklist_proposed = pyqtSignal(list)     # 后台提取的待办列表 [{"title":...,"due_time":...,"priority":...}]
     error_occurred = pyqtSignal(str)
@@ -95,7 +96,14 @@ class AgentWorker(QThread):
             self.agent._checklist_callback = on_checklist_extracted
 
             def on_tool_call(name, args):
-                args_json = _json.dumps(args, ensure_ascii=False) if args else "{}"
+                safe_args = args or {}
+                if str(name or "").startswith("browser_"):
+                    try:
+                        from brain.browser_security import redact_browser_args
+                        safe_args = redact_browser_args(name, safe_args)
+                    except Exception:
+                        safe_args = {"redacted": True}
+                args_json = _json.dumps(safe_args, ensure_ascii=False) if safe_args else "{}"
                 self.tool_called.emit(name, args_json, current_round[0])
 
             def on_tool_result(name, result, is_error=False, elapsed_ms=0):
@@ -119,11 +127,29 @@ class AgentWorker(QThread):
                     return False
                 return bool(request.approved)
 
+            def on_browser_confirmation(tool_name, risk_level, reason, args):
+                """高风险浏览器动作在 GUI 线程中确认，工作线程等待结果。"""
+                request = type("BrowserConfirmationRequest", (), {})()
+                request.event = threading.Event()
+                request.approved = False
+                request.remember = False
+                request.args = args or {}
+                self.browser_confirmation_requested.emit(
+                    str(tool_name), str(risk_level), str(reason), request
+                )
+                if not request.event.wait(timeout=120):
+                    return {"approved": False, "remember": False}
+                return {
+                    "approved": bool(request.approved),
+                    "remember": bool(request.remember),
+                }
+
             response = self.agent.chat(
                 self.message,
                 on_tool_call=on_tool_call,
                 on_tool_result=on_tool_result,
                 on_tool_enable_request=on_tool_enable_request,
+                on_browser_confirmation=on_browser_confirmation,
                 on_round_start=on_round_start,
                 forced_tool=self.forced_tool,
                 preferred_tool=self.preferred_tool,

@@ -22,6 +22,22 @@ CAPABILITY_TO_TOOLS: dict[str, set[str]] = {
     "time": {"get_current_time"},
     "web_search": {"web_search"},
     "web_fetch": {"fetch_webpage"},
+    # 复合网页任务不是新的网络工具，而是把“搜索证据”和“后续交接”
+    # 绑定成一条有顺序的工作流。执行层会先强制 web_search，再根据
+    # 用户意图交给 fetch_webpage 或浏览器工具。
+    "web_research": {
+        "web_search", "fetch_webpage",
+        "browser_navigate", "browser_snapshot", "browser_click",
+        "browser_fill", "browser_press", "browser_scroll",
+        "browser_wait", "browser_tabs", "browser_screenshot",
+        "browser_connect", "browser_disconnect",
+    },
+    "browser": {
+        "browser_navigate", "browser_snapshot", "browser_click",
+        "browser_fill", "browser_press", "browser_scroll",
+        "browser_wait", "browser_tabs", "browser_screenshot",
+        "browser_connect", "browser_disconnect",
+    },
     "file_read": {"read_file", "read_file_chunk", "read_file_lines", "search_files_everything"},
     "file_write": {"write_file", "edit_file"},
     "code": {"search_code", "code_structure", "code_goto_def", "code_find_refs", "code_diagnostics",
@@ -43,6 +59,8 @@ CAPABILITY_DESCRIPTIONS = {
     "time": "查询精确日期、时间、农历或节日",
     "web_search": "搜索实时网络资料",
     "web_fetch": "读取指定网页正文",
+    "web_research": "先搜索并核验来源，再读取网页或交给浏览器继续操作",
+    "browser": "使用浏览器打开网页并进行点击、输入、滚动或截图",
     "file_read": "查找并读取本地文件",
     "file_write": "创建或修改本地文件",
     "code": "分析、运行、修改或测试代码",
@@ -76,10 +94,51 @@ _DIRECT_WEB_FETCH_RE = re.compile(
     re.IGNORECASE,
 )
 
+# 明确要求浏览器交互时，必须让浏览器技能在首轮进入工具定义。
+# 纯“搜索/读取网页”仍走 web_search / fetch_webpage，不强行启动可见浏览器。
+_BROWSER_INTERACTION_RE = re.compile(
+    r"(?:"
+    r"用浏览器|浏览器(?:打开|访问|进入|操作|点击|输入|填写|登录|截图|滚动)|"
+    r"打开网页|网页上(?:点击|输入|填写|登录|搜索|滚动)|"
+    r"页面上(?:点击|输入|填写|登录|选择|滚动)|"
+    r"网页(?:点击|填表|自动登录|自动化)|"
+    r"浏览器自动化|接管(?:我)?(?:已经|已)?打开的浏览器|接管浏览器|CDP"
+    r")",
+    re.IGNORECASE,
+)
+_BROWSER_CDP_RE = re.compile(
+    r"接管(?:我)?(?:已经|已)?打开的浏览器|接管浏览器|连接(?:本机|本地)?(?:浏览器|CDP)|CDP",
+    re.IGNORECASE,
+)
+
+# “搜索并打开/操作”与单独搜索、单独读取网页是不同的任务：前者需要
+# 保留搜索证据，再把选中的 URL 交给下一层执行。这里只识别明确的
+# 顺序关系，避免把普通“打开网页并搜索”误判成复合研究任务。
+_WEB_RESEARCH_RE = re.compile(
+    r"(?:"
+    r"(?:先|先去|先帮我)?(?:搜|搜索|查|查找|检索|联网搜索|上网搜索)"
+    r".{0,48}(?:再|然后|之后|随后|并(?:且)?).{0,18}"
+    r"(?:打开|访问|进入|浏览器|接管|点击|操控|操作|查看正文|读取正文|阅读|总结)"
+    r"|"
+    r"(?:搜|搜索|查找|检索).{0,48}(?:并|然后|再).{0,12}"
+    r"(?:打开|访问|进入|浏览器|接管|点击|操控|操作|查看|读取|阅读)"
+    r")",
+    re.IGNORECASE,
+)
+_WEB_RESEARCH_READ_RE = re.compile(
+    r"(?:查看正文|读取正文|阅读原文|打开后(?:看看|阅读|总结)|搜索后(?:看看|阅读|总结)|"
+    r"搜索.*(?:并|然后|再).*(?:查看|读取|阅读|总结))",
+    re.IGNORECASE,
+)
+
 # 这些能力对应的操作没有歧义：用户一旦明确提出，就必须先取得真实执行记录。
 _PRIMARY_EXECUTION_TOOLS = {
+    # 明确的浏览器交互优先于“URL 读取”，否则“用浏览器打开 URL”会被
+    # 同时命中的 web_fetch 能力抢先固定为 fetch_webpage。
+    "browser": "browser_navigate",
     "web_fetch": "fetch_webpage",
     "web_search": "web_search",
+    "web_research": "web_search",
     "weather": "get_weather",
     "time": "get_current_time",
     "embodied": "navigate_to_marker",
@@ -129,7 +188,8 @@ class ToolSessionState:
         self.last_intent = str(message or "")[:500]
 
 
-def required_execution_tool(route: RequestRoute, available_tool_names: Iterable[str]) -> str | None:
+def required_execution_tool(route: RequestRoute, available_tool_names: Iterable[str],
+                            request_text: str = "") -> str | None:
     """Return the deterministic first tool for an explicit external task.
 
     ``None`` deliberately means that the model may choose among several valid
@@ -138,7 +198,30 @@ def required_execution_tool(route: RequestRoute, available_tool_names: Iterable[
     if route.mode not in {RequestMode.TASK_DIRECT, RequestMode.TASK_CONTINUATION}:
         return None
     available = set(available_tool_names)
+
+    # 复合任务的第一步永远是搜索。后续步骤由 WebResearchTaskState
+    # 根据搜索结果和目标模式切换，不在这里提前固定浏览器动作。
+    if "web_research" in route.capabilities and "web_search" in available:
+        return "web_search"
+
+    # 浏览器任务的第一步取决于是否带有 URL：
+    # - URL + browser：先导航；
+    # - 仅 browser：先观察当前页面，不能凭空要求 browser_navigate 的 url 参数。
+    if "browser" in route.capabilities:
+        if _BROWSER_CDP_RE.search(str(request_text or "")):
+            if "browser_connect" in available:
+                return "browser_connect"
+        browser_first = (
+            "browser_navigate"
+            if "web_fetch" in route.capabilities
+            else "browser_snapshot"
+        )
+        if browser_first in available:
+            return browser_first
+
     for capability, tool_name in _PRIMARY_EXECUTION_TOOLS.items():
+        if capability == "browser":
+            continue
         if capability in route.capabilities and tool_name in available:
             return tool_name
     return None
@@ -209,12 +292,23 @@ def classify_request(message: str, *, recent_messages: Iterable[dict] = (),
 
     capabilities: set[str] = set()
     reasons: list[str] = []
+    composite_web_task = bool(_WEB_RESEARCH_RE.search(text))
+    # 已经给出明确 URL 的“读取正文”请求仍走原有 fetch_webpage 直读路径，
+    # 不为了“搜索并读取”几个字额外增加一次搜索，保持兼容与低延迟。
+    if composite_web_task and _URL_RE.search(text) and _WEB_RESEARCH_READ_RE.search(text):
+        composite_web_task = False
+    if composite_web_task:
+        capabilities.add("web_research")
+        reasons.append("用户要求先搜索再读取或交给浏览器继续操作")
     if not _NEGATED_SEARCH_RE.search(text) and _DIRECT_WEB_SEARCH_RE.search(text):
         capabilities.add("web_search")
         reasons.append("用户明确点名联网搜索工具")
     if _DIRECT_WEB_FETCH_RE.search(text):
         capabilities.add("web_fetch")
         reasons.append("用户明确点名网页读取工具")
+    if _BROWSER_INTERACTION_RE.search(text):
+        capabilities.add("browser")
+        reasons.append("用户明确要求浏览器交互")
     if _URL_RE.search(text):
         capabilities.add("web_fetch")
         reasons.append("包含 URL")
@@ -243,6 +337,14 @@ def classify_request(message: str, *, recent_messages: Iterable[dict] = (),
     ):
         capabilities.add("web_search")
         reasons.append("明确联网搜索或来源要求")
+
+    # 复合网页任务已经包含搜索与交接能力；保留具体能力标签便于旧逻辑
+    # 和工具目录继续工作，但不让它们改变第一步的确定性顺序。
+    if composite_web_task:
+        if _WEB_RESEARCH_READ_RE.search(text):
+            capabilities.add("web_fetch")
+        else:
+            capabilities.add("browser")
     if re.search(r"(?:这段代码|代码块|函数|脚本|仓库|git |commit|单元测试|调试|修复.{0,8}(?:bug|代码)|运行.{0,8}(?:代码|脚本))", lowered):
         capabilities.add("code")
         reasons.append("明确代码任务")
