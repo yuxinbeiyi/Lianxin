@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QPixmap, QMovie
+import re
 
 from utils.settings import get_settings
 from gui.avatar_widgets import CircularAvatar
@@ -60,6 +61,20 @@ class MessageBubble(QWidget):
         inner = QVBoxLayout(bubble)
         inner.setContentsMargins(0, 0, 0, 0)
         inner.setSpacing(0)
+
+        quote_match = re.match(r'^\[引用回复\]\s*(?P<sender>[^：:]+)说：["“](?P<quote>.*?)["”]\s*\n---\s*\n我的回复：(?P<reply>[\s\S]*)$', text, re.S)
+        if quote_match:
+            sender = quote_match.group("sender").strip()
+            quoted = re.sub(r"\s+", " ", quote_match.group("quote").strip())
+            if len(quoted) > 96:
+                quoted = quoted[:96].rstrip() + "…"
+            quote_card = QLabel(f"{sender}：{quoted}")
+            quote_card.setWordWrap(True)
+            quote_card.setMaximumHeight(48)
+            quote_card.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            quote_card.setStyleSheet("color: #B8BDD3; background: rgba(255,255,255,0.07); border-left: 3px solid #8A98F0; border-radius: 4px; padding: 6px 8px;")
+            inner.addWidget(quote_card)
+            text = quote_match.group("reply").strip()
 
         label = QLabel(text)
         label.setWordWrap(True)
