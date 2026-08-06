@@ -54,6 +54,21 @@ _MEMORY_SAVE_WORDS = (
     "save this memory", "remember this",
 )
 
+_MEMORY_BACKGROUND_MARKERS = (
+    "我叫", "我的名字", "我喜欢", "我偏好", "我习惯", "我是", "我在",
+    "我从事", "我的职业", "我的工作", "我的项目", "我目前使用",
+)
+
+
+def classify_memory_write_intent(text: str) -> str:
+    """Classify memory writes without inferring consent for immediate writes."""
+    value = _normalized_request_text(text).lower()
+    if any(token in value for token in _MEMORY_SAVE_WORDS):
+        return "explicit"
+    if any(token in value for token in _MEMORY_BACKGROUND_MARKERS):
+        return "background"
+    return "none"
+
 
 def _normalized_request_text(text: str) -> str:
     """只将当前用户意图交给权限层，隔离引用中的旧 URL/任务。"""
@@ -208,8 +223,12 @@ def authorize_tool_call(name: str, args: dict, request_text: str,
         if action != "status" and not (has_network_context and has_change_intent):
             return False, "修改联网工具配置需要用户在本轮明确提出启停、排序或恢复默认。"
 
-    if name == "save_memory" and not any(token in lowered for token in _MEMORY_SAVE_WORDS):
-        return False, "写入长期记忆需要用户在本轮明确要求‘记住’或‘保存到长期记忆’。"
+    if name == "save_memory":
+        intent = classify_memory_write_intent(request)
+        if intent != "explicit":
+            if intent == "background":
+                return False, "这条信息将交给后台自动记忆提取；当前回合未获得立即写入授权。"
+            return False, "立即写入长期记忆需要用户明确说“请记住”或“保存到长期记忆”。"
 
     if name in {"update_memory", "delete_memory", "review_memory_conflict"}:
         has_memory_context = "记忆" in lowered

@@ -13,6 +13,21 @@ def _succeeded(audit: Iterable[dict], names: set[str]) -> bool:
     )
 
 
+def _successful_memory_save(audit: Iterable[dict]) -> bool:
+    """Require a real, non-error save_memory result before confirming storage."""
+    failure_markers = (
+        "失败", "错误", "不能写入", "不能为空", "被阻止", "不可写入",
+        "failed", "error", "blocked", "refused",
+    )
+    for item in audit:
+        if item.get("name") != "save_memory" or item.get("is_error", False):
+            continue
+        result = str(item.get("result", "") or "").lower()
+        if result and not any(marker in result for marker in failure_markers):
+            return True
+    return False
+
+
 def validate_execution_claims(content: str, request_text: str, audit: Iterable[dict],
                               *, capabilities: Iterable[str] = (), mode: str = "") -> str:
     """Replace only high-risk unsupported completion claims with an honest result.
@@ -24,6 +39,22 @@ def validate_execution_claims(content: str, request_text: str, audit: Iterable[d
     request = str(request_text or "")
     events = list(audit or ())
     capability_set = set(capabilities or ())
+
+    # Memory claims are stricter than ordinary conversational wording.  The
+    # model may acknowledge a fact in natural language, but it may only claim
+    # durable storage after the audited save_memory tool succeeded.
+    memory_request = re.search(
+        r"(?:\u8bb0\u4f4f|\u8bb0\u4e0b\u6765|\u957f\u671f\u8bb0\u5fc6|\u6c38\u4e45\u8bb0\u5fc6|\u4fdd\u5b58.*\u8bb0\u5fc6|\u5199\u5165.*\u8bb0\u5fc6)",
+        request,
+        re.IGNORECASE,
+    )
+    memory_claim = re.search(
+        r"(?:\u8bb0\u4f4f\u4e86|\u5df2\u7ecf\u8bb0\u4f4f|\u5df2(?:\u7ecf)?\u5199\u5165.*(?:\u957f\u671f\u8bb0\u5fc6|\u8bb0\u5fc6)|\u5df2(?:\u7ecf)?\u4fdd\u5b58.*(?:\u8bb0\u5fc6|\u8bb0\u5fc6\u5e93)|\u4ee5\u540e.*\u4f1a\u8bb0\u5f97)",
+        text,
+        re.IGNORECASE,
+    )
+    if memory_claim and (memory_request or memory_claim) and not _successful_memory_save(events):
+        return "我还没有把这条信息写入长期记忆；如果你希望永久保存，请明确告诉我“请记住这件事”。"
 
     if re.search(r"(?:搜索|联网|查最新|查一下|资料|新闻)", request):
         claims = re.search(r"(?:我|已经|刚刚).{0,10}(?:搜索|查到|检索|浏览)", text)
