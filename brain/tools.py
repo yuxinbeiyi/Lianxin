@@ -2779,32 +2779,66 @@ _EVERYTHING_ES_PATH: str | None = None
 def _fallback_search_folder(folder: str, keyword: str, ext: str = "", recent_days: int = 0, max_results: int = 20) -> str | None:
     """Everything 失效时的 Python 降级搜索（递归搜索子目录）"""
     from datetime import datetime, timedelta
+    import os
+    import time
 
     base = Path(folder).expanduser().resolve()
     if not base.exists() or not base.is_dir():
         return None
 
+    # Never recursively scan a drive or a whole user profile as a fallback.
+    anchor = base.anchor.rstrip("\\/").lower()
+    normalized = str(base).rstrip("\\/").lower()
+    home = str(Path.home().resolve()).rstrip("\\/").lower()
+    if normalized in {anchor, home, f"{anchor}\\users", f"{anchor}\\users\\public"}:
+        return ("⚠️ 为避免扫描整个磁盘或用户目录导致界面卡死，已拒绝宽范围回退搜索。"
+                "请指定更具体的文件夹，或安装并启动 Everything。")
+
     exts = [e.strip().lower() for e in ext.split(';') if e.strip()]
     cutoff = datetime.now() - timedelta(days=recent_days) if recent_days > 0 else None
 
+    max_results = max(1, min(int(max_results or 20), 100))
+    max_entries = 100_000
+    deadline = time.monotonic() + 8.0
     matches = []
-    for entry in base.rglob('*'):
-        if not entry.is_file():
+    pending = [str(base)]
+    scanned = 0
+    keyword_lower = str(keyword or "").lower()
+    while pending and scanned < max_entries and time.monotonic() < deadline:
+        current = pending.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    scanned += 1
+                    if scanned >= max_entries or time.monotonic() >= deadline:
+                        break
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(entry.path)
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        entry_path = Path(entry.path)
+                        if keyword_lower not in entry_path.name.lower():
+                            continue
+                        if exts and entry_path.suffix.lower().lstrip('.') not in exts:
+                            continue
+                        if cutoff and datetime.fromtimestamp(entry.stat().st_mtime) < cutoff:
+                            continue
+                        matches.append(entry.path)
+                        if len(matches) >= max_results:
+                            pending.clear()
+                            break
+                    except (OSError, PermissionError):
+                        continue
+        except (OSError, PermissionError):
             continue
-        if keyword.lower() not in entry.name.lower():
-            continue
-        if exts and entry.suffix.lower().lstrip('.') not in exts:
-            continue
-        if cutoff:
-            mtime = datetime.fromtimestamp(entry.stat().st_mtime)
-            if mtime < cutoff:
-                continue
-        matches.append(str(entry))
 
     if not matches:
+        if scanned >= max_entries or time.monotonic() >= deadline:
+            return "⚠️ 回退搜索已达到安全上限，未继续扫描。请指定更具体的文件夹。"
         return None
 
-    matches = matches[:max_results]
     lines = [f"找到 {len(matches)} 个文件:"]
     for i, m in enumerate(matches, 1):
         lines.append(f"  {i}. {m}")

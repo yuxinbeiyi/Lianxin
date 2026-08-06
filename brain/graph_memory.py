@@ -118,6 +118,7 @@ def _init_tables(conn: sqlite3.Connection):
         "ALTER TABLE memory_facts ADD COLUMN source_channel TEXT DEFAULT ''",
         "ALTER TABLE memory_facts ADD COLUMN embedding_model TEXT DEFAULT ''",
         "ALTER TABLE memory_facts ADD COLUMN embedding_version INTEGER DEFAULT 1",
+        "ALTER TABLE memory_facts ADD COLUMN embedding_content_hash TEXT DEFAULT ''",
         "ALTER TABLE memory_facts ADD COLUMN status TEXT DEFAULT 'active'",
         "ALTER TABLE memory_facts ADD COLUMN valid_from TEXT DEFAULT ''",
         "ALTER TABLE memory_facts ADD COLUMN valid_to TEXT DEFAULT ''",
@@ -721,17 +722,20 @@ def add_fact(content: str, category: str = "knowledge",
             pass
 
     if emb_bytes:
+        from utils.embedding_cache import content_hash
         conn.execute(
             """INSERT INTO memory_facts
-               (content, category, source, embedding, embedding_model, updated_at,
+               (content, category, source, embedding, embedding_model, embedding_content_hash, updated_at,
                 occurred_at, source_session_id, source_channel, status)
-               VALUES (?, ?, ?, ?, 'BAAI/bge-small-zh-v1.5', datetime('now','localtime'), ?, ?, ?, 'active')
+               VALUES (?, ?, ?, ?, 'BAAI/bge-small-zh-v1.5', ?, datetime('now','localtime'), ?, ?, ?, 'active')
                ON CONFLICT(content, category) DO UPDATE SET
                strength = strength + CASE WHEN excluded.source='auto_extracted' THEN 0 ELSE 1 END,
                source = excluded.source, embedding=excluded.embedding,
                embedding_model=excluded.embedding_model,
+               embedding_content_hash=excluded.embedding_content_hash,
                updated_at=datetime('now','localtime'), status='active'""",
-            (content, category, source, emb_bytes, occurred_at, source_session_id, source_channel)
+            (content, category, source, emb_bytes, content_hash(content),
+             occurred_at, source_session_id, source_channel)
         )
     else:
         conn.execute(
@@ -994,27 +998,31 @@ def update_facts(
         except Exception:
             pass
     if category:
+        from utils.embedding_cache import content_hash
         cur = conn.execute(
             """UPDATE memory_facts SET content=?, source='user_saved',
-               embedding=?, embedding_model=?, updated_at=datetime('now','localtime'),
+               embedding=?, embedding_model=?, embedding_content_hash=?, updated_at=datetime('now','localtime'),
                source_session_id=COALESCE(?, source_session_id),
                source_channel=CASE WHEN ?<>'' THEN ? ELSE source_channel END,
                status='active'
                WHERE content LIKE ? AND category=? AND status='active'""",
             (new_content, new_embedding,
              'BAAI/bge-small-zh-v1.5' if new_embedding else '',
+             content_hash(new_content) if new_embedding else '',
              source_session_id, source_channel, source_channel, q, category)
         )
     else:
+        from utils.embedding_cache import content_hash
         cur = conn.execute(
             """UPDATE memory_facts SET content=?, source='user_saved',
-               embedding=?, embedding_model=?, updated_at=datetime('now','localtime'),
+               embedding=?, embedding_model=?, embedding_content_hash=?, updated_at=datetime('now','localtime'),
                source_session_id=COALESCE(?, source_session_id),
                source_channel=CASE WHEN ?<>'' THEN ? ELSE source_channel END,
                status='active'
                WHERE content LIKE ? AND status='active'""",
             (new_content, new_embedding,
              'BAAI/bge-small-zh-v1.5' if new_embedding else '',
+             content_hash(new_content) if new_embedding else '',
              source_session_id, source_channel, source_channel, q)
         )
     try:

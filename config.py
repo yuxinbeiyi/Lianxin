@@ -829,6 +829,44 @@ def save_memory_config(config: dict):
     _save_full_config(full)
 
 
+# ── RAG 检索配置默认值 ─────────────────────────────────────
+_RAG_DEFAULTS = {
+    "rag_ann_enabled": True,
+    "rag_ann_backend": "auto",
+    "rag_ann_candidate_k": 200,
+    "rag_ann_m": 16,
+    "rag_ann_ef_construction": 160,
+    "rag_ann_ef_search": 80,
+    "rag_vector_candidate_k": 200,
+    "rag_keyword_candidate_k": 100,
+    "rag_final_top_k": 3,
+    "rag_rrf_k": 60,
+    "rag_time_decay_enabled": True,
+    "rag_time_decay_half_life_days": 90,
+    "rag_mmr_enabled": True,
+    "rag_mmr_lambda": 0.78,
+    "rag_mmr_candidate_k": 20,
+    "rag_fts_only_fallback_enabled": True,
+    "rag_metrics_enabled": True,
+}
+
+
+def get_rag_config() -> dict:
+    """读取 RAG 检索配置，缺失字段使用默认值补全。"""
+    full = _load_full_config()
+    rag = full.get("rag", {})
+    result = _RAG_DEFAULTS.copy()
+    result.update(rag)
+    return result
+
+
+def save_rag_config(config: dict):
+    """保存 RAG 检索配置（仅更新 rag 部分）。"""
+    full = _load_full_config()
+    full["rag"] = config
+    _save_full_config(full)
+
+
 # 聊天气泡头像配置（与角色本体头像完全独立）
 _CHAT_AVATAR_DEFAULTS = {
     "enabled": True,

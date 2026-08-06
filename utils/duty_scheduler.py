@@ -1640,13 +1640,26 @@ class EmbeddingIndexDuty(Duty):
             self.status.pending_count = int(_get_conn().execute(
                 "SELECT COUNT(*) FROM memory_facts WHERE embedding IS NULL AND status='active'"
             ).fetchone()[0])
+            ann_needs_build = False
+            try:
+                from config import get_rag_config
+                from utils.rag_ann_index import get_rag_ann_index
+                ann_needs_build = (
+                    bool(get_rag_config().get("rag_ann_enabled", True))
+                    and get_rag_ann_index().needs_build()
+                )
+            except Exception:
+                ann_needs_build = False
         except Exception as exc:
             self.status.detail_text = f"待索引记忆检查失败: {exc}"
             return False
-        if not self.status.pending_count:
+        if not self.status.pending_count and not ann_needs_build:
             self.status.detail_text = "没有待索引记忆"
             return False
-        self.status.detail_text = f"空闲中，准备索引 {self.status.pending_count} 条记忆"
+        if ann_needs_build and not self.status.pending_count:
+            self.status.detail_text = "空闲中，准备构建 RAG ANN 索引"
+        else:
+            self.status.detail_text = f"空闲中，准备索引 {self.status.pending_count} 条记忆"
         return True
 
     def _create_worker(self, state: SchedulerState, **kwargs):
