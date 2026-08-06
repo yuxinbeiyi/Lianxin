@@ -791,6 +791,12 @@ _MEMORY_DEFAULTS = {
     "working_memory_ttl_minutes": 120,     # 话题工作记忆保留时长
     "working_memory_model_summary_enabled": True,
     "working_memory_summary_interval_minutes": 10,
+    "semantic_retrieval_mode": "on_demand",
+    # Facts are immediately available to FTS/keyword retrieval.  Vector
+    # indexing waits for an idle window so normal chat never starts Torch.
+    "embedding_indexing_mode": "idle",       # "idle" | "manual" | "off"
+    "embedding_idle_seconds": 180,
+    "embedding_idle_batch_size": 20,
 }
 
 # 日记生成设置与旧配置并存，缺失字段自动使用这些默认值。
@@ -1232,7 +1238,9 @@ _TTS_DEFAULTS = {
     "top_p": 0.9,
     "sample_steps": 32,              # 推理步数
     "edge_tts_voice": "zh-CN-XiaoxiaoNeural",  # Edge-TTS 回退音色
-    "tts_warmup": True,                         # 启动时预热 GPT-SoVITS 引擎
+    "tts_warmup": False,                        # 默认不占用启动时 GPU；需要时可手动预热
+    "gpt_sovits_idle_timeout_seconds": 300,     # 空闲后关闭独立 worker；0=保持运行
+    "gpt_sovits_min_free_vram_mb": 2048,        # 启动 worker 前的最低显存余量
     "ref_wav_override": "",           # 手动选择的参考音频路径（空=自动按情绪选择）
 
 }

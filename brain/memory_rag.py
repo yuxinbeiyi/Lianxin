@@ -50,19 +50,12 @@ def _ensure_torch_fsdp_compat():
 
 
 def _preload_torch():
-    """在 MAIN THREAD 上预加载 torch，避免子线程中触发 Windows access violation。
-    必须在任何后台线程尝试使用 torch 之前调用。"""
-    import sys as _sys
+    """Compatibility wrapper for deferred, main-thread Torch initialization."""
     try:
-        import torch
-        # 尝试加载 torch.distributed —— 即使失败也不影响
-        try:
-            import torch.distributed
-        except Exception:
-            pass
-        return True
+        from utils.torch_runtime import ensure_ready
+        return ensure_ready()
     except Exception as e:
-        logger.warning("torch 预加载失败: %s", e)
+        logger.warning("torch 初始化失败: %s", e)
         return False
 
 logger = logging.getLogger("MemoryRAG")
@@ -96,6 +89,8 @@ def _get_model():
             if _model is not None:
                 return _model
             _load_attempted = True
+            if not _preload_torch():
+                return None
             _ensure_torch_fsdp_compat()
             try:
                 from sentence_transformers import SentenceTransformer
@@ -157,6 +152,7 @@ def search_similar(
     category: str = None,
     track_access: bool = True,
     hybrid: bool = True,
+    allow_model_load: Optional[bool] = None,
 ) -> list[tuple[float, dict]]:
     """混合检索记忆：向量、关键词和叙事层结果用 RRF 融合。
 
@@ -169,7 +165,9 @@ def search_similar(
     Returns:
         [(融合分数, 记忆dict), ...] 按融合分数降序
     """
-    model = _get_model()
+    model = _model
+    if model is None and _should_load_semantic_model(query, allow_model_load):
+        model = _get_model()
     if model is None:
         if _load_attempted:
             logger.debug("RAG search skipped: model unavailable (load previously attempted)")
@@ -294,7 +292,7 @@ def find_similar_memory(
     返回最相似的那条 (相似度, 记忆dict) 或 None。"""
     results = search_similar(
         content, top_k=1, threshold=threshold, category=category,
-        track_access=False, hybrid=False,
+        track_access=False, hybrid=False, allow_model_load=True,
     )
     return results[0] if results else None
 
@@ -311,6 +309,27 @@ def route_memory_intent(query: str) -> str:
     if any(marker in text for marker in ("什么时候", "几点", "哪天", "日期", "多少")):
         return "fact"
     return "general"
+
+
+def _should_load_semantic_model(
+    query: str,
+    allow_model_load: Optional[bool] = None,
+) -> bool:
+    """Decide whether this request justifies loading the local embedding model."""
+    if allow_model_load is not None:
+        return bool(allow_model_load)
+    try:
+        from config import get_memory_config
+        mode = str(get_memory_config().get("semantic_retrieval_mode", "on_demand")).lower()
+    except Exception:
+        mode = "on_demand"
+    if mode in {"off", "disabled", "false", "0"}:
+        return False
+    if mode in {"always", "eager"}:
+        return True
+    # Ordinary chat uses the existing FTS/LIKE path. Explicit memory,
+    # timeline, entity, or fact questions opt into semantic retrieval.
+    return route_memory_intent(query) != "general"
 
 
 def _lexical_memory_results(query: str, category: str | None = None) -> list[tuple[float, dict]]:
@@ -467,41 +486,66 @@ def format_rag_context(memories: list[tuple[float, dict]]) -> str:
     return "\n".join(lines)
 
 
-def reindex_all_facts():
-    """后台线程：为所有没有 embedding 的记忆补建向量。"""
-    def _run():
+_reindex_lock = threading.Lock()
+
+
+def reindex_pending_facts(*, max_items: int = 20) -> dict:
+    """Index one bounded batch of pending facts in the caller's worker thread."""
+    max_items = max(1, int(max_items))
+    if not _reindex_lock.acquire(blocking=False):
+        return {"status": "busy", "indexed": 0, "remaining": 0}
+    try:
+        from brain.graph_memory import _get_conn
+
+        conn = _get_conn()
+        rows = conn.execute(
+            """SELECT id, content FROM memory_facts
+               WHERE embedding IS NULL AND status='active'
+               ORDER BY updated_at ASC, id ASC LIMIT ?""",
+            (max_items,),
+        ).fetchall()
+        if not rows:
+            return {"status": "idle", "indexed": 0, "remaining": 0}
+
         model = _get_model()
         if model is None:
-            return
-        try:
-            from brain.graph_memory import _get_conn
-            conn = _get_conn()
-            rows = conn.execute(
-                """SELECT id, content FROM memory_facts
-                   WHERE embedding IS NULL AND status='active'"""
-            ).fetchall()
-            if not rows:
-                return
-            logger.info(f"Reindexing {len(rows)} memories...")
-            vecs = model.encode(
-                [r["content"] for r in rows],
-                normalize_embeddings=True,
-                show_progress_bar=False,
+            return {"status": "unavailable", "indexed": 0, "remaining": len(rows)}
+        logger.info("Indexing %s pending memory embeddings", len(rows))
+        vecs = model.encode(
+            [row["content"] for row in rows],
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        indexed = 0
+        for row, vec in zip(rows, vecs):
+            cur = conn.execute(
+                """UPDATE memory_facts SET embedding=?,
+                   embedding_model='BAAI/bge-small-zh-v1.5', embedding_version=1
+                   WHERE id=? AND embedding IS NULL""",
+                (vec.astype(np.float32).tobytes(), row["id"]),
             )
-            for r, vec in zip(rows, vecs):
-                conn.execute(
-                    """UPDATE memory_facts SET embedding = ?,
-                       embedding_model='BAAI/bge-small-zh-v1.5', embedding_version=1
-                       WHERE id = ?""",
-                    (vec.astype(np.float32).tobytes(), r["id"])
-                )
-            conn.commit()
-            logger.info(f"Reindexed {len(rows)} memories")
-        except Exception as e:
-            logger.warning(f"Reindex failed: {e}")
+            indexed += cur.rowcount
+        conn.commit()
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM memory_facts WHERE embedding IS NULL AND status='active'"
+        ).fetchone()[0]
+        return {"status": "success", "indexed": indexed, "remaining": int(remaining)}
+    except Exception:
+        logger.exception("Pending memory reindex failed")
+        raise
+    finally:
+        _reindex_lock.release()
 
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
+
+def reindex_all_facts():
+    """Compatibility helper: index all currently pending facts in a worker."""
+    def _run():
+        while True:
+            result = reindex_pending_facts(max_items=100)
+            if result.get("status") != "success" or not result.get("remaining"):
+                return
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def warmup():

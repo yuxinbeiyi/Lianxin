@@ -330,6 +330,26 @@ class MemorySettingsDialog(QDialog):
         graph_vbox.addWidget(graph_desc)
         tab2_layout.addWidget(graph_frame)
 
+        rag_frame = self._create_frame()
+        rag_vbox = QVBoxLayout(rag_frame)
+        rag_vbox.setSpacing(8)
+        rag_title = QLabel("语义记忆检索")
+        rag_title.setFont(QFont("Microsoft YaHei UI", 10, QFont.Bold))
+        rag_vbox.addWidget(rag_title)
+        self._semantic_retrieval_combo = QComboBox()
+        self._semantic_retrieval_combo.addItem("按需加载（推荐）", "on_demand")
+        self._semantic_retrieval_combo.addItem("始终使用语义检索", "always")
+        self._semantic_retrieval_combo.addItem("仅使用关键词检索", "off")
+        rag_vbox.addWidget(self._semantic_retrieval_combo)
+        rag_desc = QLabel(
+            "按需加载会让普通聊天保持轻量，仅在明确询问回忆、时间线、实体或事实时加载本地语义模型。\n"
+            "始终使用语义检索会获得最完整的召回，但会在首次聊天时加载模型。"
+        )
+        rag_desc.setWordWrap(True)
+        rag_desc.setStyleSheet("color: #888; font-size: 15px; padding: 4px 0;")
+        rag_vbox.addWidget(rag_desc)
+        tab2_layout.addWidget(rag_frame)
+
         # 自动提取五元组
         auto_quin_frame = self._create_frame()
         auto_quin_vbox = QVBoxLayout(auto_quin_frame)
@@ -631,6 +651,9 @@ class MemorySettingsDialog(QDialog):
         # 知识图谱
         self._graph_enabled_cb.setChecked(self._graph_cfg.get("graph_enabled", True))
         self._graph_auto_quin_cb.setChecked(self._graph_cfg.get("auto_extract_quintuples", True))
+        semantic_mode = self._mem_cfg.get("semantic_retrieval_mode", "on_demand")
+        semantic_index = self._semantic_retrieval_combo.findData(semantic_mode)
+        self._semantic_retrieval_combo.setCurrentIndex(max(0, semantic_index))
 
         # 上下文压缩
         self._context_window_spin.setValue(self._mem_cfg.get("context_window_size", 20))
@@ -671,6 +694,7 @@ class MemorySettingsDialog(QDialog):
             "narrative_interval_hours": self._narrative_interval_spin.value(),
             "narrative_candidate_batch": self._narrative_batch_spin.value(),
             "working_memory_ttl_minutes": self._mem_cfg.get("working_memory_ttl_minutes", 120),
+            "semantic_retrieval_mode": self._semantic_retrieval_combo.currentData(),
         })
         from config import save_memory_config
         save_memory_config(cfg)

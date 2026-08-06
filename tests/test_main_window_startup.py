@@ -93,6 +93,20 @@ class MainWindowStartupTests(unittest.TestCase):
 
         self.assertTrue(window._speaker_worker.started)
 
+    def test_webengine_windows_are_imported_on_demand(self):
+        self.assertNotIn(
+            "from gui.time_capsule.web_window import TimeCapsuleWindow",
+            self.source.split("class MainWindow", 1)[0],
+        )
+        self.assertNotIn(
+            "from gui.study_room import StudyRoomWebWindow",
+            self.source.split("class MainWindow", 1)[0],
+        )
+        diary_source = ast.get_source_segment(self.source, self._method("_open_diary_dialog"))
+        study_source = ast.get_source_segment(self.source, self._method("_on_study_room_clicked"))
+        self.assertIn("from gui.time_capsule.web_window import TimeCapsuleWindow", diary_source)
+        self.assertIn("from gui.study_room import StudyRoomWebWindow", study_source)
+
 
 if __name__ == "__main__":
     unittest.main()

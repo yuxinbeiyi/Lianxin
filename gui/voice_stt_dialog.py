@@ -445,14 +445,17 @@ class VoiceSTTDialog(QDialog):
             issues.append(f"❌ FunASR 检查失败: {e}")
         
         try:
-            import torch
-            if torch.cuda.is_available():
-                gpu_name = torch.cuda.get_device_name(0)
-                suggestions.append(f"✅ CUDA 可用: {gpu_name}")
+            from utils.gpu_resources import get_gpu_memory
+            gpu_memory = get_gpu_memory()
+            if gpu_memory:
+                suggestions.append(
+                    f"✅ NVIDIA GPU 可用（剩余 {gpu_memory['free_mb']} / "
+                    f"{gpu_memory['total_mb']} MiB）"
+                )
             else:
-                suggestions.append("ℹ️ 未检测到 CUDA（将使用 CPU 模式）")
-        except ImportError:
-            suggestions.append("ℹ️ PyTorch 未安装")
+                suggestions.append("ℹ️ 未检测到 NVIDIA GPU telemetry（可使用 CPU 模式）")
+        except Exception:
+            suggestions.append("ℹ️ GPU 状态暂时无法读取（可使用 CPU 模式）")
         
         vol_cfg = self._volcano_tab.collect_config()
         if vol_cfg.get("enabled") and vol_cfg.get("appid"):

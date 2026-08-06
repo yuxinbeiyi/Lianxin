@@ -21,6 +21,8 @@ import tempfile
 import threading
 import threading
 import queue
+import time
+import atexit
 from pathlib import Path
 from typing import Optional, Callable
 import warnings
@@ -128,6 +130,8 @@ _gpt_sovits_state = None  # None=未尝试, True=可用, False=不可用
 _worker_process: Optional[subprocess.Popen] = None
 _stderr_thread: Optional[threading.Thread] = None
 _worker_lock = threading.Lock()  # 保护 worker stdin/stdout 不被多线程并发读写（桌面+QQ同时用GPT-SoVITS时）
+_worker_idle_timer: Optional[threading.Timer] = None
+_worker_last_used = 0.0
 
 
 def _get_runtime_python(gs_path: str) -> Optional[str]:
@@ -224,16 +228,31 @@ def _ensure_worker() -> subprocess.Popen:
     env = os.environ.copy()
     env["GPT_SOVITS_PATH"] = gs_path
 
-    logger.info("启动 GPT-SoVITS 持久 worker（模型加载中，首次约 5-15 秒）")
-    _worker_process = subprocess.Popen(
-        [runtime_python, worker_script, "--persistent"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-        cwd=gs_path,
+    minimum_vram = int(cfg.get("gpt_sovits_min_free_vram_mb", 2048) or 0)
+    from utils.model_resource_manager import get_model_resource_manager
+    resource_manager = get_model_resource_manager()
+    admission = resource_manager.acquire(
+        "gpt_sovits", minimum_free_mb=minimum_vram, fallback="edge"
     )
+    if not admission.granted:
+        raise RuntimeError(
+            f"GPT-SoVITS GPU admission denied: {admission.reason}; falling back to Edge-TTS"
+        )
+
+    try:
+        logger.info("启动 GPT-SoVITS 持久 worker（模型加载中，首次约 5-15 秒）")
+        _worker_process = subprocess.Popen(
+            [runtime_python, worker_script, "--persistent"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            cwd=gs_path,
+        )
+    except Exception:
+        resource_manager.release("gpt_sovits")
+        raise
     # 后台线程 drain stderr，防止管道缓冲区满阻塞 worker
     _stderr_thread = threading.Thread(
         target=_drain_stderr, args=(_worker_process,), daemon=True
@@ -245,7 +264,10 @@ def _ensure_worker() -> subprocess.Popen:
 
 def _close_worker():
     """关闭持久 worker 进程。"""
-    global _worker_process
+    global _worker_process, _worker_idle_timer, _worker_last_used
+    if _worker_idle_timer is not None:
+        _worker_idle_timer.cancel()
+        _worker_idle_timer = None
     if _worker_process is not None:
         try:
             _worker_process.terminate()
@@ -256,7 +278,54 @@ def _close_worker():
             except Exception:
                 pass
         _worker_process = None
+        _worker_last_used = 0.0
         logger.info("GPT-SoVITS worker 已关闭")
+    from utils.model_resource_manager import get_model_resource_manager
+    get_model_resource_manager().release("gpt_sovits")
+
+
+def _schedule_worker_idle_shutdown() -> None:
+    """Schedule worker release without interrupting an active synthesis."""
+    global _worker_idle_timer
+    from config import get_tts_config
+    timeout = int(get_tts_config().get("gpt_sovits_idle_timeout_seconds", 300) or 0)
+    if timeout <= 0:
+        return
+    if _worker_idle_timer is not None:
+        _worker_idle_timer.cancel()
+    _worker_idle_timer = threading.Timer(timeout, _close_worker_if_idle)
+    _worker_idle_timer.daemon = True
+    _worker_idle_timer.start()
+
+
+def _close_worker_if_idle() -> None:
+    global _worker_idle_timer
+    with _worker_lock:
+        _worker_idle_timer = None
+        if _worker_process is None:
+            return
+        from config import get_tts_config
+        timeout = int(get_tts_config().get("gpt_sovits_idle_timeout_seconds", 300) or 0)
+        if timeout <= 0 or time.monotonic() - _worker_last_used < timeout:
+            _schedule_worker_idle_shutdown()
+            return
+        logger.info("GPT-SoVITS worker idle timeout reached; releasing GPU resources")
+        _close_worker()
+
+
+def _mark_worker_used() -> None:
+    global _worker_last_used
+    _worker_last_used = time.monotonic()
+    _schedule_worker_idle_shutdown()
+
+
+def release_gpt_sovits_worker() -> None:
+    """Explicitly release the independent GPT-SoVITS process and GPU model."""
+    with _worker_lock:
+        _close_worker()
+
+
+atexit.register(_close_worker)
 
 
 # ══════════════════════════════════════════════════════════
@@ -608,7 +677,9 @@ class TtsEngine:
             return
         try:
             logger.info("warmup：预热 GPT-SoVITS worker…")
-            _ensure_worker()
+            with _worker_lock:
+                _ensure_worker()
+                _mark_worker_used()
             logger.info("warmup：GPT-SoVITS worker 已就绪")
         except Exception as e:
             logger.warning(f"warmup：预热失败 {e}")
@@ -714,6 +785,7 @@ class TtsEngine:
                 raise RuntimeError("GPT-SoVITS 合成超时（300s）")
 
             response_line = result_queue.get_nowait()
+            _mark_worker_used()
 
         # 解析 JSON 响应（锁外解析，不阻塞其他线程）
         try:

@@ -179,10 +179,11 @@ migrate_legacy_files()
 
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtGui import QFont
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal
 import qdarkstyle
 
 from gui.main_window import MainWindow
+from utils.torch_runtime import TorchInitRequest, register_main_thread_initializer
 
 
 # ── 第5条：跨平台多实例保护 ───────────────────────────────────
@@ -243,6 +244,20 @@ def _show_check_dialog(parent, report: str):
     msg_box.show()
 
 
+class _TorchRuntimeBridge(QObject):
+    """Run deferred Torch initialization on the Qt main thread."""
+
+    initialize_requested = pyqtSignal(object)
+
+    def __init__(self):
+        super().__init__()
+        self.initialize_requested.connect(self._initialize)
+
+    def _initialize(self, request: TorchInitRequest):
+        from utils.torch_runtime import _initialize_now
+        _initialize_now(request)
+
+
 def main():
     autostart_mode = "--autostart" in sys.argv
 
@@ -280,6 +295,11 @@ def main():
     font = QFont("Microsoft YaHei UI", 10)
     app.setFont(font)
 
+    # Register the bridge before any worker can request a local model.  Torch
+    # is now initialized only when RAG/FunASR is actually used.
+    torch_bridge = _TorchRuntimeBridge()
+    register_main_thread_initializer(torch_bridge.initialize_requested.emit)
+
     # ── 启动健康检查（先跑完、存结果，窗口就绪后非模态显示）─────
     _check_report = None
     if "--skip-check" not in sys.argv:
@@ -298,15 +318,6 @@ def main():
                 print("[启动体检] 已跳过（设置中关闭）", flush=True)
         except Exception as e:
             print(f"[启动体检] 检测过程异常: {e}", flush=True)
-
-    # ── 在创建任何后台模型线程前完成轻量 Torch 兼容初始化 ──
-    # MainWindow 不再在构造阶段加载 FunASR；这里的顺序保证首次按需
-    # 加载语音/RAG 模型时不会与 Torch 初始化竞态。
-    try:
-        from brain.memory_rag import _preload_torch
-        _preload_torch()
-    except Exception:
-        pass
 
     window = MainWindow(autostart_mode=autostart_mode)
 

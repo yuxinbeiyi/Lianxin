@@ -1598,6 +1598,101 @@ class MemoryExtractionDuty(Duty):
         self.__scheduler = scheduler
 
 
+class EmbeddingIndexDuty(Duty):
+    """Build a small batch of memory embeddings only after chat becomes idle."""
+
+    def __init__(self):
+        super().__init__("embedding_index", "记忆语义索引", tick_interval_seconds=60)
+
+    @staticmethod
+    def _config() -> dict:
+        try:
+            from config import get_memory_config
+            return get_memory_config()
+        except Exception:
+            return {
+                "embedding_indexing_mode": "idle",
+                "embedding_idle_seconds": 180,
+                "embedding_idle_batch_size": 20,
+            }
+
+    def _check_enabled(self, state: SchedulerState) -> bool:
+        return self._config().get("embedding_indexing_mode", "idle") == "idle"
+
+    def _should_fire(self, state: SchedulerState) -> bool:
+        if state.agent_busy:
+            self.status.detail_text = "正在处理对话，稍后索引"
+            return False
+        if not state.last_user_message_time:
+            self.status.detail_text = "等待一次聊天后的空闲窗口"
+            return False
+        cfg = self._config()
+        idle_seconds = max(30, int(cfg.get("embedding_idle_seconds", 180)))
+        if state.now - state.last_user_message_time < idle_seconds:
+            self.status.detail_text = "等待聊天空闲"
+            return False
+        try:
+            from utils.model_resource_manager import get_model_resource_manager
+            if get_model_resource_manager().has_active_gpu_lease():
+                self.status.detail_text = "语音模型正在使用 GPU，延后索引"
+                return False
+            from brain.graph_memory import _get_conn
+            self.status.pending_count = int(_get_conn().execute(
+                "SELECT COUNT(*) FROM memory_facts WHERE embedding IS NULL AND status='active'"
+            ).fetchone()[0])
+        except Exception as exc:
+            self.status.detail_text = f"待索引记忆检查失败: {exc}"
+            return False
+        if not self.status.pending_count:
+            self.status.detail_text = "没有待索引记忆"
+            return False
+        self.status.detail_text = f"空闲中，准备索引 {self.status.pending_count} 条记忆"
+        return True
+
+    def _create_worker(self, state: SchedulerState, **kwargs):
+        from workers.embedding_index_worker import EmbeddingIndexWorker
+
+        size = max(1, int(self._config().get("embedding_idle_batch_size", 20)))
+        return EmbeddingIndexWorker(max_items=size)
+
+    def _wire_worker(self, worker):
+        worker.completed.connect(self._on_completed)
+        worker.failed.connect(self._on_failed)
+
+    def _on_completed(self, result: dict):
+        self.status.is_running = False
+        status = str(result.get("status", "success"))
+        self.status.last_result = status
+        self.status.pending_count = int(result.get("remaining", 0) or 0)
+        if status == "success":
+            self.status.success_count += 1
+            self.status.last_result_text = (
+                f"已索引 {int(result.get('indexed', 0))} 条，剩余 {self.status.pending_count} 条"
+            )
+        elif status == "busy":
+            self.status.last_result_text = "已有索引任务在运行"
+        else:
+            self.status.last_result_text = "嵌入模型当前不可用，保留关键词检索"
+        self.status.detail_text = self.status.last_result_text
+        self._scheduler.duty_completed.emit(self.name, self.status.last_result_text)
+
+    def _on_failed(self, error: str):
+        self.status.is_running = False
+        self.status.last_result = "failed"
+        self.status.fail_count += 1
+        self.status.last_result_text = str(error)
+        self.status.detail_text = self.status.last_result_text
+        self._scheduler.duty_failed.emit(self.name, self.status.last_result_text)
+
+    @property
+    def _scheduler(self):
+        return self.__scheduler
+
+    @_scheduler.setter
+    def _scheduler(self, scheduler):
+        self.__scheduler = scheduler
+
+
 # ═══════════════════════════════════════════════════════════════
 # MemoryCueEvaluationDuty
 # ═══════════════════════════════════════════════════════════════

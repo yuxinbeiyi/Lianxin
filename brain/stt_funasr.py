@@ -44,6 +44,11 @@ def _load_model_locked():
     """Load the singleton while ``torch_model_load_lock`` is held."""
     global _model
 
+    # Torch must be initialized by the Qt main thread before FunASR creates
+    # native model objects on this worker thread.
+    from utils.torch_runtime import ensure_ready
+    ensure_ready()
+
     # 抑制 funasr import 时的 print() 和 modelscope 的 warnings
     import warnings as _w
     _w.simplefilter("ignore")
@@ -56,9 +61,35 @@ def _load_model_locked():
         sys.stdout.close()
         sys.stdout = _saved_stdout
 
+    dev = "cpu"
+    gpu_lease = False
     try:
         from config import resolve_device, get_device_preference
         dev = resolve_device("funasr")
+        if dev == "cuda:0":
+            from utils.model_resource_manager import get_model_resource_manager
+            manager = get_model_resource_manager()
+            admission = manager.acquire(
+                "funasr", minimum_free_mb=1024, fallback="cpu"
+            )
+            if admission.preempt:
+                # FunASR is interactive input and takes priority over the
+                # optional GPT-SoVITS voice worker.  The latter falls back to
+                # Edge-TTS until its next safe admission.
+                if "gpt_sovits" in admission.preempt:
+                    from brain.tts_engine import release_gpt_sovits_worker
+                    release_gpt_sovits_worker()
+                admission = manager.acquire(
+                    "funasr", minimum_free_mb=1024, fallback="cpu"
+                )
+            if admission.granted:
+                gpu_lease = True
+            else:
+                if get_device_preference("funasr") == "auto":
+                    logger.warning("FunASR GPU admission denied (%s); falling back to CPU", admission.reason)
+                    dev = "cpu"
+                else:
+                    raise RuntimeError(f"FunASR GPU admission denied: {admission.reason}")
 
         # 抑制 transformers 加载远程代码时的 No module named 'model' 警告（无害）
         import warnings
@@ -76,6 +107,9 @@ def _load_model_locked():
     except ImportError:
         logger.warning("⚠️ FunASR 未安装，跳过 (pip install funasr)")
     except Exception as e:
+        if dev == "cuda:0" and gpu_lease:
+            from utils.model_resource_manager import get_model_resource_manager
+            get_model_resource_manager().release("funasr")
         # auto 模式下加载失败，尝试 CPU 回退
         if get_device_preference("funasr") == "auto":
             try:

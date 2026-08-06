@@ -29,7 +29,6 @@ from gui.input_panel       import InputPanel
 from gui.history_dialog    import HistoryDialog
 from gui.proactive_dialog  import ProactiveDialog
 from gui.settings_dialog   import SettingsDialog
-from gui.study_room import StudyRoomWebWindow
 from gui.api_config_dialog import ApiConfigDialog
 from gui.alarm_dialog      import AlarmDialog
 from gui.qq_settings_dialog import QqSettingsDialog
@@ -59,7 +58,6 @@ from datetime import datetime
 import sys
 import threading
 from utils.diary import init_diary_db, DiaryWorker
-from gui.time_capsule.web_window import TimeCapsuleWindow
 from config import get_diary_config
 import pygame
 import random
@@ -167,7 +165,8 @@ class MainWindow(QMainWindow):
 
 
         # ── 自习室模块 ────────────────────────────────────────
-        self._study_room_window: StudyRoomWebWindow | None = None
+        # WebEngine-backed windows are imported only when the feature opens.
+        self._study_room_window: object | None = None
 
         # ── 备忘本模块 ────────────────────────────────────────
         self.note_dialog = NoteDialog(None)
@@ -321,7 +320,7 @@ class MainWindow(QMainWindow):
         from utils.duty_scheduler import (
             DutyScheduler, ProactiveDuty, HeartbeatDuty, SmartReminderDuty,
             TreeHoleReplyDuty,
-            MemoryExtractionDuty, MemoryMaintenanceDuty, MemoryCueEvaluationDuty,
+            MemoryExtractionDuty, EmbeddingIndexDuty, MemoryMaintenanceDuty, MemoryCueEvaluationDuty,
             MemoryNarrativeDuty, WorkingMemorySummaryDuty, register_duty,
         )
         self._duty_scheduler = DutyScheduler(self)
@@ -344,6 +343,7 @@ class MainWindow(QMainWindow):
         register_duty(self._duty_scheduler, SmartReminderDuty())
         register_duty(self._duty_scheduler, TreeHoleReplyDuty())
         register_duty(self._duty_scheduler, MemoryExtractionDuty())
+        register_duty(self._duty_scheduler, EmbeddingIndexDuty())
         register_duty(self._duty_scheduler, MemoryMaintenanceDuty())
         register_duty(self._duty_scheduler, MemoryCueEvaluationDuty())
         register_duty(self._duty_scheduler, MemoryNarrativeDuty())
@@ -2462,6 +2462,7 @@ class MainWindow(QMainWindow):
     def _on_study_room_clicked(self):
         play_sound("ButtonAll.mp3")
         if self._study_room_window is None:
+            from gui.study_room import StudyRoomWebWindow
             self._study_room_window = StudyRoomWebWindow(self)
             self._study_room_window.focus_completed.connect(self._on_study_focus_completed)
             self._study_room_window.closed.connect(self._on_study_room_closed)
@@ -3660,6 +3661,7 @@ class MainWindow(QMainWindow):
     def _open_diary_dialog(self):
         play_sound("OpenDiary.mp3")
         if self._diary_dialog is None:
+            from gui.time_capsule.web_window import TimeCapsuleWindow
             self._diary_dialog = TimeCapsuleWindow(
                 None, generation_callback=self.regenerate_diary_by_date,
                 settings_callback=self._setup_diary_timer,

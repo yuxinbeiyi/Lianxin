@@ -284,6 +284,30 @@ class SoundSettingsDialog(QDialog):
         warmup_vbox.addWidget(warmup_desc)
         scroll_layout.addWidget(warmup_frame)
 
+        resource_frame = self._create_frame()
+        resource_vbox = QVBoxLayout(resource_frame)
+        resource_vbox.setSpacing(6)
+        resource_vbox.addWidget(QLabel("GPT-SoVITS 资源释放"))
+        self._tts_idle_combo = QComboBox()
+        for seconds, label in (
+            (60, "空闲 1 分钟后释放"),
+            (300, "空闲 5 分钟后释放（推荐）"),
+            (900, "空闲 15 分钟后释放"),
+            (0, "保持运行，不自动释放"),
+        ):
+            self._tts_idle_combo.addItem(label, seconds)
+        resource_vbox.addWidget(self._tts_idle_combo)
+        resource_desc = QLabel(
+            "释放后会回收 GPT-SoVITS 独立进程及其显存；下次使用会重新加载，Edge-TTS 不受影响。"
+        )
+        resource_desc.setWordWrap(True)
+        resource_desc.setStyleSheet("color: #888; font-size: 12px; padding: 2px 0;")
+        resource_vbox.addWidget(resource_desc)
+        release_btn = QPushButton("立即释放 GPT-SoVITS GPU")
+        release_btn.clicked.connect(self._release_gpt_worker)
+        resource_vbox.addWidget(release_btn)
+        scroll_layout.addWidget(resource_frame)
+
         # 试听按钮
         test_frame = self._create_frame()
         test_hbox = QHBoxLayout(test_frame)
@@ -517,6 +541,9 @@ class SoundSettingsDialog(QDialog):
         self._tts_speed_slider.setValue(speed)
         self._tts_speed_value.setText(f"{speed / 100:.1f}x")
         self._tts_warmup_cb.setChecked(self._tts_cfg.get("tts_warmup", True))
+        idle_timeout = int(self._tts_cfg.get("gpt_sovits_idle_timeout_seconds", 300) or 0)
+        idle_index = self._tts_idle_combo.findData(idle_timeout)
+        self._tts_idle_combo.setCurrentIndex(max(0, idle_index))
         self._update_gs_status()
 
         override = self._tts_cfg.get("ref_wav_override", "")
@@ -556,6 +583,14 @@ class SoundSettingsDialog(QDialog):
         if dir_path:
             self._tts_gs_path_edit.setText(dir_path)
             self._update_gs_status()
+
+    def _release_gpt_worker(self):
+        try:
+            from brain.tts_engine import release_gpt_sovits_worker
+            release_gpt_sovits_worker()
+            self._tts_gs_status.setText("GPT-SoVITS worker 已释放，下次使用时按需加载")
+        except Exception as exc:
+            self._tts_gs_status.setText(f"释放 GPT-SoVITS 失败：{exc}")
 
     def _update_gs_status(self):
         path = self._tts_gs_path_edit.text().strip()
@@ -653,6 +688,8 @@ class SoundSettingsDialog(QDialog):
             "pause_second": adv["pause_second"],
             "edge_tts_voice": self._tts_cfg.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural"),
             "tts_warmup": self._tts_cfg.get("tts_warmup", True),
+            "gpt_sovits_idle_timeout_seconds": self._tts_idle_combo.currentData(),
+            "gpt_sovits_min_free_vram_mb": self._tts_cfg.get("gpt_sovits_min_free_vram_mb", 2048),
             "ref_wav_override": ref_wav_override,
         })
         from brain.tts_engine import reset_gpt_sovits_cache
@@ -720,6 +757,8 @@ class SoundSettingsDialog(QDialog):
             "pause_second": adv["pause_second"],
             "edge_tts_voice": self._tts_cfg.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural"),
             "tts_warmup": warmup,
+            "gpt_sovits_idle_timeout_seconds": self._tts_idle_combo.currentData(),
+            "gpt_sovits_min_free_vram_mb": self._tts_cfg.get("gpt_sovits_min_free_vram_mb", 2048),
             "ref_wav_override": ref_wav_override,
         })
         from brain.tts_engine import reset_gpt_sovits_cache

@@ -691,7 +691,8 @@ CATEGORY_DESCRIPTIONS = {
 
 def add_fact(content: str, category: str = "knowledge",
              source: str = "user_saved", source_session_id: int | None = None,
-             source_channel: str = "", occurred_at: str = "") -> int:
+             source_channel: str = "", occurred_at: str = "",
+             *, embed_immediately: bool = False) -> int:
     """Insert a fact; only exact matches are strengthened automatically.
 
     Semantic similarity is never treated as proof of duplication.  Related facts
@@ -709,13 +710,15 @@ def add_fact(content: str, category: str = "knowledge",
         (content, category),
     ).fetchone()
 
-    # ── 无相似记忆 → 正常插入 ──
+    # Semantic indexing is intentionally decoupled from the write path.  The
+    # row remains available to lexical retrieval until the idle index duty runs.
     emb_bytes = None
-    try:
-        from brain.memory_rag import embed_bytes
-        emb_bytes = embed_bytes(content)
-    except Exception:
-        pass
+    if embed_immediately:
+        try:
+            from brain.memory_rag import embed_bytes
+            emb_bytes = embed_bytes(content)
+        except Exception:
+            pass
 
     if emb_bytes:
         conn.execute(
@@ -953,6 +956,7 @@ def update_facts(
     source_message_ids: list[int] | None = None,
     persona_id: str = "",
     occurred_at: str = "",
+    embed_immediately: bool = False,
 ) -> int:
     """替换所有匹配 old_keyword 的事实内容。返回更新条数。"""
     old_keyword = old_keyword.strip()
@@ -983,11 +987,12 @@ def update_facts(
         except Exception:
             pass
     new_embedding = None
-    try:
-        from brain.memory_rag import embed_bytes
-        new_embedding = embed_bytes(new_content)
-    except Exception:
-        pass
+    if embed_immediately:
+        try:
+            from brain.memory_rag import embed_bytes
+            new_embedding = embed_bytes(new_content)
+        except Exception:
+            pass
     if category:
         cur = conn.execute(
             """UPDATE memory_facts SET content=?, source='user_saved',
