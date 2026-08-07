@@ -17,6 +17,7 @@ litellm.set_verbose = False
 litellm.suppress_debug_info = True  # 关闭 "Give Feedback" stderr 输出
 from config import (
     get_api_config, get_base_prompt, get_local_base_prompt,
+    normalize_local_base_url, normalize_local_model_for_litellm,
     get_core_system_policy, get_user_name, get_qq_bridge_config,
     get_qq_timing_config, get_memory_config, get_graph_config,
 )
@@ -28,7 +29,7 @@ from brain.tool_router import (
     select_contextual_external_tools,
 )
 from brain.request_router import (
-    CAPABILITY_TO_TOOLS, REQUEST_TOOLS_DEFINITION, RequestMode, ToolSessionState,
+    CAPABILITY_TO_TOOLS, REQUEST_TOOLS_DEFINITION, RequestMode, RequestRoute, ToolSessionState,
     classify_request, format_capability_result, normalize_capabilities, required_execution_tool,
 )
 from brain.request_context import (
@@ -316,9 +317,13 @@ class AgentCore:
             self._api_base   = agnes_cfg["base_url"]
             self._api_key    = agnes_cfg["api_key"]
         elif self._provider == "local":
-            self._model      = f"ollama/{cfg.get('local_model_name', 'my-deepseek')}"
+            self._model      = normalize_local_model_for_litellm(
+                cfg.get("local_model_name", "qwen2.5:3b-instruct")
+            )
             self._max_tokens = min(cfg["max_tokens"], 2048)
-            self._api_base   = cfg.get("local_base_url", "http://localhost:11434/v1")
+            self._api_base   = normalize_local_base_url(
+                cfg.get("local_base_url", "http://localhost:11434/v1")
+            )
             self._api_key    = "ollama"
         else:  # deepseek / 自定义 OpenAI 兼容 API
             from config import normalize_model_for_litellm
@@ -1029,7 +1034,7 @@ class AgentCore:
     def _build_request_system_messages(self, persona_snapshot, route=None):
         """为本轮构建 System 消息；禁用或异常时完整返回旧 Prompt。"""
         route = route or getattr(self, "_request_route", None)
-        compact = bool(route and route.mode == RequestMode.CHAT_LIGHT)
+        compact = self._use_local or bool(route and route.mode == RequestMode.CHAT_LIGHT)
         if persona_snapshot is None or not persona_snapshot.enabled:
             messages = [{"role": "system", "content": self._system_prompt}]
             try:
@@ -2286,6 +2291,16 @@ class AgentCore:
             forced_tool=forced_tool or preferred_tool,
             session_state=self._tool_session_state,
         )
+        if self._use_local:
+            # Ollama is deliberately a pure-chat provider. Keep the route light
+            # so task prompts, memory retrieval, and tool contracts never reach
+            # the small local model even when the user message contains action
+            # keywords.
+            route = RequestRoute(
+                RequestMode.CHAT_LIGHT,
+                frozenset(),
+                "Ollama 本地模型仅使用纯聊天链路",
+            )
         self._tool_session_state.begin(route, self._current_request_text)
         self._request_route = route
         from brain.browser_task import BrowserTaskState
@@ -2303,7 +2318,7 @@ class AgentCore:
             self._request_tool_audit = []
         self._request_enabled_tool_names: set[str] = set()
         messages = self._build_request_system_messages(persona_snapshot)
-        if route.uses_memory_context:
+        if route.uses_memory_context and not self._use_local:
             messages.append({"role": "system", "content": _COMPACT_MEMORY_POLICY,
                              "_module": "memory_policy"})
         print(f"[请求路由] {route.mode.value}: {route.reason or '默认'}", flush=True)
@@ -2312,7 +2327,7 @@ class AgentCore:
                 "[工具防误触] 已忽略引用内容中的 URL、旧任务和能力关键词",
                 flush=True,
             )
-        if self._browser_task_state:
+        if self._browser_task_state and not self._use_local:
             messages.append({
                 "role": "system",
                 "content": (
@@ -2326,7 +2341,7 @@ class AgentCore:
                     "用户拒绝后不得换工具绕过确认。"
                 ),
             })
-        if self._web_research_task_state:
+        if self._web_research_task_state and not self._use_local:
             messages.append({
                 "role": "system",
                 "content": (
@@ -2378,17 +2393,19 @@ class AgentCore:
         messages.append(self._build_realtime_message())
         with self._tool_audit_lock:
             recent_audit = list(self._recent_tool_audit[-8:])
-        if recent_audit and not route.is_light:
+        if recent_audit and not route.is_light and not self._use_local:
             audit_lines = ["【本会话真实工具记录】只能据此声称工具是否调用或配置是否生效。"]
             for event in recent_audit:
                 status = "失败" if event.get("is_error") else "成功"
                 audit_lines.append(f"- {event.get('name', '')}: {status}；{str(event.get('result', ''))[:240]}")
             messages.append({"role": "system", "content": "\n".join(audit_lines)})
-        if getattr(self, "_prepared_document_context", "") and not route.is_light:
+        if (getattr(self, "_prepared_document_context", "")
+                and not route.is_light and not self._use_local):
             messages.append({"role": "system", "content": self._prepared_document_context})
 
         current_user_turns = sum(1 for m in self.history if m.get("role") == "user")
-        if self._prev_session_summary and current_user_turns <= 4 and not route.is_light:
+        if (self._prev_session_summary and current_user_turns <= 4
+                and not route.is_light and not self._use_local):
             messages.append({"role": "system", "content": self._prev_session_summary})
 
         # ── 跨功能互动回忆 ───────────────────────────────────
@@ -2408,7 +2425,7 @@ class AgentCore:
                     subject_id="owner",
                 )
                 if _emotion_snippet:
-                    if route.is_light:
+                    if route.is_light or self._use_local:
                         _emotion_snippet = _emotion_snippet[:500]
                     if persona_snapshot is not None and persona_snapshot.enabled:
                         _emotion_snippet += (
@@ -2494,7 +2511,10 @@ class AgentCore:
         try:
             from brain.skill_manager import get_matching_knowledge
             _msg_for_match = self._current_request_text
-            full_knowledge = "" if route.is_light else get_matching_knowledge(_msg_for_match)
+            full_knowledge = (
+                "" if route.is_light or self._use_local
+                else get_matching_knowledge(_msg_for_match)
+            )
             if full_knowledge:
                 messages.append({"role": "system", "content": (
                     "【相关能力详细说明】\n"

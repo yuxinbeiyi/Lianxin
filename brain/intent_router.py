@@ -16,7 +16,11 @@ from typing import Optional
 import litellm
 litellm.set_verbose = False
 
-from config import get_api_config
+from config import (
+    get_api_config,
+    normalize_local_base_url,
+    normalize_local_model_for_litellm,
+)
 
 logger = logging.getLogger("IntentRouter")
 
@@ -104,7 +108,9 @@ class IntentRouter:
         cfg = get_api_config()
         self._router_model = (cfg.get("router_model") or "").strip()
         self._use_llm_router = bool(self._router_model)
-        self._local_base_url = cfg.get("local_base_url", "http://localhost:11434/v1")
+        self._local_base_url = normalize_local_base_url(
+            cfg.get("local_base_url", "http://localhost:11434/v1")
+        )
 
     def route(self, user_input: str) -> RouteResult:
         """对用户消息进行意图路由。"""
@@ -128,7 +134,7 @@ class IntentRouter:
         )
         try:
             response = litellm.completion(
-                model=f"ollama/{self._router_model}",
+                model=normalize_local_model_for_litellm(self._router_model),
                 messages=[
                     {"role": "system", "content": _ROUTER_SYSTEM},
                     {"role": "user", "content": prompt},

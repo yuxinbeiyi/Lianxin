@@ -15,6 +15,7 @@ from PyQt5.QtGui import QFont
 
 from config import (
     get_api_config, save_api_config,
+    normalize_local_base_url, normalize_local_model_name,
     get_qq_bridge_config, save_qq_bridge_config,
     get_siliconflow_config, save_siliconflow_config,
     get_qweather_config, save_qweather_config,
@@ -473,7 +474,7 @@ class ApiConfigDialog(QDialog):
         local_form.addRow("Ollama 地址:", self._local_url_edit)
 
         self._local_model_edit = QLineEdit()
-        self._local_model_edit.setPlaceholderText("my-deepseek")
+        self._local_model_edit.setPlaceholderText("qwen2.5:3b-instruct")
         self._local_model_edit.setFont(QFont("Consolas", 10))
         self._apply_field_style(self._local_model_edit)
         local_form.addRow("本地模型名:", self._local_model_edit)
@@ -1201,7 +1202,9 @@ class ApiConfigDialog(QDialog):
         if idx >= 0:
             self._api_format_combo.setCurrentIndex(idx)
         self._local_url_edit.setText(ds_cfg.get("local_base_url", "http://localhost:11434/v1"))
-        self._local_model_edit.setText(ds_cfg.get("local_model_name", "my-deepseek"))
+        self._local_model_edit.setText(
+            ds_cfg.get("local_model_name", "qwen2.5:3b-instruct")
+        )
         self._router_model_edit.setText(ds_cfg.get("router_model", "my-qwen"))
 
         # Agnes AI 配置
@@ -1291,7 +1294,7 @@ class ApiConfigDialog(QDialog):
             "provider":   provider,
             "use_local":  (provider == "local"),
             "local_base_url": self._local_url_edit.text().strip() or "http://localhost:11434/v1",
-            "local_model_name": self._local_model_edit.text().strip() or "my-deepseek",
+            "local_model_name": self._local_model_edit.text().strip() or "qwen2.5:3b-instruct",
             "router_model": self._router_model_edit.text().strip(),
         }
 
@@ -1569,8 +1572,12 @@ class ApiConfigDialog(QDialog):
         if self._radio_local.isChecked():
             cfg = self._collect_deepseek()
             api_key = "ollama"
-            base_url = cfg.get("local_base_url", "http://localhost:11434/v1")
-            model = cfg.get("local_model_name", "my-deepseek")
+            base_url = normalize_local_base_url(
+                cfg.get("local_base_url", "http://localhost:11434/v1")
+            )
+            model = normalize_local_model_name(
+                cfg.get("local_model_name", "qwen2.5:3b-instruct")
+            )
             is_local = True
             api_name = "本地 Ollama"
         elif self._radio_agnes.isChecked():

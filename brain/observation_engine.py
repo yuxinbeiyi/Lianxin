@@ -172,11 +172,16 @@ class ObservationEngine:
         cfg = get_api_config()
         self._use_local = cfg.get("use_local", False)
         if self._use_local:
-            self._model = cfg.get("local_model_name", "my-deepseek")
+            from config import normalize_local_base_url, normalize_local_model_name
+            self._model = normalize_local_model_name(
+                cfg.get("local_model_name", "qwen2.5:3b-instruct")
+            )
             self._max_tokens = min(cfg["max_tokens"], 2048)
             self._client = OpenAI(
                 api_key="ollama",
-                base_url=cfg.get("local_base_url", "http://localhost:11434/v1"),
+                base_url=normalize_local_base_url(
+                    cfg.get("local_base_url", "http://localhost:11434/v1")
+                ),
             )
         else:
             self._model = cfg["model"]

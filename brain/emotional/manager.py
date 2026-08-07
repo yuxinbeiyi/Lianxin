@@ -309,7 +309,10 @@ class EmotionManager:
 
     def _semantic_model_config(self) -> tuple[str, str, str]:
         try:
-            from config import get_agnes_config, get_api_config, normalize_model_for_litellm
+            from config import (
+                get_agnes_config, get_api_config, normalize_model_for_litellm,
+                normalize_local_base_url, normalize_local_model_for_litellm,
+            )
             cfg = get_api_config()
             mode = self._semantic_mode
             router = str(cfg.get("router_model", "") or "").strip()
@@ -317,14 +320,20 @@ class EmotionManager:
                 if not router:
                     return "", "", ""
                 return (
-                    f"ollama/{router}", "ollama",
-                    str(cfg.get("local_base_url", "http://localhost:11434/v1")),
+                    normalize_local_model_for_litellm(router), "ollama",
+                    normalize_local_base_url(
+                        cfg.get("local_base_url", "http://localhost:11434/v1")
+                    ),
                 )
             if mode == "local":
-                local_model = router or str(cfg.get("local_model_name", "my-deepseek"))
+                local_model = router or str(
+                    cfg.get("local_model_name", "qwen2.5:3b-instruct")
+                )
                 return (
-                    f"ollama/{local_model}", "ollama",
-                    str(cfg.get("local_base_url", "http://localhost:11434/v1")),
+                    normalize_local_model_for_litellm(local_model), "ollama",
+                    normalize_local_base_url(
+                        cfg.get("local_base_url", "http://localhost:11434/v1")
+                    ),
                 )
             if mode != "cloud":
                 return "", "", ""
