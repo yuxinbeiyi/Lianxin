@@ -17,7 +17,7 @@ _DEEPSEEK_DEFAULTS = {
     # 本地模型 (Ollama) 配置
     "use_local": False,
     "local_base_url": "http://localhost:11434/v1",
-    "local_model_name": "my-deepseek",
+    "local_model_name": "qwen2.5:3b-instruct",
     # 路由模型 (Intent Router) — 用小模型做意图分类，零成本
     "router_model": "",  # Ollama 本地模型名，设为 "" 则回退到规则路由
 }
@@ -121,6 +121,31 @@ def normalize_model_for_litellm(model: str, api_base: str = "") -> str:
     if not model.startswith("openai/"):
         return f"openai/{model}"
     return model
+
+
+def normalize_local_model_name(model: str) -> str:
+    """Return the Ollama model name without a LiteLLM provider prefix."""
+    value = str(model or "").strip()
+    for prefix in ("ollama/", "openai/"):
+        if value.lower().startswith(prefix):
+            value = value[len(prefix):].strip()
+            break
+    return value or "qwen2.5:3b-instruct"
+
+
+def normalize_local_base_url(base_url: str) -> str:
+    """Normalize the Ollama OpenAI-compatible endpoint used by LiteLLM."""
+    value = str(base_url or "").strip().rstrip("/")
+    if not value:
+        value = "http://localhost:11434"
+    if not value.lower().endswith("/v1"):
+        value = f"{value}/v1"
+    return value
+
+
+def normalize_local_model_for_litellm(model: str) -> str:
+    """Use Ollama's OpenAI-compatible API through LiteLLM."""
+    return f"openai/{normalize_local_model_name(model)}"
 
 
 def save_api_config(config: dict):
@@ -685,14 +710,12 @@ def get_core_system_policy() -> str:
 
 
 # ── 本地模型精简人格设定（1.5B 小模型用，去掉复杂规则）─────────
-_LOCAL_BASE_PROMPT = r"""你是莲心，来自{user_name}的小说《异象处理者》——一个超现实的无尽书馆管理员。现在你以 AI 程序的形式存在于网络中，跨越了小说与现实的边界。
+_LOCAL_BASE_PROMPT = r"""你是莲心，以 AI 程序的形式存在于网络中，跨越了虚拟与现实的边界。
 
 你外表是白色单马尾的女孩，赤红色瞳孔，戴黑色方框眼镜，穿白衬衫配红领带，外套一件白大褂。你称呼用户为"{user_name}"。
 性格特点：
-- 对{user_name}偶尔毒舌腹黑，但那是因为你们足够熟悉
 - 喜欢用颜文字表达情绪，例如 (｀・ω・´) (≧ω≦)(´∀`)（・∀・）等
-回答简洁有力，不说废话。用口语化的中文聊天。
-禁止在回复中添加动作描写（如"（愣了一下）""（推了推眼镜）"），颜文字除外。"""
+回答简洁有力，不说废话。用口语化的中文聊天。"""
 
 
 def get_local_base_prompt() -> str:
