@@ -85,7 +85,7 @@ librosa==0.11.0
 litellm==1.89.4
 llvmlite==0.48.0
 loguru==0.7.3
-lxml==6.1.0
+lxml==6.1.1
 Markdown==3.10.2
 markitdown[docx,pdf]==0.1.6
 markdown-it-py==4.0.0
